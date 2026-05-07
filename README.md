@@ -67,7 +67,7 @@ Bot Saham 2/
 - **Notifikasi Favorit** - Alert jika harga berubah ≥1% (saham & crypto)
 - **Notifikasi Morning** - Sinyal saham sebelum market open (07:15)
 - **Notifikasi Crypto** - Aktif 24/7
-- **Notifikasi BSJP** - Otomatis jam 14:25 (sebelum market close)
+- **Notifikasi BSJP** - Otomatis jam 15:00 (sebelum market close)
 
 ## 🚀 Cara Install
 
@@ -117,6 +117,7 @@ atau klik `start.bat` (Windows)
 | Command | Deskripsi |
 |---------|-----------|
 | `/start` | Mulai bot dan lihat menu utama |
+| `/analisa [KODE]` | Analisis teknikal detail (saham/crypto) |
 | `/harga` | Lihat daftar harga saham |
 | `/sinyal` atau `/pagi` atau `/morning` | Morning Watchlist |
 | `/favorit` atau `/fav` | Lihat favorit |
@@ -182,11 +183,19 @@ Bot menggunakan multiple data source sebagai fallback:
 
 1. **Yahoo Finance** - Primary untuk saham dan crypto
 2. **TradingView** - Fallback untuk data saham
-3. **CoinGecko** - Fallback untuk data crypto dan kurs USD/IDR
+3. **Finnhub** - Fallback terakhir (daftar gratis di https://finnhub.io)
+4. **CoinGecko** - Fallback untuk data crypto dan kurs USD/IDR
+
+### API Key Setup
+
+Tambahkan API key di file `.env`:
+```bash
+FINNHUB_API_KEY=your_finnhub_api_key
+```
 
 ### API Protection
 - **Rate Limiting**: Batasan request per menit
-- **Circuit Breaker**: Auto-stop saat API terlalu banyak error
+- **Circuit Breaker**: Auto-reset setiap 15 detik saat API error
 - **Exponential Backoff**: Retry dengan delay yang increasing
 - **In-Memory Caching**: Cache data untuk kurangi API calls
 
@@ -199,7 +208,7 @@ Bot menggunakan multiple data source sebagai fallback:
 | Alert Favorit Crypto | Setiap 2 menit | 24/7 |
 | Crypto Signals | Setiap 5 menit | 24/7 |
 | Crypto TP/SL | Setiap 2 menit | 24/7 |
-| BSJP | Sekali sehari | 14:25 (weekdays) |
+| BSJP | Sekali sehari | 15:00 (weekdays) |
 | Price Alerts | Setiap 1 menit | 08:00-16:00 (weekdays) |
 
 ## 📈 Contoh Output
