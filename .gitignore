@@ -1,0 +1,30 @@
+# Environment
+.env
+*.env.local
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bot data
+user_data.json
+user_data.json.bak
+last_signals.json
+last_signals.json.bak
