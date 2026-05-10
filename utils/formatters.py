@@ -492,6 +492,22 @@ def format_unified_crypto_notification(
     for tp_name, tp_val, tp_pct in remaining:
         lines.append(f"🎯 {tp_name}: {_fmt_price_dual(tp_val, usd_idr_rate)} *({tp_pct:+.1f}%)*")
 
+    # Support & Resistance levels
+    sr = analysis_data.get('sr', {})
+    if sr and notif_type == 'BUY':
+        lines.append("")
+        lines.append("📐 *Support & Resistance:*")
+        if sr.get('nearest_support'):
+            sup = sr['nearest_support']['level']
+            lines.append(f"  🟢 Support: {_fmt_price_dual(sup, usd_idr_rate)}")
+        if sr.get('nearest_resistance'):
+            res = sr['nearest_resistance']['level']
+            lines.append(f"  🔴 Resistance: {_fmt_price_dual(res, usd_idr_rate)}")
+        # Show distance
+        sr_dist = sr.get('sr_distance', {})
+        if sr_dist.get('support_pct'):
+            lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
+
     if notif_type in ('TP1', 'TP2', 'TP3', 'SL'):
         lines.append(f"💵 Current: {_fmt_price_dual(current_price, usd_idr_rate)}")
 
@@ -685,6 +701,22 @@ def format_unified_stock_notification(
         lines.append("📋 *Alasan:*")
         for reason in reasons[:5]:
             lines.append(f"  ✅ {reason}")
+
+    # Support & Resistance levels
+    sr = analysis_data.get('sr', {})
+    if sr and notif_type == 'BUY':
+        lines.append("")
+        lines.append("📐 *Support & Resistance:*")
+        if sr.get('nearest_support'):
+            sup = sr['nearest_support']['level']
+            lines.append(f"  🟢 Support: Rp {sup:,.0f}")
+        if sr.get('nearest_resistance'):
+            res = sr['nearest_resistance']['level']
+            lines.append(f"  🔴 Resistance: Rp {res:,.0f}")
+        # Show distance
+        sr_dist = sr.get('sr_distance', {})
+        if sr_dist.get('support_pct'):
+            lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
 
     if notif_type in ('TP1', 'TP2', 'TP3', 'SL'):
         lines.append(f"💵 Current: Rp {current_price:,.0f}")

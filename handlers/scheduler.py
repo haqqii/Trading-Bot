@@ -477,14 +477,32 @@ async def check_stock_signals(app):
 
         semaphore = asyncio.Semaphore(25)  # Max 25 concurrent
         async def fetch_with_semaphore(ticker):
-            async with semaphore:
-                return await asyncio.to_thread(analyze_stock, ticker)
+            try:
+                async with semaphore:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(analyze_stock, ticker),
+                        timeout=30.0  # 30 second timeout per stock
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(f"[STOCK] Timeout for {ticker}")
+                return None
+            except Exception as e:
+                logger.error(f"[STOCK] Error fetching {ticker}: {e}")
+                return None
 
         tasks = [fetch_with_semaphore(t) for t in all_tickers]
         logger.info(f"[STOCK] Starting scan of {len(tasks)} stocks...")
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"[STOCK] Scan complete, processing results...")
-        buy_signals = [r for r in results if r is not None]
+
+        # Handle results, filtering out exceptions and None values
+        buy_signals = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"[STOCK] Task exception: {r}")
+            elif r is not None:
+                buy_signals.append(r)
+
         signals_found = len(buy_signals)
 
         # Send notifications to all users with notif_saham=ON
@@ -592,25 +610,36 @@ async def check_stock_signals(app):
                             'change': d.get('change', 0),
                             'ma_fast': d.get('ma_fast', 0),
                             'ma_slow': d.get('ma_slow', 0),
+                            # Support & Resistance
+                            'sr': d.get('sr', {}),
+                            'support': d.get('support'),
+                            'resistance': d.get('resistance'),
                         }
 
-                        msg = format_unified_stock_notification(
-                            notif_type='BUY',
-                            ticker=ticker,
-                            name=name,
-                            entry=s['entry'],
-                            current_price=d['price'],
-                            tp1=s['tp1'],
-                            tp2=s['tp2'],
-                            tp3=s['tp3'],
-                            sl=s['sl'],
-                            analysis_data=analysis_data,
-                            change_pct=d.get('change', 0),
-                            profit_loss=1.0,
-                            entry_low=s.get('entry_low', 0),
-                            entry_high=s.get('entry_high', 0)
-                        )
-                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        try:
+                            msg = format_unified_stock_notification(
+                                notif_type='BUY',
+                                ticker=ticker,
+                                name=name,
+                                entry=s['entry'],
+                                current_price=d['price'],
+                                tp1=s['tp1'],
+                                tp2=s['tp2'],
+                                tp3=s['tp3'],
+                                sl=s['sl'],
+                                analysis_data=analysis_data,
+                                change_pct=d.get('change', 0),
+                                profit_loss=1.0,
+                                entry_low=s.get('entry_low', 0),
+                                entry_high=s.get('entry_high', 0)
+                            )
+                            await app.bot.send_message(
+                                chat_id=int(uid), text=msg, parse_mode='Markdown',
+                                read_timeout=10, connect_timeout=10
+                            )
+                            logger.info(f"[STOCK] Sent BUY signal for {ticker} to user {uid}")
+                        except Exception as e:
+                            logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
 
                     logger.info(f"[STOCK] Sent TOP 3 signals to user {uid}")
 
@@ -629,6 +658,15 @@ async def check_stock_signals(app):
 async def check_stock_tp_sl(app):
     """Check and notify TP/SL hits for tracked stock signals"""
     try:
+        now = now_wib()
+        is_weekend = now.weekday() >= 5
+        is_market_hours = 8 <= now.hour < 16
+
+        # Only run during market hours
+        if is_weekend or not is_market_hours:
+            logger.debug(f"[STOCK TP/SL] Outside market hours ({now.hour}:{now.minute:02d} WIB) - skipping")
+            return
+
         for uid, u in _get_user_db().items():
             if not u.get('notif_saham', False):
                 continue
@@ -1120,26 +1158,37 @@ async def check_crypto_signals(app):
                                 'rsi': d.get('rsi', 0),
                                 'macd': s.get('macd_hist', 0),
                                 'atr': s.get('atr', 0),
-                            }
+                            },
+                            # Support & Resistance
+                            'sr': d.get('sr', {}),
+                            'support': d.get('support'),
+                            'resistance': d.get('resistance'),
                         }
 
                         # Send notification
-                        msg = format_unified_crypto_notification(
-                            notif_type='BUY',
-                            ticker=ticker,
-                            name=name,
-                            entry=s['entry'],
-                            current_price=d['price'],
-                            tp1=s['tp1'],
-                            tp2=s['tp2'],
-                            tp3=s['tp3'],
-                            sl=s['sl'],
-                            analysis_data=analysis_data,
-                                                        change_pct=d.get('change', 0),
-                            profit_loss=1.0,
-                            usd_idr_rate=crypto_service.get_usd_idr_rate()
-                        )
-                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        try:
+                            msg = format_unified_crypto_notification(
+                                notif_type='BUY',
+                                ticker=ticker,
+                                name=name,
+                                entry=s['entry'],
+                                current_price=d['price'],
+                                tp1=s['tp1'],
+                                tp2=s['tp2'],
+                                tp3=s['tp3'],
+                                sl=s['sl'],
+                                analysis_data=analysis_data,
+                                change_pct=d.get('change', 0),
+                                profit_loss=1.0,
+                                usd_idr_rate=crypto_service.get_usd_idr_rate()
+                            )
+                            await app.bot.send_message(
+                                chat_id=int(uid), text=msg, parse_mode='Markdown',
+                                read_timeout=10, connect_timeout=10
+                            )
+                            logger.info(f"[CRYPTO] Sent BUY signal for {ticker} to user {uid}")
+                        except Exception as e:
+                            logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
 
                     logger.info(f"[CRYPTO] Sent TOP 3 signals to user {uid}")
 

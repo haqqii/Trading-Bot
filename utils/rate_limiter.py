@@ -197,10 +197,11 @@ def exponential_backoff(attempt, base_delay=1.0, max_delay=32.0, jitter=True):
 _coingecko_limiter = RateLimiter(max_calls=10, period=60, name="coingecko")
 _yahoo_limiter = RateLimiter(max_calls=30, period=60, name="yahoo")
 _circuit_breakers: Dict[str, CircuitBreaker] = {
-    'coingecko': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="coingecko"),
+    # CoinGecko: slower recovery since free tier is very limited
+    'coingecko': CircuitBreaker(failure_threshold=15, recovery_timeout=120, name="coingecko"),
     'yahoo': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="yahoo"),
     'tradingview': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="tradingview"),
-    'finnhub': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="finnhub"),
+    'finnhub': CircuitBreaker(failure_threshold=10, recovery_timeout=60, name="finnhub"),
 }
 
 

@@ -14,7 +14,8 @@ from utils.rate_limiter import _yahoo_limiter, _coingecko_limiter, _circuit_brea
 from utils.indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_volume_metrics, calculate_vwap, calculate_stochastic,
-    calculate_adx, calculate_ichimoku, calculate_fibonacci_retracement
+    calculate_adx, calculate_ichimoku, calculate_fibonacci_retracement,
+    calculate_sr_levels
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,12 @@ class CryptoService:
                     ichimoku_data = calculate_ichimoku(df['High'], df['Low'], df['Close'])
                     fib_data = calculate_fibonacci_retracement(df['High'], df['Low'])
 
+                    # Calculate Support & Resistance
+                    try:
+                        sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
+                    except:
+                        sr_data = {}
+
                     latest = df.iloc[-1]
                     price = latest['Close']
 
@@ -266,6 +273,10 @@ class CryptoService:
                         'ichi_kijun': ichimoku_data['kijun_current'],
                         'fib_levels': fib_data['levels'],
                         'raw_df': df,  # For pattern detection
+                        # Support & Resistance
+                        'sr': sr_data or {},
+                        'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
+                        'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
                     }
 
                     if use_cache:

@@ -173,15 +173,17 @@ def get_user(user_id):
     """Get or create user data"""
     if user_id not in user_data_db:
         user_data_db[user_id] = {
-            'crypto_watchlist': ['BTC-USD', 'ETH-USD', 'BNB-USD'],
+            'watchlist': [],
+            'crypto_watchlist': [],
             'portfolio': [],
             'notifications': True,
             'notif_saham': False,
             'notif_crypto': False,
             'notif_bsjp': False,
             'notif_morning': False,
-            'favorit': {},  # {ticker: target_price}
-            'crypto_favorit': {},  # {ticker: target_price}
+            'notif_watchlist': False,
+            'favorit': {},
+            'crypto_favorit': {},
             'timeframe': '5',
             'alerts': {},
             'subscribed_at': datetime.now().isoformat()
@@ -913,10 +915,31 @@ async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Period tidak valid: `{period}`", parse_mode='Markdown')
         return
 
+    # Check if it's crypto (has -USD, -USDT suffix) or stock (IDX)
+    is_crypto = (
+        ticker.endswith('-USD') or
+        ticker.endswith('-USDT') or
+        ticker in crypto_service.crypto_pairs
+    )
+
+    # Auto-detect common crypto symbols
+    common_crypto = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'WLD', 'SUI', 'APT', 'ARB', 'OP', 'MATIC', 'AVAX', 'LINK', 'DOT', 'UNI', 'ATOM', 'LTC']
+    if ticker in common_crypto and not ticker.endswith('-USD'):
+        is_crypto = True
+        ticker = ticker + '-USD'
+
     await update.message.reply_text(f"📊 Generating chart for `{ticker}`...", parse_mode='Markdown')
 
     try:
-        img_buf = chart_service.generate_crypto_chart(ticker, interval=interval, period=period)
+        if is_crypto:
+            img_buf = chart_service.generate_crypto_chart(ticker, interval=interval, period=period)
+        else:
+            # Stock - add .JK suffix if not present
+            if not ticker.endswith('.JK'):
+                full_ticker = ticker + '.JK'
+            else:
+                full_ticker = ticker
+            img_buf = chart_service.generate_price_chart(full_ticker, interval=interval, period=period)
 
         if img_buf is None:
             await update.message.reply_text(f"❌ Gagal generate chart untuk `{ticker}`.", parse_mode='Markdown')
@@ -969,7 +992,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ticker.endswith('-USDT') or  # USDT pair
             ticker.endswith('-BTC') or  # BTC pair
             ticker.endswith('-ETH') or  # ETH pair
-            ticker_upper in ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE']  # Common symbols
+            ticker_upper in ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'WLD', 'SUI', 'APT', 'ARB', 'OP', 'MATIC', 'AVAX', 'LINK', 'DOT', 'UNI', 'ATOM', 'LTC', 'WORLDCOIN', 'PEPE', 'SHIB', 'FIL', 'NEAR', 'AAVE', 'GRT', 'VET', 'ALGO', 'ICP', 'EGLD', 'AXS', 'MANA', 'SAND', 'GALA', 'ENJ']  # Common crypto symbols
         )
 
         if is_crypto:
@@ -983,7 +1006,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # If not found, construct USD pair
             if full_ticker == ticker:
                 if not ticker.endswith('-USD') and not ticker.endswith('-USDT'):
-                    if len(ticker) <= 5:  # Likely a symbol, add -USD
+                    # Add -USD suffix for common crypto symbols (up to 10 chars for names like WORLDCOIN)
+                    if len(ticker) <= 10:
                         full_ticker = ticker.upper() + '-USD'
 
             # Get crypto data - use 5d period to get enough candles for indicators
@@ -1293,9 +1317,9 @@ tanggung sendiri.
 """
 
         else:
-            # Stock analysis
+            # Stock analysis - use combined method for fallback support
             full_ticker = ticker + ".JK"
-            d = stock_service.get_stock_data(full_ticker, '5m', '3d')
+            d = stock_service.get_stock_data_combined(full_ticker, '5m', '3d')
 
             if not d or d.get('candles', 0) < 50:
                 await update.message.reply_text(
@@ -1588,6 +1612,40 @@ Target: Tunggu konfirmasi sinyal
 
 Saran: {saran_text}.
 """
+
+            # Support & Resistance
+            sr_data = d.get('sr', {})
+            if sr_data.get('nearest_support') or sr_data.get('nearest_resistance'):
+                msg += """
+📐 Support & Resistance
+
+"""
+                if sr_data.get('nearest_support'):
+                    sup = sr_data['nearest_support']['level']
+                    msg += f"🟢 Support 1: Rp {sup:,.0f}\n"
+                if sr_data.get('nearest_resistance'):
+                    res = sr_data['nearest_resistance']['level']
+                    msg += f"🔴 Resistance 1: Rp {res:,.0f}\n"
+
+                # Show all supports
+                all_supports = sr_data.get('all_supports', [])
+                if all_supports:
+                    msg += "\n📊 All Support Levels:\n"
+                    for s in all_supports[:3]:
+                        msg += f"   - Rp {s['level']:,.0f} ({s['type']})\n"
+
+                # Show all resistances
+                all_resistances = sr_data.get('all_resistances', [])
+                if all_resistances:
+                    msg += "\n📊 All Resistance Levels:\n"
+                    for r in all_resistances[:3]:
+                        msg += f"   - Rp {r['level']:,.0f} ({r['type']})\n"
+
+                # Distance
+                sr_dist = sr_data.get('sr_distance', {})
+                if sr_dist.get('support_pct'):
+                    msg += f"\n📏 Jarak ke support: {sr_dist['support_pct']:.1f}%\n"
+                    msg += f"📏 Jarak ke resistance: {sr_dist.get('resistance_pct', 0):.1f}%\n"
 
             msg += """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -11,7 +11,7 @@ import warnings
 
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
-from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr
+from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,21 @@ class StockService:
                 latest = df.iloc[-1]
                 atr_val = calculate_atr(df['High'], df['Low'], df['Close'], 14).iloc[-1]
 
+                # Calculate Support & Resistance levels
+                try:
+                    sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
+                except:
+                    sr_data = {}
+
                 if breaker:
                     breaker.record_success()
 
+                # Safely get stock name
+                stock_info = stock.info or {}
+                stock_name = stock_info.get('longName') or stock_info.get('shortName') or ticker
+
                 return {
-                    'name': stock.info.get('longName', ticker),
+                    'name': stock_name,
                     'price': latest['Close'],
                     'change': ((latest['Close'] - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100,
                     'ma_fast': latest['MA_FAST'],
@@ -104,6 +114,10 @@ class StockService:
                     'volume_ma': latest['VOLUME_MA'],
                     'volume_ratio': latest['VOLUME_RATIO'],
                     'raw_df': df,  # For pattern detection
+                    # Support & Resistance
+                    'sr': sr_data or {},
+                    'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
+                    'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
                 }
             except Exception as e:
                 if breaker:

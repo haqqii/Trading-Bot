@@ -19,6 +19,27 @@ import logging
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+# Single instance lock - prevent multiple bot instances
+LOCK_FILE = os.path.join(os.path.dirname(__file__), 'bot.lock')
+if os.path.exists(LOCK_FILE):
+    try:
+        with open(LOCK_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        import psutil
+        if psutil.pid_exists(pid):
+            print(f"ERROR: Bot sudah jalan (PID: {pid})")
+            print("Stop instance lama dulu atau kill proses python.")
+            sys.exit(1)
+        else:
+            print(f"Stale lock file found (PID {pid}), removing...")
+            os.remove(LOCK_FILE)
+    except:
+        pass
+
+# Write our PID to lock file
+with open(LOCK_FILE, 'w') as f:
+    f.write(str(os.getpid()))
+
 from telegram.ext import Application
 
 # Import config
@@ -40,12 +61,27 @@ import logging.handlers
 logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
 os.makedirs(logs_dir, exist_ok=True)
 
-# Configure logging with file rotation
-file_handler = logging.handlers.RotatingFileHandler(
+# Custom handler to handle Windows file locking
+class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except PermissionError:
+            # If file is locked, try to reopen it
+            try:
+                self.stream.close()
+                self.stream = self._open()
+                super().emit(record)
+            except:
+                pass
+
+# Configure logging with safe file rotation
+file_handler = SafeRotatingFileHandler(
     os.path.join(logs_dir, 'bot.log'),
     maxBytes=5 * 1024 * 1024,  # 5MB
     backupCount=5,
-    encoding='utf-8'
+    encoding='utf-8',
+    delay=True  # Delay opening file until first write
 )
 file_handler.setLevel(logging.INFO)
 
@@ -154,8 +190,18 @@ except ImportError:
 import signal
 import sys
 
+def cleanup():
+    """Cleanup on exit"""
+    if os.path.exists(LOCK_FILE):
+        try:
+            os.remove(LOCK_FILE)
+            print("Lock file removed")
+        except:
+            pass
+
 def signal_handler(sig, frame):
     print("\n\n🛑 Bot dihentikan!")
+    cleanup()
     os._exit(0)
 
 # Windows doesn't have SIGTERM, so only use SIGINT
@@ -166,3 +212,6 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n\n🛑 Bot dihentikan!")
+        cleanup()
+    finally:
+        cleanup()
