@@ -213,14 +213,24 @@ class SignalService:
         sell_score = 0
         reasons = []
 
-        # RSI Score (weight: 15%)
-        if rsi < 35:
+        # RSI Score (weight: 20%) - INCREASED from 15%
+        # Option A: More aggressive RSI oversold scoring
+        if rsi < 30:
+            buy_score += 20
+            reasons.append(f'RSI {rsi:.0f} STRONG oversold')
+        elif rsi < 35:
             buy_score += 15
             reasons.append(f'RSI {rsi:.0f} oversold')
         elif rsi < 45:
-            buy_score += 8
+            buy_score += 10
             reasons.append(f'RSI {rsi:.0f} bullish')
+        elif rsi < 50:
+            buy_score += 5
+            reasons.append(f'RSI {rsi:.0f} near oversold')
         elif rsi > 70:
+            sell_score += 20
+            reasons.append(f'RSI {rsi:.0f} STRONG overbought')
+        elif rsi > 65:
             sell_score += 15
             reasons.append(f'RSI {rsi:.0f} overbought')
         elif rsi > 60:
@@ -314,22 +324,45 @@ class SignalService:
             else:
                 sell_score += 2
 
-        # Determine signal (lowered threshold for more signals)
+        # Option B (Minor): REVERSAL signal detection
+        # RSI oversold + price rising = potential reversal
+        is_reversal = False
+        reversal_reasons = []
+
+        if rsi < 40 and change > 1:
+            is_reversal = True
+            reversal_reasons.append(f'RSI oversold ({rsi:.0f})')
+            reversal_reasons.append(f'Harga naik +{change:.1f}%')
+            if macd_hist > 0:
+                reversal_reasons.append('MACD histogram positif')
+            if stoch_oversold:
+                reversal_reasons.append('Stochastic oversold')
+            reversal_reasons.append('Momentum rising - potential rebound')
+            reasons.append('REVERSAL CANDIDATE')
+
+        # Determine signal
         signal = 'HOLD'
         quality = 'WEAK'
 
-        if buy_score >= 35:
-            signal = 'BUY'
-            quality = 'STRONG' if buy_score >= 60 else ('MODERATE' if buy_score >= 45 else 'WEAK')
-        elif sell_score >= 35:
-            signal = 'SELL'
-            quality = 'STRONG' if sell_score >= 60 else ('MODERATE' if sell_score >= 45 else 'WEAK')
-        elif buy_score >= 25 and buy_score > sell_score:
-            signal = 'BUY'
-            quality = 'WEAK'
-        elif sell_score >= 25 and sell_score > buy_score:
-            signal = 'SELL'
-            quality = 'WEAK'
+        # Check REVERSAL first - special signal type
+        if is_reversal and signal == 'HOLD':
+            signal = 'REVERSAL'
+            quality = 'STRONG' if len(reversal_reasons) >= 3 else 'MODERATE'
+
+        # Normal BUY/SELL signals
+        if signal == 'HOLD':
+            if buy_score >= 35:
+                signal = 'BUY'
+                quality = 'STRONG' if buy_score >= 60 else ('MODERATE' if buy_score >= 45 else 'WEAK')
+            elif sell_score >= 35:
+                signal = 'SELL'
+                quality = 'STRONG' if sell_score >= 60 else ('MODERATE' if sell_score >= 45 else 'WEAK')
+            elif buy_score >= 25 and buy_score > sell_score:
+                signal = 'BUY'
+                quality = 'WEAK'
+            elif sell_score >= 25 and sell_score > buy_score:
+                signal = 'SELL'
+                quality = 'WEAK'
 
         # Crypto TP/SL: wider for volatile market
         effective_atr = max(atr, price * 0.005)
@@ -366,6 +399,9 @@ class SignalService:
             'ichi_bullish': ichi_bullish,
             'ichi_bearish': ichi_bearish,
             'fib_levels': data.get('fib_levels', {}),
+            # Option B: REVERSAL signal info
+            'is_reversal': is_reversal,
+            'reversal_reasons': reversal_reasons,
         }
 
 

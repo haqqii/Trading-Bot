@@ -318,6 +318,7 @@ def format_price_dual(price: float, rate: float = 16000) -> Tuple[str, str]:
 # Notification type headers
 NOTIF_HEADERS = {
     'BUY': '🟢 *₿ CRYPTO SIGNAL - REKOMENDASI BELI*',
+    'REVERSAL': '🔄 *₿ REVERSAL CANDIDATE - OVERSOLD REBOUND*',
     'TP1': '🏆 *₿ TP1 TERKUNCI! +2%*',
     'TP2': '🎯 *₿ TP2 TERKUNCI! +4%*',
     'TP3': '💰 *₿ TP3 TERCAPAI!*',
@@ -424,6 +425,19 @@ def format_unified_crypto_notification(
     lines.append(f"📌 *{name} ({sym})*")
     lines.append(f"💸 Gain: {gain_str}")
     lines.append("")
+
+    # Special section for REVERSAL signals
+    if notif_type == 'REVERSAL':
+        lines.append("⚠️ *REVERSAL CANDIDATE*")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        reversal_reasons = analysis_data.get('reversal_reasons', [])
+        if reversal_reasons:
+            for reason in reversal_reasons:
+                lines.append(f"   ✅ {reason}")
+        lines.append("")
+        lines.append("💡 RSI oversold + momentum rising")
+        lines.append("   Entry di support, potensi rebound")
+        lines.append("")
 
     # AI call info
     lines.append("🤖 *CRYPTO SIGNAL DETECTED*")

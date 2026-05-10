@@ -441,7 +441,10 @@ async def check_stock_signals(app):
                 current_price = d['price']
                 key = f"STOCK_{ticker}"
 
-                if s['signal'] == 'BUY' and s.get('buy_score', 0) >= 35:
+                # Include REVERSAL signals
+                is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
+
+                if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
                     signals = _get_last_buy_signals()
                     existing = signals.get(key)
                     should_send = False
@@ -458,6 +461,7 @@ async def check_stock_signals(app):
                                     should_send = True
 
                     if should_send:
+                        signal_type = 'REVERSAL' if s['signal'] == 'REVERSAL' else 'BUY'
                         signals[key] = {
                             'name': ALL_STOCKS.get(ticker, ticker),
                             'entry': s['entry'],
@@ -466,9 +470,11 @@ async def check_stock_signals(app):
                             'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
                             'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
                             'buy_score': s.get('buy_score', 0),
-                            'quality': s.get('quality', 'WEAK')
+                            'quality': s.get('quality', 'WEAK'),
+                            'signal_type': signal_type,
+                            'is_reversal': s.get('is_reversal', False)
                         }
-                        logger.info(f"✅ BUY Signal: {ticker} - {ALL_STOCKS.get(ticker, ticker)} @ Rp{s['entry']:,.0f} (Score: {s.get('buy_score', 0)})")
+                        logger.info(f"✅ {signal_type} Signal: {ticker} - {ALL_STOCKS.get(ticker, ticker)} @ Rp{s['entry']:,.0f} (Score: {s.get('buy_score', 0)})")
                         return (ticker, ALL_STOCKS.get(ticker, ticker), d, s)
 
                 return None
@@ -1052,7 +1058,10 @@ async def check_crypto_signals(app):
                 # Check if we should send this signal
                 should_send = False
 
-                if s['signal'] == 'BUY' and s.get('buy_score', 0) >= 35:
+                # Include REVERSAL signals
+                is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
+
+                if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
                     signals = _get_last_buy_signals()
                     existing = signals.get(key)
                     if existing is None:
@@ -1090,6 +1099,10 @@ async def check_crypto_signals(app):
                 ticker, name, d, s, score = r
                 key = f"CRYPTO_{ticker}"
                 signals_found += 1
+
+                # Determine signal type
+                signal_type = s['signal'] if s['signal'] in ('BUY', 'REVERSAL') else 'BUY'
+
                 signals[key] = {
                     'name': name,
                     'entry': s['entry'],
@@ -1098,10 +1111,12 @@ async def check_crypto_signals(app):
                     'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
                     'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
                     'buy_score': s.get('buy_score', 0),
-                    'quality': s.get('quality', 'WEAK')
+                    'quality': s.get('quality', 'WEAK'),
+                    'signal_type': signal_type,
+                    'is_reversal': s.get('is_reversal', False)
                 }
                 buy_signals.append((ticker, name, d, s))
-                logger.info(f"✅ CRYPTO BUY Signal: {ticker} - {name} @ ${s['entry']:,.2f} (Score: {s.get('buy_score', 0)})")
+                logger.info(f"✅ CRYPTO {signal_type} Signal: {ticker} - {name} @ ${s['entry']:,.2f} (Score: {s.get('buy_score', 0)})")
 
         # Send notifications to all users with notif_crypto=ON
         if buy_signals:
@@ -1150,6 +1165,9 @@ async def check_crypto_signals(app):
                         except Exception as e:
                             logger.debug(f"Pattern detection failed: {e}")
 
+                        # Determine notification type (BUY vs REVERSAL)
+                        notif_type = 'REVERSAL' if s.get('is_reversal', False) else 'BUY'
+
                         analysis_data = {
                             'pattern': {'type': trend, 'reliability': quality_reliability},
                             'patterns': crypto_patterns,
@@ -1163,12 +1181,15 @@ async def check_crypto_signals(app):
                             'sr': d.get('sr', {}),
                             'support': d.get('support'),
                             'resistance': d.get('resistance'),
+                            # REVERSAL signal info
+                            'is_reversal': s.get('is_reversal', False),
+                            'reversal_reasons': s.get('reversal_reasons', []),
                         }
 
                         # Send notification
                         try:
                             msg = format_unified_crypto_notification(
-                                notif_type='BUY',
+                                notif_type=notif_type,
                                 ticker=ticker,
                                 name=name,
                                 entry=s['entry'],
