@@ -274,16 +274,21 @@ async def check_bsjp_signals(app):
         now = now_wib()
         is_weekend = now.weekday() >= 5
 
-        # Only send BSJP at exactly 15:00 WIB
-        is_bsjp_time = (now.hour == 15 and now.minute == 0)
+        # Widen window: 15:00 - 15:05 WIB (5 minute window to avoid misfires)
+        is_bsjp_time = (now.hour == 15 and now.minute <= 5)
 
         if is_weekend:
             logger.info("[BSJP] Weekend - skipping")
             return
 
-        # Only send BSJP at 15:00
+        # Only send BSJP at 15:00-15:05
         if not is_bsjp_time:
             logger.info(f"[BSJP] Outside BSJP time ({now.hour}:{now.minute:02d} WIB) - skipping")
+            return
+
+        # Check if already sent today (file-based)
+        if _check_sent_today(BSJP_SENT_FILE):
+            logger.info("[BSJP] Already sent today - skipping")
             return
 
         # Check if any user has notif_bsjp enabled
@@ -376,6 +381,15 @@ async def check_bsjp_signals(app):
 
                 except Exception as e:
                     logger.error(f"Failed to send BSJP to user {uid}: {e}")
+
+            # Mark as sent today AFTER all users processed
+            _mark_sent_today(BSJP_SENT_FILE)
+            logger.info("[BSJP] Marked as sent for today")
+
+        # Mark as sent even if no signals found (to prevent re-scanning)
+        if not bsjp_signals:
+            _mark_sent_today(BSJP_SENT_FILE)
+            logger.info("[BSJP] No signals found, marked as sent for today")
 
         logger.info(f"[BSJP] Scan complete: {len(bsjp_signals)} signals")
 
@@ -866,13 +880,14 @@ async def check_alerts(app):
 import os
 
 MORNING_SENT_FILE = 'morning_sent.txt'
+BSJP_SENT_FILE = 'bsjp_sent.txt'
 
 
-def _check_morning_sent_today():
-    """Check if morning notification was already sent today (file-based)"""
+def _check_sent_today(filepath: str) -> bool:
+    """Check if notification was already sent today (file-based)"""
     try:
-        if os.path.exists(MORNING_SENT_FILE):
-            with open(MORNING_SENT_FILE, 'r') as f:
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as f:
                 last_sent = f.read().strip()
             today = now_wib().date().isoformat()
             return last_sent == today
@@ -881,13 +896,22 @@ def _check_morning_sent_today():
     return False
 
 
-def _mark_morning_sent():
-    """Mark morning notification as sent today"""
+def _mark_sent_today(filepath: str):
+    """Mark notification as sent today"""
     try:
-        with open(MORNING_SENT_FILE, 'w') as f:
+        with open(filepath, 'w') as f:
             f.write(now_wib().date().isoformat())
     except:
         pass
+
+
+# Backward compatibility wrappers
+def _check_morning_sent_today():
+    return _check_sent_today(MORNING_SENT_FILE)
+
+
+def _mark_morning_sent():
+    _mark_sent_today(MORNING_SENT_FILE)
 
 
 async def check_morning_notification(app):
@@ -956,7 +980,7 @@ async def check_morning_notification(app):
                     score += 1
                     reasons.append(f"+{change:.1f}%")
 
-                if score >= 4:
+                if score >= 3:
                     return {
                         'ticker': ticker,
                         'name': ALL_STOCKS.get(ticker, ticker),
@@ -1006,11 +1030,12 @@ async def check_morning_notification(app):
                     await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                     logger.info(f"[MORNING] Sent {len(morning_signals)} signals to user {uid}")
 
-                    # Mark as sent today (file-based)
-                    _mark_morning_sent()
-
                 except Exception as e:
                     logger.error(f"Failed to send morning to user {uid}: {e}")
+
+            # Mark as sent today AFTER all users processed
+            _mark_morning_sent()
+            logger.info("[MORNING] Marked as sent for today")
 
         logger.info(f"[MORNING] Scan complete: {len(morning_signals)} signals")
 
