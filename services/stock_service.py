@@ -8,12 +8,26 @@ import requests
 import yfinance as yf
 import pandas as pd
 import warnings
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
 from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
 
 logger = logging.getLogger(__name__)
+
+# HTTP session with connection pooling
+_session = requests.Session()
+_adapter = HTTPAdapter(
+    pool_connections=20,
+    pool_maxsize=20,
+    max_retries=0,  # We handle retries manually
+    pool_block=False
+)
+_session.mount('http://', _adapter)
+_session.mount('https://', _adapter)
+_session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 
 # Finnhub API key from environment
 FINNHUB_API_KEY = os.getenv('FINNHUB_API_KEY', '')
@@ -37,6 +51,12 @@ class StockService:
 
     def get_stock_data(self, ticker: str, interval: str = '5m', period: str = '5d', retry: int = 2):
         """Get stock data from Yahoo Finance with rate limiting and circuit breaker"""
+        # Check cache first
+        cache_key = f"{ticker}:{interval}:{period}"
+        cached = _price_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         breaker = _circuit_breakers.get('yahoo')
 
         if breaker and not breaker.can_execute():
@@ -119,6 +139,10 @@ class StockService:
                     'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
                     'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
                 }
+
+                # Cache successful result
+                _price_cache.set(cache_key, result)
+                return result
             except Exception as e:
                 if breaker:
                     breaker.record_failure()
@@ -151,8 +175,7 @@ class StockService:
                     'range': [0, 1]
                 }
 
-                headers = {'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'}
-                resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                resp = _session.post(url, json=payload, timeout=10)
 
                 if resp.status_code != 200:
                     if attempt < retry - 1:
@@ -259,8 +282,7 @@ class StockService:
                 symbol = f"IDX:{ticker}"
                 url = f"https://finnhub.io/api/v1/scan/technical-indicator?symbol={symbol}&token={FINNHUB_API_KEY}"
 
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                resp = requests.get(url, headers=headers, timeout=10)
+                resp = _session.get(url, timeout=10)
 
                 if resp.status_code != 200:
                     if attempt < retry - 1:
@@ -274,7 +296,7 @@ class StockService:
                 if not data or data.get('s') != 'no_signals':
                     # Get quote data
                     quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_API_KEY}"
-                    quote_resp = requests.get(quote_url, headers=headers, timeout=10)
+                    quote_resp = _session.get(quote_url, timeout=10)
 
                     if quote_resp.status_code != 200:
                         if breaker:
@@ -329,7 +351,6 @@ class StockService:
     def load_stocks(self):
         """Load all IDX stocks from TradingView"""
         url = "https://scanner.tradingview.com/indonesia/scan"
-        headers = {'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'}
         stocks = {}
 
         for page in range(5):
@@ -342,7 +363,7 @@ class StockService:
             }
 
             try:
-                resp = requests.post(url, json=payload, headers=headers, timeout=30)
+                resp = _session.post(url, json=payload, timeout=30)
                 data = resp.json()
                 items = data.get('data', [])
                 if not items:

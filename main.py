@@ -172,7 +172,10 @@ def main():
         sys.stdout.write("BOT_RUNNING\n")
         sys.stdout.flush()
 
-        app.run_polling(allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None)
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None,
+            drop_pending_updates=False,
+        )
 
     except Exception as e:
         import traceback

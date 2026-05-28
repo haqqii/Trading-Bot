@@ -241,6 +241,7 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = get_user(uid)
     tf = TIMEFRAMES[u.get('timeframe', '5')]
 
+    await update.message.chat.send_action('typing')
     await update.message.reply_text("⏳ Mengambil data harga...")
 
     stocks = list(ALL_STOCKS.items())[:30]
@@ -504,6 +505,9 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💼 Portfolio kosong\n\n/buy BBCA 8500 10")
         return
 
+    await update.message.chat.send_action('typing')
+    await update.message.reply_text("💼 Mengambil data portfolio...")
+
     msg = "💼 PORTFOLIO\n" + "="*30 + "\n\n"
     for p in pf:
         d = stock_service.get_stock_data_combined(p['ticker'] + ".JK")
@@ -548,6 +552,9 @@ async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lot = int(ctx.args[1])
         pf = u.get('portfolio', [])
 
+        await update.message.chat.send_action('typing')
+        await update.message.reply_text(f"💰 Mengambil harga {t}...")
+
         for i, p in enumerate(pf):
             if p['ticker'] == t:
                 d = stock_service.get_stock_data_combined(t + ".JK")
@@ -571,6 +578,7 @@ async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """View crypto signals - PARALLEL FETCHING"""
     start_time = time.time()
+    await update.message.chat.send_action('typing')
     await update.message.reply_text("₿ Mengambil data crypto...")
 
     tickers = list(crypto_service.crypto_pairs.keys())
@@ -587,11 +595,10 @@ async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error fetching {ticker}: {e}")
         return None
 
-    semaphore = asyncio.Semaphore(15)
+    semaphore = asyncio.Semaphore(20)
 
     async def fetch_with_semaphore(ticker):
         async with semaphore:
-            await asyncio.sleep(0.1)
             return await fetch_crypto(ticker)
 
     tasks = [fetch_with_semaphore(t) for t in tickers]
@@ -608,6 +615,7 @@ async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # === BSJP ===
 async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """BSJP - Beli Sore Jual Pagi signals"""
+    await update.message.chat.send_action('typing')
     await update.message.reply_text("🌙 Menganalisis sinyal BSJP...")
 
     tickers = list(ALL_STOCKS.keys())[:150]
@@ -654,7 +662,7 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         return None
 
-    semaphore = asyncio.Semaphore(25)
+    semaphore = asyncio.Semaphore(30)
     async def fetch_with_semaphore(ticker):
         async with semaphore:
             return await analyze_stock(ticker)
@@ -671,6 +679,7 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # === MORNING ===
 async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Morning watchlist - stocks likely to go up during the day"""
+    await update.message.chat.send_action('typing')
     await update.message.reply_text("☀️ Menganalisis rekomendasi pagi...")
 
     tickers = list(ALL_STOCKS.keys())[:100]
@@ -722,7 +731,7 @@ async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         return None
 
-    semaphore = asyncio.Semaphore(20)
+    semaphore = asyncio.Semaphore(25)
     async def fetch_with_semaphore(ticker):
         async with semaphore:
             return await analyze_stock(ticker)
@@ -822,6 +831,7 @@ async def scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     msg += "⏳ Scanning all stocks now...\n\n"
+    await update.message.chat.send_action('typing')
     await update.message.reply_text(msg, parse_mode='Markdown')
 
     # Get app from context or use global
@@ -928,6 +938,7 @@ async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         is_crypto = True
         ticker = ticker + '-USD'
 
+    await update.message.chat.send_action('typing')
     await update.message.reply_text(f"📊 Generating chart for `{ticker}`...", parse_mode='Markdown')
 
     try:
@@ -974,6 +985,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     ticker = args[0].upper()
+    await update.message.chat.send_action('typing')
     await update.message.reply_text(f"📊 Menganalisis `{ticker}`...", parse_mode='Markdown')
 
     try:

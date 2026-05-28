@@ -8,6 +8,8 @@ import yfinance as yf
 import pandas as pd
 import warnings
 import math
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache, _usd_cache
 from utils.rate_limiter import _yahoo_limiter, _coingecko_limiter, _circuit_breakers, exponential_backoff
@@ -19,6 +21,18 @@ from utils.indicators import (
 )
 
 logger = logging.getLogger(__name__)
+
+# HTTP session with connection pooling
+_cg_session = requests.Session()
+_cg_adapter = HTTPAdapter(
+    pool_connections=20,
+    pool_maxsize=20,
+    max_retries=0,
+    pool_block=False
+)
+_cg_session.mount('http://', _cg_adapter)
+_cg_session.mount('https://', _cg_adapter)
+_cg_session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 
 # Fallback crypto pairs
 _FALLBACK_CRYPTO_PAIRS = {
@@ -64,7 +78,7 @@ class CryptoService:
 
             # Fetch pages 1-5 (top 1250 coins)
             for page in [1, 2, 3, 4, 5]:
-                resp = requests.get(url, params=params, timeout=15)
+                resp = _cg_session.get(url, params=params, timeout=15)
                 if resp.status_code == 200:
                     coins = resp.json()
                     for coin in coins:
@@ -81,7 +95,7 @@ class CryptoService:
                     # Rate limited - wait and retry once
                     logger.warning(f"CoinGecko rate limited, waiting 60s...")
                     time.sleep(60)
-                    resp = requests.get(url, params=params, timeout=15)
+                    resp = _cg_session.get(url, params=params, timeout=15)
                     if resp.status_code == 200:
                         coins = resp.json()
                         for coin in coins:
@@ -125,7 +139,7 @@ class CryptoService:
         try:
             url = "https://api.coingecko.com/api/v3/simple/price"
             params = {'ids': 'tether', 'vs_currencies': 'idr'}
-            resp = requests.get(url, params=params, timeout=10)
+            resp = _cg_session.get(url, params=params, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 rate = data.get('tether', {}).get('idr', 16000)
@@ -298,16 +312,16 @@ class CryptoService:
         return None
 
     def get_crypto_data_combined(self, ticker: str, interval: str = '15m', period: str = '3d'):
-        """Get crypto data - try CoinGecko first (rate-limit friendly), then Yahoo as fallback"""
-        # Try CoinGecko first (no rate limit issues)
-        data = self.get_crypto_data_coingecko(ticker)
-        if data and not math.isnan(data.get('rsi', 50)) and data.get('rsi', 50) > 0:
-            return data
-
-        # Fallback to Yahoo if CoinGecko fails
+        """Get crypto data - try Yahoo Finance first, CoinGecko as fallback"""
+        # Try Yahoo Finance first (no rate limits)
         data = self.get_crypto_data(ticker, interval, period)
         if data and not math.isnan(data['rsi']) and data['rsi'] > 0:
             data['source'] = 'yahoo'
+            return data
+
+        # Fallback to CoinGecko if Yahoo fails
+        data = self.get_crypto_data_coingecko(ticker)
+        if data and not math.isnan(data.get('rsi', 50)) and data.get('rsi', 50) > 0:
             return data
 
         return None
@@ -342,7 +356,7 @@ class CryptoService:
                     'developer_data': 'false',
                     'sparkline': 'true'
                 }
-                resp = requests.get(url, params=params, timeout=10)
+                resp = _cg_session.get(url, params=params, timeout=10)
 
                 if resp.status_code == 429:
                     if breaker:

@@ -708,6 +708,32 @@ async def check_stock_tp_sl(app):
                         }
                     }
 
+                    # === CHECK SL FIRST ===
+                    # If SL hit, send SL notification and delete signal immediately.
+                    # Skip TP checks to avoid sending TP after SL.
+                    if current_price <= sl > 0:
+                        profit_pct = ((current_price - entry) / entry) * 100
+
+                        name = signal_data.get('name', ticker)
+                        msg = format_unified_stock_notification(
+                            notif_type='SL',
+                            ticker=ticker,
+                            name=name,
+                            entry=entry,
+                            current_price=current_price,
+                            tp1=tp1, tp2=tp2, tp3=tp3,
+                            sl=sl,
+                            analysis_data=tp_analysis,
+                            change_pct=profit_pct,
+                            profit_loss=profit_pct
+                        )
+                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        logger.info(f"SL hit: {ticker} at {current_price}")
+
+                        del signals[key]
+                        continue  # Skip TP checks for this signal
+
+                    # === CHECK TP (only if SL not hit) ===
                     # Check TP1 hit
                     if not tp_hit.get('tp1') and current_price >= tp1 > 0:
                         tp_hit['tp1'] = True
@@ -724,7 +750,7 @@ async def check_stock_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
@@ -746,7 +772,7 @@ async def check_stock_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
@@ -768,33 +794,11 @@ async def check_stock_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         logger.info(f"TP3 hit: {ticker} at {current_price}")
-
-                    # Check SL hit
-                    if current_price <= sl > 0:
-                        profit_pct = ((current_price - entry) / entry) * 100
-
-                        name = signal_data.get('name', ticker)
-                        msg = format_unified_stock_notification(
-                            notif_type='SL',
-                            ticker=ticker,
-                            name=name,
-                            entry=entry,
-                            current_price=current_price,
-                            tp1=tp1, tp2=tp2, tp3=tp3,
-                            sl=sl,
-                            analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
-                            profit_loss=profit_pct
-                        )
-                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"SL hit: {ticker} at {current_price}")
-
-                        del signals[key]
 
                 except Exception as e:
                     logger.error(f"TP/SL check error for {key}: {e}")
@@ -1264,6 +1268,34 @@ async def check_crypto_tp_sl(app):
                         }
                     }
 
+                    # === CHECK SL FIRST ===
+                    # If SL hit, send SL notification and delete signal immediately.
+                    # Skip TP checks to avoid sending TP after SL.
+                    if current_price <= sl > 0:
+                        profit_pct = ((current_price - entry) / entry) * 100
+
+                        name = signal_data.get('name', ticker)
+                        msg = format_unified_crypto_notification(
+                            notif_type='SL',
+                            ticker=ticker,
+                            name=name,
+                            entry=entry,
+                            current_price=current_price,
+                            tp1=tp1, tp2=tp2, tp3=tp3,
+                            sl=sl,
+                            analysis_data=tp_analysis,
+                            change_pct=profit_pct,
+                            profit_loss=profit_pct,
+                            usd_idr_rate=crypto_service.get_usd_idr_rate()
+                        )
+                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        logger.info(f"SL hit: {ticker} at {current_price}")
+
+                        # Remove from tracking
+                        del signals[key]
+                        continue  # Skip TP checks for this signal
+
+                    # === CHECK TP (only if SL not hit) ===
                     # Check TP1 hit
                     if not tp_hit.get('tp1') and current_price >= tp1 > 0:
                         tp_hit['tp1'] = True
@@ -1280,7 +1312,7 @@ async def check_crypto_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct,
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
@@ -1303,7 +1335,7 @@ async def check_crypto_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct,
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
@@ -1326,36 +1358,12 @@ async def check_crypto_tp_sl(app):
                             tp1=tp1, tp2=tp2, tp3=tp3,
                             sl=sl,
                             analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
+                            change_pct=profit_pct,
                             profit_loss=profit_pct,
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         logger.info(f"TP3 hit: {ticker} at {current_price}")
-
-                    # Check SL hit
-                    if current_price <= sl > 0:
-                        profit_pct = ((current_price - entry) / entry) * 100
-
-                        name = signal_data.get('name', ticker)
-                        msg = format_unified_crypto_notification(
-                            notif_type='SL',
-                            ticker=ticker,
-                            name=name,
-                            entry=entry,
-                            current_price=current_price,
-                            tp1=tp1, tp2=tp2, tp3=tp3,
-                            sl=sl,
-                            analysis_data=tp_analysis,
-                                                        change_pct=profit_pct,
-                            profit_loss=profit_pct,
-                            usd_idr_rate=crypto_service.get_usd_idr_rate()
-                        )
-                        await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"SL hit: {ticker} at {current_price}")
-
-                        # Remove from tracking
-                        del signals[key]
 
                 except Exception as e:
                     logger.error(f"TP/SL check error for {key}: {e}")
@@ -1428,8 +1436,110 @@ async def auto_save_data(app):
         logger.error(f"Auto-save error: {e}")
 
 
+# === PREFETCH FOR FAST RESPONSE ===
+# Prefetch top stocks & crypto to warm cache before user requests
+
+async def prefetch_stock_cache(app):
+    """
+    Prefetch top stocks to warm cache.
+    Runs every 2 minutes during market hours to ensure fast response.
+    Cache key format: {ticker}:{interval}:{period} (matches stock_service.py)
+    """
+    try:
+        now = now_wib()
+        is_weekend = now.weekday() >= 5
+
+        # Only prefetch during weekdays
+        if is_weekend:
+            return
+
+        # Get top 30 most traded stocks for faster user response
+        top_stocks = list(ALL_STOCKS.keys())[:30]
+
+        def prefetch_ticker(ticker):
+            """Prefetch single ticker data"""
+            try:
+                # Use same cache key format as stock_service.py: {ticker}:{interval}:{period}
+                cache_key = f"{ticker}.JK:5m:3d"
+                # Check if already cached (stock_service handles this, but double-check)
+                if _price_cache.get(cache_key):
+                    return None
+
+                # Fetch fresh data - this will auto-cache via stock_service
+                d = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '3d')
+                if d and d.get('candles', 0) >= 5:
+                    return ticker
+            except:
+                pass
+            return None
+
+        semaphore = asyncio.Semaphore(15)
+        async def prefetch_with_limit(ticker):
+            async with semaphore:
+                return await asyncio.to_thread(prefetch_ticker, ticker)
+
+        tasks = [prefetch_with_limit(t) for t in top_stocks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        cached_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
+        if cached_count > 0:
+            logger.info(f"[PREFETCH] Stock cache warmed: {cached_count}/{len(top_stocks)} stocks")
+
+    except Exception as e:
+        logger.error(f"Prefetch stock cache error: {e}")
+
+
+async def prefetch_crypto_cache(app):
+    """
+    Prefetch major crypto pairs to warm cache.
+    Runs every 5 minutes (reduced due to CoinGecko rate limits).
+    Cache key format: {ticker}_{interval}_{period} (matches crypto_service.py)
+    """
+    try:
+        # Get top 10 major crypto only (reduced due to rate limits)
+        major_crypto = list(crypto_service.crypto_pairs.keys())[:10]
+
+        def prefetch_crypto(ticker):
+            """Prefetch single crypto data"""
+            try:
+                # Check if already cached (crypto_service handles this)
+                cache_key = f"{ticker}_1h_1d"
+                if _price_cache.get(cache_key):
+                    return None
+
+                # Fetch fresh data - this will auto-cache via crypto_service
+                d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d')
+                if d and d.get('candles', 0) >= 5:
+                    return ticker
+            except:
+                pass
+            return None
+
+        semaphore = asyncio.Semaphore(3)  # Reduced from 10 to 3 to avoid rate limits
+        async def prefetch_with_limit(ticker):
+            async with semaphore:
+                return await asyncio.to_thread(prefetch_crypto, ticker)
+
+        tasks = [prefetch_with_limit(t) for t in major_crypto]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        cached_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
+        if cached_count > 0:
+            logger.info(f"[PREFETCH] Crypto cache warmed: {cached_count}/{len(major_crypto)} pairs")
+
+    except Exception as e:
+        logger.error(f"Prefetch crypto cache error: {e}")
+
+
 def register_jobs(app):
     """Register all background jobs to the application"""
+    # === PREFETCH JOBS (run first to warm cache) ===
+    # Prefetch stock cache every 2 minutes during market hours
+    app.job_queue.run_repeating(prefetch_stock_cache, interval=120, first=5)
+
+    # Prefetch crypto cache every 5 minutes (reduced due to CoinGecko rate limits)
+    app.job_queue.run_repeating(prefetch_crypto_cache, interval=300, first=10)
+
     # Favorit alerts check every 2 minutes
     app.job_queue.run_repeating(check_favorit_alerts, interval=120, first=30)
 
