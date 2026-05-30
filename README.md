@@ -1,22 +1,22 @@
 # 🤖 IDX Stock & Crypto Signal Bot
 
-Bot Telegram untuk mendapatkan sinyal trading saham Indonesia dan crypto berbasis analisis teknikal.
+Telegram bot for getting Indonesian stock and crypto trading signals based on technical analysis.
 
-## 📁 Struktur Project
+## 📁 Project Structure
 
 ```
 Bot Saham 2/
 ├── main.py                 # Entry point
-├── config/                 # Konfigurasi
+├── config/                 # Configuration
 │   ├── settings.py         # Settings & TIMEFRAMES
 │   └── __init__.py
 ├── handlers/               # Command handlers
-│   ├── command_handlers.py # Semua command handler
+│   ├── command_handlers.py # All command handlers
 │   ├── scheduler.py        # Background jobs
 │   └── __init__.py
 ├── services/               # Business logic
-│   ├── stock_service.py    # Data saham
-│   ├── crypto_service.py    # Data crypto
+│   ├── stock_service.py    # Stock data
+│   ├── crypto_service.py    # Crypto data
 │   ├── signal_service.py    # Signal generation
 │   ├── chart_service.py     # Chart generation
 │   └── __init__.py
@@ -29,201 +29,201 @@ Bot Saham 2/
 └── README.md
 ```
 
-## 📋 Fitur
+## 📋 Features
 
-### Saham (IDX)
-- **📊 Harga Saham** - Lihat harga real-time saham IDX populer
-- **🎯 Sinyal Trading** - Sinyal BUY/SELL berbasis multi-indikator (RSI, MACD, Bollinger Bands, Volume)
+### Stocks (IDX)
+- **📊 Stock Price** - View real-time prices of popular IDX stocks
+- **🎯 Trading Signals** - BUY/SELL signals based on multi-indicators (RSI, MACD, Bollinger Bands, Volume)
 - **⭐ Quality Rating** - Signal strength: STRONG (⭐), MODERATE (✨), WEAK (💫)
-- **🌙 BSJP (Beli Sore Jual Pagi)** - Rekomendasi intraday: buy sore, sell pagi
-- **☀️ Morning Watchlist** - Rekomendasi saham sebelum market open (via notifikasi)
-- **📈 Price Alert** - Notifikasi real-time jika harga naik/turun signifikan
-- **🎯 TP/SL Tracking** - Notifikasi otomatis saat TP atau SL tercapai
-- **⭐ Favorit** - Pantau saham/crypto favorit Anda (manual add)
-- **💼 Portfolio Tracker** - Catat dan lacak posisi Anda
+- **🌙 BSJP (Buy Afternoon Sell Morning)** - Intraday recommendation: buy in afternoon, sell in morning
+- **☀️ Morning Watchlist** - Stock recommendations before market open (via notification)
+- **📈 Price Alert** - Real-time notification when price rises/falls significantly
+- **🎯 TP/SL Tracking** - Auto notification when TP or SL is reached
+- **⭐ Favorites** - Monitor your favorite stocks/crypto (manual add)
+- **💼 Portfolio Tracker** - Record and track your positions
 
 ### Crypto (24/7)
-- **₿ Sinyal Crypto** - Sinyal untuk 250+ crypto pairs
-- **💰 Dual Currency** - Tampilan harga dalam USD dan IDR
-- **📈 Price Alert** - Notifikasi real-time pergerakan harga crypto
-- **🎯 TP/SL Tracking** - Auto-notifikasi saat target tercapai (TP1, TP2, TP3, SL)
+- **₿ Crypto Signals** - Signals for 250+ crypto pairs
+- **💰 Dual Currency** - Price display in USD and IDR
+- **📈 Price Alert** - Real-time notification for crypto price movements
+- **🎯 TP/SL Tracking** - Auto notification when targets are reached (TP1, TP2, TP3, SL)
 
-### Analisis Teknikal (Multi-Indicator Scoring)
+### Technical Analysis (Multi-Indicator Scoring)
 - **RSI (Relative Strength Index)** - Overbought/Oversold detection
 - **MACD (Moving Average Convergence Divergence)** - Trend confirmation
 - **Bollinger Bands** - Volatility bands & price channel
 - **Volume Analysis** - Volume spike detection
 - **MA Crossover** - Golden cross / Death cross
-- **Stochastic Oscillator** - Momentum dengan %K dan %D crossover
-- **VWAP (Volume Weighted Average Price)** - Average price berdasarkan volume
+- **Stochastic Oscillator** - Momentum with %K and %D crossover
+- **VWAP (Volume Weighted Average Price)** - Average price based on volume
 - **ADX (Average Directional Index)** - Trend strength & direction
 - **Ichimoku Cloud** - Cloud analysis (Tenkan, Kijun, Senkou)
 - **Fibonacci Retracement** - Support/resistance levels (23.6%, 38.2%, 50%, 61.8%)
-- **Weighted Scoring** - Kombinasi semua indikator dengan bobot
-- **Interactive Charts** - Chart harga dengan RSI, MACD, Volume (via `/chart`)
+- **Weighted Scoring** - Combination of all indicators with weights
+- **Interactive Charts** - Price chart with RSI, MACD, Volume (via `/chart`)
 
-### Notifikasi
-- **Notifikasi Saham** - TP/SL hit (09:00-15:00)
-- **Notifikasi Favorit** - Alert jika harga berubah ≥1% (saham & crypto)
-- **Notifikasi Morning** - Sinyal saham sebelum market open (07:15)
-- **Notifikasi Crypto** - Aktif 24/7
-- **Notifikasi BSJP** - Otomatis jam 15:00 (sebelum market close)
+### Notifications
+- **Stock Notifications** - TP/SL hit (09:00-15:00)
+- **Favorites Notifications** - Alert if price changes ≥1% (stocks & crypto)
+- **Morning Notifications** - Stock signals before market open (07:15)
+- **Crypto Notifications** - Active 24/7
+- **BSJP Notifications** - Auto at 15:00 (before market close)
 
-## 🚀 Cara Install
+## 🚀 Installation
 
-1. **Clone atau download repositori ini**
+1. **Clone or download this repository**
 
 2. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Dapatkan Token Bot:**
-   - Buka Telegram
-   - Cari @BotFather
-   - Ketik `/newbot`
-   - Ikuti instruksi dan simpan token bot Anda
+3. **Get Bot Token:**
+   - Open Telegram
+   - Search for @BotFather
+   - Type `/newbot`
+   - Follow instructions and save your bot token
 
-4. **Buat file `.env`:**
+4. **Create `.env` file:**
 ```bash
-TELEGRAM_BOT_TOKEN=token_anda_disini
+TELEGRAM_BOT_TOKEN=your_bot_token_here
 ```
 
-## ▶️ Cara Menjalankan
+## ▶️ Running
 
 ```bash
 python main.py
 ```
 
-atau klik `start.bat` (Windows)
+or click `start.bat` (Windows)
 
-## 📱 Cara Menggunakan
+## 📱 How to Use
 
 ### Button Menu
 
-| Button | Fungsi |
-|--------|--------|
-| `📊 Harga` | Daftar harga saham |
-| `🎯 Sinyal` | Sinyal saham BUY terbaik hari ini |
-| `⭐ Favorit` | Saham/crypto favorit + toggle notifikasi |
-| `🌙 BSJP` | Beli Sore Jual Pagi |
-| `⏱️ TF` | Pilih timeframe |
-| `💼 Portfolio` | Portfolio user |
-| `🔔 Notifikasi` | Setting notifikasi (menu toggle) |
-| `₿ Crypto` | Sinyal crypto |
+| Button | Function |
+|--------|----------|
+| `📊 Harga` | Stock price list |
+| `🎯 Sinyal` | Best BUY signals today |
+| `⭐ Favorit` | Favorite stocks/crypto + notification toggle |
+| `🌙 BSJP` | Buy Afternoon Sell Morning |
+| `⏱️ TF` | Select timeframe |
+| `💼 Portfolio` | User portfolio |
+| `🔔 Notifikasi` | Notification settings (toggle menu) |
+| `₿ Crypto` | Crypto signals |
 
 ### Commands
 
-| Command | Deskripsi |
-|---------|-----------|
-| `/start` | Mulai bot dan lihat menu utama |
-| `/analisa [KODE]` | Analisis teknikal detail (saham/crypto) |
-| `/harga` | Lihat daftar harga saham |
-| `/sinyal` atau `/pagi` atau `/morning` | Morning Watchlist |
-| `/favorit` atau `/fav` | Lihat favorit |
-| `/bsjp` | Rekomendasi BSJP (Beli Sore Jual Pagi) |
-| `/crypto` | Sinyal crypto |
-| `/tf` atau `/timeframe` | Pilih timeframe (1m, 5m, 15m, 60m) |
-| `/add [KODE]` | Tambah saham ke favorit |
-| `/remove [KODE]` | Hapus dari favorit |
-| `/portfolio` atau `/pf` | Lihat portfolio |
-| `/buy [KODE] [HARGA] [LOT]` | Catat posisi buy |
-| `/sell [KODE] [LOT]` | Catat posisi sell |
-| `/notifikasi` atau `/notif` | Menu pengaturan notifikasi |
-| `/help` atau `/bantuan` | Daftar command |
-| `/chart [KODE] [TF] [PERIOD]` atau `/c` | Generate chart |
+| Command | Description |
+|---------|-------------|
+| `/start` | Start bot and view main menu |
+| `/analisa [CODE]` | Detailed technical analysis (stock/crypto) |
+| `/harga` | View stock price list |
+| `/sinyal` or `/pagi` or `/morning` | Morning Watchlist |
+| `/favorit` or `/fav` | View favorites |
+| `/bsjp` | BSJP recommendation (Buy Afternoon Sell Morning) |
+| `/crypto` | Crypto signals |
+| `/tf` or `/timeframe` | Select timeframe (1m, 5m, 15m, 60m) |
+| `/add [CODE]` | Add stock to favorites |
+| `/remove [CODE]` | Remove from favorites |
+| `/portfolio` or `/pf` | View portfolio |
+| `/buy [CODE] [PRICE] [LOT]` | Record buy position |
+| `/sell [CODE] [LOT]` | Record sell position |
+| `/notifikasi` or `/notif` | Notification settings menu |
+| `/help` or `/bantuan` | Command list |
+| `/chart [CODE] [TF] [PERIOD]` or `/c` | Generate chart |
 
-### Menu Notifikasi (🔔)
+### Notification Menu (🔔)
 
-Klik tombol **🔔 Notifikasi** untuk toggle:
+Click **🔔 Notifikasi** button to toggle:
 
-| Setting | Deskripsi |
-|---------|-----------|
-| Sinyal Saham | Notifikasi TP/SL saham |
-| Sinyal Crypto | Notifikasi sinyal crypto 24/7 |
-| BSJP | Notifikasi Beli Sore Jual Pagi |
-| Alert Favorit | Alert harga di favorit |
-| Sinyal Pagi | Notifikasi morning watchlist |
+| Setting | Description |
+|---------|-------------|
+| Sinyal Saham | Stock TP/SL notifications |
+| Sinyal Crypto | Crypto signals 24/7 |
+| BSJP | Buy Afternoon Sell Morning notification |
+| Alert Favorit | Price alert on favorites |
+| Sinyal Pagi | Morning watchlist notification |
 
 ### Price Alerts
 
-| Command | Deskripsi |
-|---------|-----------|
-| `/alertbuy [KODE] [HARGA]` | Alert jika harga turun ke target |
-| `/alertsell [KODE] [HARGA]` | Alert jika harga naik ke target |
-| `/alerts` | Lihat semua alerts |
-| `/alertdel [KODE]` | Hapus alert |
+| Command | Description |
+|---------|-------------|
+| `/alertbuy [CODE] [PRICE]` | Alert when price drops to target |
+| `/alertsell [CODE] [PRICE]` | Alert when price rises to target |
+| `/alerts` | View all alerts |
+| `/alertdel [CODE]` | Delete alert |
 
 ### Chart Commands
 
-| Command | Deskripsi |
-|---------|-----------|
-| `/chart [KODE] [TF] [PERIOD]` | Generate price chart |
-| `/chart BTC-USD` | Chart BTC default (1h, 5d) |
-| `/chart BBCA 15m 5d` | Chart BBCA 15 menit, 5 hari |
-| `/c` | Alias untuk `/chart` |
+| Command | Description |
+|---------|-------------|
+| `/chart [CODE] [TF] [PERIOD]` | Generate price chart |
+| `/chart BTC-USD` | BTC chart default (1h, 5d) |
+| `/chart BBCA 15m 5d` | BBCA chart 15 minutes, 5 days |
+| `/c` | Alias for `/chart` |
 
-### Contoh Penggunaan
+### Usage Examples
 
 ```
-/start              → Mulai bot
-/favorit            → Lihat favorit
-/add BBCA BREN     → Tambah saham ke favorit
-/tf 15              → Ganti timeframe ke 15 menit
-/crypto             → Lihat sinyal crypto
-/bsjp               → Rekomendasi BSJP
-/notifikasi         → Menu pengaturan notifikasi
-/alertbuy BBCA 9000 → Alert jika BBCA turun ke 9000
+/start              → Start bot
+/favorit            → View favorites
+/add BBCA BREN     → Add stock to favorites
+/tf 15              → Change timeframe to 15 minutes
+/crypto             → View crypto signals
+/bsjp               → BSJP recommendation
+/notifikasi         → Notification settings menu
+/alertbuy BBCA 9000 → Alert when BBCA drops to 9000
 /chart BBCA 1h 5d   → Generate chart
 ```
 
 ## 📊 Data Source
 
-Bot menggunakan multiple data source sebagai fallback:
+Bot uses multiple data sources as fallback:
 
-1. **Yahoo Finance** - Primary untuk saham dan crypto
-2. **TradingView** - Fallback untuk data saham
-3. **Finnhub** - Fallback terakhir (daftar gratis di https://finnhub.io)
-4. **CoinGecko** - Fallback untuk data crypto dan kurs USD/IDR
+1. **Yahoo Finance** - Primary for stocks and crypto
+2. **TradingView** - Fallback for stock data
+3. **Finnhub** - Last fallback (free registration at https://finnhub.io)
+4. **CoinGecko** - Fallback for crypto data and USD/IDR exchange rate
 
 ### API Key Setup
 
-Tambahkan API key di file `.env`:
+Add API key in `.env` file:
 ```bash
 FINNHUB_API_KEY=your_finnhub_api_key
 ```
 
 ### API Protection
-- **Rate Limiting**: Batasan request per menit
-- **Circuit Breaker**: Auto-reset setiap 15 detik saat API error
-- **Exponential Backoff**: Retry dengan delay yang increasing
-- **In-Memory Caching**: Cache data untuk kurangi API calls
+- **Rate Limiting**: Request limit per minute
+- **Circuit Breaker**: Auto-reset every 15 seconds on API error
+- **Exponential Backoff**: Retry with increasing delay
+- **In-Memory Caching**: Cache data to reduce API calls
 
-## ⏰ Jadwal Notifikasi
+## ⏰ Notification Schedule
 
-| Notifikasi | Jadwal | Jam Aktif |
-|------------|--------|-----------|
-| Morning | Sekali sehari | 07:15 (weekdays) |
-| Alert Favorit Saham | Setiap 2 menit | 08:00-16:00 (weekdays) |
-| Alert Favorit Crypto | Setiap 2 menit | 24/7 |
-| Crypto Signals | Setiap 5 menit | 24/7 |
-| Crypto TP/SL | Setiap 2 menit | 24/7 |
-| BSJP | Sekali sehari | 15:00 (weekdays) |
-| Price Alerts | Setiap 1 menit | 08:00-16:00 (weekdays) |
+| Notification | Schedule | Active Time |
+|-------------|----------|-------------|
+| Morning | Once daily | 07:15 (weekdays) |
+| Stock Favorites Alert | Every 2 minutes | 08:00-16:00 (weekdays) |
+| Crypto Favorites Alert | Every 2 minutes | 24/7 |
+| Crypto Signals | Every 5 minutes | 24/7 |
+| Crypto TP/SL | Every 2 minutes | 24/7 |
+| BSJP | Once daily | 15:00 (weekdays) |
+| Price Alerts | Every 1 minute | 08:00-16:00 (weekdays) |
 
-## 📈 Contoh Output
+## 📈 Sample Output
 
-### Sinyal Crypto Notification
+### Crypto Signal Notification
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🟢 *₿ CRYPTO SIGNAL - REKOMENDASI BELI*
+🟢 *₿ CRYPTO SIGNAL - BUY RECOMMENDATION*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📌 *Bitcoin (BTC)*
 💸 Gain: -1.0% → +6.0% ⚡️
 
 🤖 CRYPTO SIGNAL DETECTED
-📅 Detected: 25 Apr 2026 pukul 10:30 WIB 🔍
+📅 Detected: 25 Apr 2026 at 10:30 WIB 🔍
 
 📈 Chart Pattern: UPTREND
 📊 Reliability: 72%
@@ -237,35 +237,35 @@ FINNHUB_API_KEY=your_finnhub_api_key
 😱 Fear & Greed: 45 - 🔴 Fear
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ 25 Apr 2026 pukul 10:30 WIB
+⏰ 25 Apr 2026 at 10:30 WIB
 ₿ IDX Crypto Bot
 ```
 
 ### TP/SL Notifications
 ```
-🏆 *₿ TP1 TERKUNCI! +2%*
-💰 *₿ TP2 TERKUNCI! +4%*
-💰 *₿ TP3 TERCAPAI!*
-🔴 *₿ CUT LOSS - SL TERKENA!*
+🏆 *₿ TP1 LOCKED! +2%*
+💰 *₿ TP2 LOCKED! +4%*
+💰 *₿ TP3 ACHIEVED!*
+🔴 *₿ CUT LOSS - SL HIT!*
 ```
 
 ## 📊 Signal Quality
 
 | Quality | Badge | Score | Description |
 |---------|-------|-------|-------------|
-| STRONG | ⭐ | ≥60 | 4+ indikator konfirmasi |
-| MODERATE | ✨ | 45-59 | 3 indikator konfirmasi |
-| WEAK | 💫 | 35-44 | 2 indikator konfirmasi |
-| EARLY | 🟡 | 25-34 | 1 indikator konfirmasi (early signal) |
+| STRONG | ⭐ | ≥60 | 4+ indicator confirmations |
+| MODERATE | ✨ | 45-59 | 3 indicator confirmations |
+| WEAK | 💫 | 35-44 | 2 indicator confirmations |
+| EARLY | 🟡 | 25-34 | 1 indicator confirmation (early signal) |
 
 **Minimum BUY/SELL threshold: 35**
 
 ## 📐 Indicator Scoring (Weighted)
 
-### Saham (IDX)
+### Stocks (IDX)
 
-| Indikator | Bobot | BUY Signal | SELL Signal |
-|-----------|-------|------------|-------------|
+| Indicator | Weight | BUY Signal | SELL Signal |
+|-----------|--------|------------|-------------|
 | RSI | 25% | <30 oversold | >70 overbought |
 | MA Crossover | 20% | Golden cross | Death cross |
 | MACD | 25% | MACD > Signal + hist (+) | MACD < Signal + hist (-) |
@@ -274,8 +274,8 @@ FINNHUB_API_KEY=your_finnhub_api_key
 
 ### Crypto
 
-| Indikator | Bobot | BUY Signal | SELL Signal |
-|-----------|-------|------------|-------------|
+| Indicator | Weight | BUY Signal | SELL Signal |
+|-----------|--------|------------|-------------|
 | RSI | 15% | <35 oversold | >70 overbought |
 | MA Crossover | 10% | Golden cross | Death cross |
 | MACD | 15% | MACD > Signal + hist (+) | MACD < Signal + hist (-) |
@@ -288,8 +288,8 @@ FINNHUB_API_KEY=your_finnhub_api_key
 
 ## ⚠️ Disclaimer
 
-Bot ini hanya alat bantu analisis. Keputusan trading adalah tanggung jawab Anda sendiri. Selalu lakukan riset sebelum trading.
+This bot is only an analysis tool. Trading decisions are your own responsibility. Always do your research before trading.
 
-## 📝 Lisensi
+## 📝 License
 
 MIT License
