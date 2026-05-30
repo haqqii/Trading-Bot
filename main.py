@@ -155,10 +155,17 @@ def main():
         # Debug: Log user data status AFTER set
         logger.info(f"[MAIN] Users after set_user_db: {len(ch.user_data_db)}")
 
-        # Create application
+        # Create application with custom timeouts
         sys.stdout.write("CREATING_APP\n")
         sys.stdout.flush()
-        app = Application.builder().token(BOT_TOKEN).build()
+        app = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .read_timeout(60)
+            .write_timeout(60)
+            .connect_timeout(30)
+            .build()
+        )
 
         # Register handlers and jobs
         sys.stdout.write("REGISTERING_HANDLERS\n")

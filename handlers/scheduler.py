@@ -5,7 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
-from services.stock_service import stock_service
+from services.stock_service import stock_service, FINNHUB_API_KEY
 from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from utils.formatters import format_unified_crypto_notification, format_unified_stock_notification
@@ -32,10 +32,12 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
     """
     Get stock data with stale cache fallback.
     Returns (data, is_stale) tuple.
+    Uses same cache key format as stock_service: {ticker}:{interval}:{period}
     """
-    cache_key = f"stock_{ticker}_{interval}_{period}"
+    # Use same cache key format as stock_service for cache hits
+    cache_key = f"{ticker}:{interval}:{period}"
 
-    # Check cache first before API call
+    # Check cache first - use stock_service's cache key format
     cached = _price_cache.get(cache_key)
     if cached and cached.get('candles', 0) >= 5:
         return cached, False
@@ -43,11 +45,19 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
     # Try fresh data
     d = stock_service.get_stock_data_combined(ticker, interval, period)
     if d and d.get('candles', 0) >= 5:
-        _price_cache.set(cache_key, d, ttl=180)  # 3 min cache
+        # Also cache with fallback key format for other callers
+        fallback_key = f"stock_{ticker}_{interval}_{period}"
+        _price_cache.set(fallback_key, d, ttl=180)  # 3 min cache
         return d, False
 
-    # Try stale cache
+    # Try stale cache (check both key formats)
     stale_d = _price_cache.get_stale(cache_key)
+    if stale_d and stale_d.get('candles', 0) >= 5:
+        logger.warning(f"Using stale cache for {ticker} (API may be down)")
+        return stale_d, True
+
+    fallback_key = f"stock_{ticker}_{interval}_{period}"
+    stale_d = _price_cache.get_stale(fallback_key)
     if stale_d and stale_d.get('candles', 0) >= 5:
         logger.warning(f"Using stale cache for {ticker} (API may be down)")
         return stale_d, True
@@ -100,6 +110,13 @@ def _get_last_buy_signals():
     """Get last buy signals - reads directly from command_handlers"""
     import handlers.command_handlers as ch
     return ch.last_buy_signals
+
+def _remove_signal(key: str):
+    """Remove signal from persisted storage"""
+    import handlers.command_handlers as ch
+    if key in ch.last_buy_signals:
+        del ch.last_buy_signals[key]
+        logger.debug(f"Signal removed from storage: {key}")
 
 # Signal retention settings
 SIGNAL_MAX_AGE_DAYS = 7
@@ -274,8 +291,8 @@ async def check_bsjp_signals(app):
         now = now_wib()
         is_weekend = now.weekday() >= 5
 
-        # Widen window: 15:00 - 15:05 WIB (5 minute window to avoid misfires)
-        is_bsjp_time = (now.hour == 15 and now.minute <= 5)
+        # Window: 15:00 - 15:30 WIB (30 minute window)
+        is_bsjp_time = (now.hour == 15 and now.minute <= 30)
 
         if is_weekend:
             logger.info("[BSJP] Weekend - skipping")
@@ -540,8 +557,24 @@ async def check_stock_signals(app):
                         if i > 0:
                             await asyncio.sleep(60)  # Delay 60 detik antar notifikasi
 
-                        # Fetch fresh data for current price (avoid stale data)
+                        # Fetch FRESHEST data for current price - try multiple methods to ensure we have the latest price
+                        fresh_d = None
+
+                        # Method 1: Try with 1d period (most recent data)
                         fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '5m', '1d')
+
+                        # Method 2: If Method 1 failed, try with 1h period
+                        if not fresh_d:
+                            fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '1d')
+
+                        # Method 3: If still failed, try TradingView directly
+                        if not fresh_d:
+                            fresh_d = stock_service.get_stock_data_tradingview(ticker)
+
+                        # Method 4: If ALL methods failed, use Finnhub as last resort
+                        if not fresh_d and FINNHUB_API_KEY:
+                            fresh_d = stock_service.get_stock_data_finnhub(ticker)
+
                         if fresh_d:
                             d = fresh_d
                             # Recalculate entry based on current price
@@ -558,6 +591,9 @@ async def check_stock_signals(app):
                             s['tp3'] = entry_price + (3 * atr)
                             s['sl'] = entry_price - (2 * atr)
                             s['rsi'] = d.get('rsi', 50)
+                            logger.info(f"[STOCK] Fresh price for {ticker}: {entry_price:,.0f} from {d.get('source', 'unknown')}")
+                        else:
+                            logger.warning(f"[STOCK] Could not fetch fresh data for {ticker}, using original entry: {s.get('entry', 0):,.0f}")
 
                         quality = s.get('quality', 'WEAK')
                         quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45}.get(quality, 50)
@@ -742,9 +778,10 @@ async def check_stock_tp_sl(app):
                             profit_loss=profit_pct
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"SL hit: {ticker} at {current_price}")
+                        logger.info(f"SL hit: {ticker} at {current_price} - Position closed")
 
                         del signals[key]
+                        _remove_signal(key)  # Also remove from persisted storage
                         continue  # Skip TP checks for this signal
 
                     # === CHECK TP (only if SL not hit) ===
@@ -812,7 +849,12 @@ async def check_stock_tp_sl(app):
                             profit_loss=profit_pct
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"TP3 hit: {ticker} at {current_price}")
+                        logger.info(f"TP3 hit: {ticker} at {current_price} - Position closed (target achieved)")
+
+                        # Auto-remove from tracking after TP3 (position closed)
+                        del signals[key]
+                        _remove_signal(key)  # Also remove from persisted storage
+                        continue  # Skip remaining checks for this signal
 
                 except Exception as e:
                     logger.error(f"TP/SL check error for {key}: {e}")
@@ -1162,6 +1204,23 @@ async def check_crypto_signals(app):
                         if i > 0:
                             await asyncio.sleep(60)  # Delay 60 detik antar notifikasi
 
+                        # Fetch FRESHEST data for current price - try multiple methods
+                        fresh_d, _ = get_crypto_data_with_fallback(ticker, '1h', '1d')
+
+                        if fresh_d:
+                            d = fresh_d
+                            # Recalculate entry based on current price
+                            entry_price = d['price']
+                            atr = d.get('atr', entry_price * 0.02)
+                            s['entry'] = entry_price
+                            s['tp1'] = entry_price + (1 * atr)
+                            s['tp2'] = entry_price + (2 * atr)
+                            s['tp3'] = entry_price + (3 * atr)
+                            s['sl'] = entry_price - (2 * atr)
+                            logger.info(f"[CRYPTO] Fresh price for {ticker}: ${entry_price:,.2f} from {d.get('source', 'unknown')}")
+                        else:
+                            logger.warning(f"[CRYPTO] Could not fetch fresh data for {ticker}, using original entry: ${s.get('entry', 0):,.2f}")
+
                         quality = s.get('quality', 'WEAK')
                         quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45, 'EARLY': 35}.get(quality, 50)
 
@@ -1314,10 +1373,11 @@ async def check_crypto_tp_sl(app):
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"SL hit: {ticker} at {current_price}")
+                        logger.info(f"SL hit: {ticker} at {current_price} - Position closed")
 
                         # Remove from tracking
                         del signals[key]
+                        _remove_signal(key)  # Also remove from persisted storage
                         continue  # Skip TP checks for this signal
 
                     # === CHECK TP (only if SL not hit) ===
@@ -1388,7 +1448,12 @@ async def check_crypto_tp_sl(app):
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"TP3 hit: {ticker} at {current_price}")
+                        logger.info(f"TP3 hit: {ticker} at {current_price} - Position closed (target achieved)")
+
+                        # Auto-remove from tracking after TP3 (position closed)
+                        del signals[key]
+                        _remove_signal(key)  # Also remove from persisted storage
+                        continue  # Skip remaining checks for this signal
 
                 except Exception as e:
                     logger.error(f"TP/SL check error for {key}: {e}")

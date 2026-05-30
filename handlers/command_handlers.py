@@ -14,7 +14,8 @@ from services.stock_service import stock_service
 from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from services.chart_service import chart_service
-from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg
+from services.news_service import news_service
+from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg, format_analisa_simple
 from utils.rate_limiter import get_all_api_stats
 from utils.cache import _price_cache, _signal_cache
 from idx_stocks import ALL_IDX_STOCKS
@@ -972,6 +973,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Analisis saham atau crypto dengan format lengkap"""
     args = ctx.args
 
+    logger.info(f"[ANALISA] Command received: {args}")
+
     if not args:
         await update.message.reply_text(
             "📊 *Analisis Saham/Crypto*\n\n"
@@ -985,8 +988,20 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     ticker = args[0].upper()
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text(f"📊 Menganalisis `{ticker}`...", parse_mode='Markdown')
+    logger.info(f"[ANALISA] Replying immediately for {ticker}")
+
+    # Reply immediately to user (with error handling for network issues)
+    reply_msg = None
+    try:
+        reply_msg = await update.message.reply_text(
+            f"📊 Menganalisis `{ticker}`...",
+            parse_mode='Markdown',
+            read_timeout=120,
+            write_timeout=120
+        )
+        logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
+    except Exception as reply_err:
+        logger.error(f"[ANALISA] Failed to send immediate reply: {reply_err}")
 
     try:
         # Load crypto pairs if not loaded
@@ -1045,288 +1060,29 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             # Generate signal
             s = signal_service.generate_crypto_signal(d)
+            if s is None:
+                s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
 
-            price = d['price']
-            rsi = d.get('rsi', 50)
-            change = d.get('change', 0)
-            ma_fast = d.get('ma_fast', price)
-            ma_slow = d.get('ma_slow', price)
-            macd = d.get('macd', 0)
-            macd_signal = d.get('macd_signal', 0)
-            macd_hist = d.get('macd_hist', 0)
-            bb_upper = d.get('bb_upper', price * 1.05)
-            bb_middle = d.get('bb_middle', price)
-            bb_lower = d.get('bb_lower', price * 0.95)
-            volume_ratio = d.get('volume_ratio', 1)
-            atr = d.get('atr', price * 0.02)
-            name = d.get('name', ticker)
-            candles = d.get('candles', 0)
-            usd_idr = crypto_service.get_usd_idr_rate()
-
-            bb_pos = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper != bb_lower else 0.5
-            upside = (bb_upper - price) / price * 100
-            downside = (price - bb_lower) / price * 100
-            price_idr = price * usd_idr
-
-            # Detect chart patterns
-            patterns_detected = []
-            pattern_summary = ""
+            # Fetch news and sentiment for crypto (run in thread to not block)
+            clean_ticker = ticker.replace('-USD', '').replace('-USDT', '').upper()
+            sentiment = None
             try:
-                if d.get('raw_df') is not None and len(d.get('raw_df', [])) >= 30:
-                    from utils.patterns import detect_all_patterns
-                    patterns = detect_all_patterns(d['raw_df'])
-                    if patterns.get('patterns_found', 0) > 0:
-                        pattern_list = patterns.get('pattern_list', [])
-                        for p in pattern_list[:3]:
-                            emoji = "🟢" if p.get('bullish') else "🔴" if p.get('bearish') else "🟡"
-                            strength = p.get('strength', 0)
-                            strength_bar = "█" * int(strength * 5)
-                            patterns_detected.append({
-                                'emoji': emoji,
-                                'name': p.get('name', 'Unknown'),
-                                'strength_bar': strength_bar,
-                                'description': p.get('description', '')
-                            })
-                        pattern_summary = patterns.get('pattern_summary', '')
+                result = await asyncio.to_thread(news_service.get_crypto_news, clean_ticker)
+                if result and len(result) >= 2:
+                    articles, sentiment = result[0], result[1]
             except Exception as e:
-                logger.debug(f"Pattern detection error: {e}")
+                logger.warning(f"Failed to fetch crypto news for {clean_ticker}: {e}")
 
-            # RSI status
-            if rsi < 30:
-                rsi_status = "⚠️ OVERSOLD"
-            elif rsi < 40:
-                rsi_status = "🟢 BULLISH"
-            elif rsi > 70:
-                rsi_status = "⚠️ OVERBOUGHT"
-            elif rsi > 60:
-                rsi_status = "🔴 BEARISH"
-            else:
-                rsi_status = "🟢 NETRAL"
-
-            # MA status
-            if ma_fast > ma_slow:
-                ma_status = "🟢 GOLDEN CROSS"
-                ma_golden = True
-            else:
-                ma_status = "🔴 DEATH CROSS"
-                ma_golden = False
-
-            # MACD status
-            macd_status = "🟢 POSITIF" if macd > 0 else "🔴 NEGATIF"
-            if macd > macd_signal:
-                macd_cross = "🟢 CROSS UP"
-                macd_bullish = True
-            else:
-                macd_cross = "🔴 CROSS DOWN"
-                macd_bullish = False
-
-            macd_hist_status = "🟢 BULLISH" if macd_hist > 0 else "🔴 BEARISH"
-
-            # Volume status
-            if volume_ratio > 1.5:
-                vol_status = "✅ SPIKE"
-            elif volume_ratio > 1.0:
-                vol_status = "✅ TINGGI"
-            else:
-                vol_status = "⚠️ RENDAH"
-
-            # Signal
-            signal = s.get('signal', 'HOLD')
-            quality = s.get('quality', 'WEAK')
-            buy_score = s.get('buy_score', 0)
-            sell_score = s.get('sell_score', 0)
-
-            if signal == 'BUY':
-                signal_emoji = "🟢"
-            elif signal == 'SELL':
-                signal_emoji = "🔴"
-            else:
-                signal_emoji = "⚪"
-
-            # Build bullish/bearish reasons
-            bullish_reasons = []
-            bearish_reasons = []
-
-            if rsi < 35:
-                bullish_reasons.append(f"RSI {rsi:.0f} Oversold")
-            elif rsi > 65:
-                bearish_reasons.append(f"RSI {rsi:.0f} Overbought")
-            if ma_golden:
-                bullish_reasons.append("MA Golden Cross")
-            else:
-                bearish_reasons.append("MA Death Cross")
-            if macd_bullish:
-                bullish_reasons.append("MACD Bullish")
-            else:
-                bearish_reasons.append("MACD Bearish")
-            if volume_ratio > 1.5:
-                bullish_reasons.append(f"Volume Spike {volume_ratio:.1f}x")
-            if change > 2:
-                bullish_reasons.append(f"Harga naik +{change:.1f}%")
-            elif change < -2:
-                bearish_reasons.append(f"Harga turun {change:.1f}%")
-
-            # Build message with comprehensive format
-            bb_pos = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper != bb_lower else 0.5
-            upside = (bb_upper - price) / price * 100
-            downside = (price - bb_lower) / price * 100
-
-            # Conflict detection
-            has_conflict = (rsi < 35 and not ma_golden) or (rsi > 65 and ma_golden)
-
-            msg = f"""● Analisis {name.upper()} ({ticker})
-
-┌──────────────────────────────────────────────────────┐
-│                    📊 OVERVIEW                       │
-├──────────────────────────────────────────────────────┤
-│  Harga      : ${price:,.2f} ({price_idr:,.0f} IDR)  │
-│  Change     : {change:+.2f}%                        │
-│  RSI        : {rsi:.1f} {rsi_status}              │
-│  Candles    : {candles}                            │
-└──────────────────────────────────────────────────────┘
-
-📈 INDIKATOR TEKNIKAL
-
-┌──────────────┬──────────────┬──────────────────────┐
-│  Indikator   │ Value        │ Status               │
-├──────────────┼──────────────┼──────────────────────┤
-│ RSI          │ {rsi:,.1f}       │ {rsi_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ MA Fast      │ ${ma_fast:,.2f}    │ {"Di atas harga" if ma_fast > price else "Di bawah harga"}     │
-├──────────────┼──────────────┼──────────────────────┤
-│ MA Slow      │ ${ma_slow:,.2f}    │ {"Di atas harga" if ma_slow > price else "Di bawah harga"}     │
-├──────────────┼──────────────┼──────────────────────┤
-│ MACD         │ {macd:,.2f}       │ {macd_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ MACD Hist    │ {macd_hist:,.2f}      │ {macd_hist_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ BB Lower     │ ${bb_lower:,.2f}    │ Dekat support     │
-├──────────────┼──────────────┼──────────────────────┤
-│ Volume Ratio │ {volume_ratio:.2f}x      │ {vol_status:<20} │
-└──────────────┴──────────────┴──────────────────────┘
-
-Signal Analysis
-
-{signal_emoji} Signal: **{signal}** ({quality.upper()})
-Buy Score: {buy_score} | Sell Score: {sell_score}
-
-Alasan {signal}:
-"""
-
-            # Add signal reasons
-            if signal == 'BUY':
-                for r in bullish_reasons:
-                    msg += f"  - {r}\n"
-            elif signal == 'SELL':
-                for r in bearish_reasons:
-                    msg += f"  - {r}\n"
-            else:
-                if bullish_reasons:
-                    msg += "🟢 Bullish: " + ", ".join(bullish_reasons[:3]) + "\n"
-                if bearish_reasons:
-                    msg += "🔴 Bearish: " + ", ".join(bearish_reasons[:3]) + "\n"
-
-            # Chart Patterns Detected
-            if patterns_detected:
-                msg += "\n📐 Chart Patterns Detected:\n"
-                for p in patterns_detected:
-                    msg += f"   {p['emoji']} {p['name']} {p['strength_bar']}\n"
-                    msg += f"      {p['description']}\n"
-
-            # Conflict warning
-            if has_conflict:
-                msg += """
-Tapi ada kontradiksi:
-  - RSI oversold tapi MA masih bearish
-  - Tunggu konfirmasi sinyal
-"""
-
-            msg += f"""
-Kesimpulan
-
-┌──────────────────────────────────────────────────────┐
-│  ⚠️  KONDISI {"KONFLIK" if has_conflict else "TERKINI":<51}│
-├──────────────────────────────────────────────────────┤"""
-
-            if bearish_reasons:
-                msg += """
-│  📉 BEARISH:                                        │"""
-                for r in bearish_reasons[:4]:
-                    msg += f"\n│     - {r:<50} │"
-
-            if bullish_reasons:
-                msg += """
-│  📈 BULLISH:                                        │"""
-                for r in bullish_reasons[:4]:
-                    msg += f"\n│     - {r:<50} │"
-
-            msg += """
-│                                                      │
-└──────────────────────────────────────────────────────┘
-"""
-
-            # Add TP/SL recommendations
-            if signal in ['BUY', 'SELL']:
-                entry = s.get('entry', price)
-                tp1 = s.get('tp1')
-                tp2 = s.get('tp2')
-                tp3 = s.get('tp3')
-                sl = s.get('sl')
-
-                if tp1 and sl:
-                    tp1_pct = (tp1 - entry) / entry * 100
-                    sl_pct = (entry - sl) / entry * 100
-                    rr = tp1_pct / sl_pct if sl_pct > 0 else 0
-
-                    # Generate dynamic saran based on actual data
-                    saran_parts = []
-
-                    if signal == 'BUY':
-                        if rsi < 35:
-                            saran_parts.append(f"RSI oversold ({rsi:.0f}) - peluang rebound")
-                        if has_conflict:
-                            saran_parts.append("Konflik sinyal - tunggu konfirmasi breakout")
-                        elif volume_ratio < 1:
-                            saran_parts.append("Volume rendah - tunggu volume spike")
-                        if ma_f < price:
-                            saran_parts.append(f"Tunggu harga di atas MA ({ma_f:,.0f})")
-                        saran_parts.append("Risk/Reward 1:" + f"{rr:.1f}")
-                    elif signal == 'SELL':
-                        if rsi > 65:
-                            saran_parts.append(f"RSI overbought ({rsi:.0f}) - peluang koreksi")
-                        if has_conflict:
-                            saran_parts.append("Konflik sinyal - tunggu konfirmasi breakdown")
-                        elif volume_ratio < 1:
-                            saran_parts.append("Volume rendah - hati-hati false break")
-                        if ma_f > price:
-                            saran_parts.append(f"Tunggu harga di bawah MA ({ma_f:,.0f})")
-                        saran_parts.append("Risk/Reward 1:" + f"{rr:.1f}")
-
-                    saran_text = ". ".join(saran_parts[:3]) if saran_parts else "Analisis teknikal murni"
-
-                    msg += f"""Rekomendasi
-
-Skenario: Agresif
-Action: **{'BUY' if signal == 'BUY' else 'SELL'}**
-Entry: ${entry:,.2f}
-SL: ${sl:,.2f}
-Target: ${tp1:,.2f}
-────────────────────────────────────────────────
-Skenario: Konservatif
-Action: HOLD
-Entry: -
-SL: -
-Target: Tunggu konfirmasi sinyal
-
-Saran: {saran_text}.
-"""
-
-            msg += """
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ *Disclaimer:* Analisis bukan
-nasihat keuangan. Trading risiko
-tanggung sendiri.
-"""
+            # Use clean format with sentiment
+            name = d.get('name') or ticker
+            msg = format_analisa_simple(
+                ticker=ticker,
+                name=name,
+                data=d,
+                signal=s,
+                sentiment=sentiment,
+                is_crypto=True
+            )
 
         else:
             # Stock analysis - use combined method for fallback support
@@ -1343,334 +1099,49 @@ tanggung sendiri.
 
             # Generate signal
             s = signal_service.generate_stock_signal(d)
+            if s is None:
+                s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
+            logger.info(f"[ANALISA] Signal generated: {s.get('signal')}")
 
-            price = d['price']
-            rsi = d.get('rsi', 50)
-            change = d.get('change', 0)
-            ma_fast = d.get('ma_fast', 0)
-            ma_slow = d.get('ma_slow', 0)
-            macd = d.get('macd', 0)
-            macd_signal = d.get('macd_signal', 0)
-            macd_hist = d.get('macd_hist', 0)
-            bb_upper = d.get('bb_upper', price * 1.05)
-            bb_middle = d.get('bb_middle', price)
-            bb_lower = d.get('bb_lower', price * 0.95)
-            volume_ratio = d.get('volume_ratio', 1)
-            atr = d.get('atr', price * 0.02)
-            name = ALL_STOCKS.get(ticker, ticker)
-            candles = d.get('candles', 0)
-
-            bb_pos = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper != bb_lower else 0.5
-            upside = (bb_upper - price) / price * 100
-            downside = (price - bb_lower) / price * 100
-
-            # Detect chart patterns
-            patterns_detected = []
-            pattern_summary = ""
+            # Fetch news and sentiment for stock (run in thread to not block)
+            sentiment = None
             try:
-                if d.get('raw_df') is not None and len(d.get('raw_df', [])) >= 30:
-                    from utils.patterns import detect_all_patterns
-                    patterns = detect_all_patterns(d['raw_df'])
-                    if patterns.get('patterns_found', 0) > 0:
-                        pattern_list = patterns.get('pattern_list', [])
-                        for p in pattern_list[:3]:
-                            emoji = "🟢" if p.get('bullish') else "🔴" if p.get('bearish') else "🟡"
-                            strength = p.get('strength', 0)
-                            strength_bar = "█" * int(strength * 5)
-                            patterns_detected.append({
-                                'emoji': emoji,
-                                'name': p.get('name', 'Unknown'),
-                                'strength_bar': strength_bar,
-                                'description': p.get('description', '')
-                            })
-                        pattern_summary = patterns.get('pattern_summary', '')
+                result = await asyncio.to_thread(news_service.get_stock_news, ticker)
+                if result and len(result) >= 2:
+                    articles, sentiment = result[0], result[1]
+                    logger.info(f"[ANALISA] News fetched: {len(articles)} articles")
             except Exception as e:
-                logger.debug(f"Pattern detection error: {e}")
+                logger.warning(f"Failed to fetch news for {ticker}: {e}")
 
-            # RSI status
-            if rsi < 30:
-                rsi_status = "⚠️ OVERSOLD"
-            elif rsi < 40:
-                rsi_status = "🟢 BULLISH"
-            elif rsi > 70:
-                rsi_status = "⚠️ OVERBOUGHT"
-            elif rsi > 60:
-                rsi_status = "🔴 BEARISH"
-            else:
-                rsi_status = "🟢 NETRAL"
+            # Use clean format with sentiment
+            name = ALL_STOCKS.get(ticker, ticker)
+            msg = format_analisa_simple(
+                ticker=ticker,
+                name=name,
+                data=d,
+                signal=s,
+                sentiment=sentiment,
+                is_crypto=False
+            )
 
-            # MA status
-            if ma_fast > ma_slow:
-                ma_status = "🟢 GOLDEN CROSS"
-                ma_golden = True
-            else:
-                ma_status = "🔴 DEATH CROSS"
-                ma_golden = False
-
-            # MACD status
-            macd_status = "🟢 POSITIF" if macd > 0 else "🔴 NEGATIF"
-            if macd > macd_signal:
-                macd_cross = "🟢 CROSS UP"
-                macd_bullish = True
-            else:
-                macd_cross = "🔴 CROSS DOWN"
-                macd_bullish = False
-
-            macd_hist_status = "🟢 BULLISH" if macd_hist > 0 else "🔴 BEARISH"
-
-            # Volume status
-            if volume_ratio > 1.5:
-                vol_status = "✅ SPIKE"
-            elif volume_ratio > 1.0:
-                vol_status = "✅ TINGGI"
-            else:
-                vol_status = "⚠️ RENDAH"
-
-            # Signal
-            signal = s.get('signal', 'HOLD')
-            quality = s.get('quality', 'WEAK')
-            buy_score = s.get('buy_score', 0)
-            sell_score = s.get('sell_score', 0)
-
-            if signal == 'BUY':
-                signal_emoji = "🟢"
-            elif signal == 'SELL':
-                signal_emoji = "🔴"
-            else:
-                signal_emoji = "⚪"
-
-            # Build bullish/bearish reasons
-            bullish_reasons = []
-            bearish_reasons = []
-
-            if rsi < 35:
-                bullish_reasons.append(f"RSI {rsi:.0f} Oversold")
-            elif rsi > 65:
-                bearish_reasons.append(f"RSI {rsi:.0f} Overbought")
-            if ma_golden:
-                bullish_reasons.append("MA Golden Cross")
-            else:
-                bearish_reasons.append("MA Death Cross")
-            if macd_bullish:
-                bullish_reasons.append("MACD Bullish")
-            else:
-                bearish_reasons.append("MACD Bearish")
-            if volume_ratio > 1.5:
-                bullish_reasons.append(f"Volume Spike {volume_ratio:.1f}x")
-            if change > 2:
-                bullish_reasons.append(f"Harga naik +{change:.1f}%")
-            elif change < -2:
-                bearish_reasons.append(f"Harga turun {change:.1f}%")
-            if bb_pos < 0.2:
-                bullish_reasons.append("Dekat BB Lower (Support)")
-            elif bb_pos > 0.8:
-                bearish_reasons.append("Dekat BB Upper (Resistance)")
-
-            # Build message with comprehensive format
-            bb_pos = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper != bb_lower else 0.5
-            upside = (bb_upper - price) / price * 100
-            downside = (price - bb_lower) / price * 100
-
-            # Conflict detection
-            has_conflict = (rsi < 35 and not ma_golden) or (rsi > 65 and ma_golden)
-
-            # MA status text
-            ma_fast_status = "Di atas harga" if ma_fast > price else "Di bawah harga"
-            ma_slow_status = "Di atas harga" if ma_slow > price else "Di bawah harga"
-
-            msg = f"""● Analisis {name.upper()} ({ticker})
-
-┌──────────────────────────────────────────────────────┐
-│                    📊 OVERVIEW                       │
-├──────────────────────────────────────────────────────┤
-│  Harga      : Rp {price:,.0f}                           │
-│  Change     : {change:+.2f}%                        │
-│  RSI        : {rsi:.1f} {rsi_status}              │
-│  Candles    : {candles}                            │
-└──────────────────────────────────────────────────────┘
-
-📈 INDIKATOR TEKNIKAL
-
-┌──────────────┬──────────────┬──────────────────────┐
-│  Indikator   │ Value        │ Status               │
-├──────────────┼──────────────┼──────────────────────┤
-│ RSI          │ {rsi:,.1f}       │ {rsi_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ MA Fast      │ {ma_fast:,.2f}     │ {ma_fast_status:<17}│
-├──────────────┼──────────────┼──────────────────────┤
-│ MA Slow      │ {ma_slow:,.2f}     │ {ma_slow_status:<17}│
-├──────────────┼──────────────┼──────────────────────┤
-│ MACD         │ {macd:,.2f}       │ {macd_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ MACD Hist    │ {macd_hist:,.2f}      │ {macd_hist_status:<20} │
-├──────────────┼──────────────┼──────────────────────┤
-│ BB Lower     │ {bb_lower:,.2f}     │ Dekat support     │
-├──────────────┼──────────────┼──────────────────────┤
-│ Volume Ratio │ {volume_ratio:.2f}x      │ {vol_status:<20} │
-└──────────────┴──────────────┴──────────────────────┘
-
-Signal Analysis
-
-{signal_emoji} Signal: **{signal}** ({quality.upper()})
-Buy Score: {buy_score} | Sell Score: {sell_score}
-
-Alasan {signal}:
-"""
-
-            # Add signal reasons
-            if signal == 'BUY':
-                for r in bullish_reasons:
-                    msg += f"  - {r}\n"
-            elif signal == 'SELL':
-                for r in bearish_reasons:
-                    msg += f"  - {r}\n"
-            else:
-                if bullish_reasons:
-                    msg += "🟢 Bullish: " + ", ".join(bullish_reasons[:3]) + "\n"
-                if bearish_reasons:
-                    msg += "🔴 Bearish: " + ", ".join(bearish_reasons[:3]) + "\n"
-
-            # Chart Patterns Detected
-            if patterns_detected:
-                msg += "\n📐 Chart Patterns Detected:\n"
-                for p in patterns_detected:
-                    msg += f"   {p['emoji']} {p['name']} {p['strength_bar']}\n"
-                    msg += f"      {p['description']}\n"
-
-            # Conflict warning
-            if has_conflict:
-                msg += """
-Tapi ada kontradiksi:
-  - RSI oversold tapi MA masih bearish
-  - Tunggu konfirmasi sinyal
-"""
-
-            msg += f"""
-Kesimpulan
-
-┌──────────────────────────────────────────────────────┐
-│  ⚠️  KONDISI {"KONFLIK" if has_conflict else "TERKINI":<51}│
-├──────────────────────────────────────────────────────┤"""
-
-            if bearish_reasons:
-                msg += """
-│  📉 BEARISH:                                        │"""
-                for r in bearish_reasons[:4]:
-                    msg += f"\n│     - {r:<50} │"
-
-            if bullish_reasons:
-                msg += """
-│  📈 BULLISH:                                        │"""
-                for r in bullish_reasons[:4]:
-                    msg += f"\n│     - {r:<50} │"
-
-            msg += """
-│                                                      │
-└──────────────────────────────────────────────────────┘
-"""
-
-            # Add TP/SL recommendations
-            if signal in ['BUY', 'SELL']:
-                entry = s.get('entry', price)
-                tp1 = s.get('tp1')
-                tp2 = s.get('tp2')
-                tp3 = s.get('tp3')
-                sl = s.get('sl')
-
-                if tp1 and sl:
-                    tp1_pct = (tp1 - entry) / entry * 100
-                    sl_pct = (entry - sl) / entry * 100
-                    rr = tp1_pct / sl_pct if sl_pct > 0 else 0
-
-                    # Generate dynamic saran based on actual data
-                    saran_parts = []
-
-                    if signal == 'BUY':
-                        if rsi < 35:
-                            saran_parts.append(f"RSI oversold ({rsi:.0f}) - peluang rebound")
-                        if has_conflict:
-                            saran_parts.append("Konflik sinyal - tunggu konfirmasi breakout")
-                        elif volume_ratio < 1:
-                            saran_parts.append("Volume rendah - tunggu volume spike")
-                        if ma_fast < price:
-                            saran_parts.append(f"Tunggu harga di atas MA ({ma_fast:,.0f})")
-                        saran_parts.append("Risk/Reward 1:" + f"{rr:.1f}")
-                    elif signal == 'SELL':
-                        if rsi > 65:
-                            saran_parts.append(f"RSI overbought ({rsi:.0f}) - peluang koreksi")
-                        if has_conflict:
-                            saran_parts.append("Konflik sinyal - tunggu konfirmasi breakdown")
-                        elif volume_ratio < 1:
-                            saran_parts.append("Volume rendah - hati-hati false break")
-                        if ma_fast > price:
-                            saran_parts.append(f"Tunggu harga di bawah MA ({ma_fast:,.0f})")
-                        saran_parts.append("Risk/Reward 1:" + f"{rr:.1f}")
-
-                    saran_text = ". ".join(saran_parts[:3]) if saran_parts else "Analisis teknikal murni"
-
-                    msg += f"""Rekomendasi
-
-Skenario: Agresif
-Action: **{'BUY' if signal == 'BUY' else 'SELL'}**
-Entry: Rp {entry:,.0f}
-SL: Rp {sl:,.0f}
-Target: Rp {tp1:,.0f}
-────────────────────────────────────────────────
-Skenario: Konservatif
-Action: HOLD
-Entry: -
-SL: -
-Target: Tunggu konfirmasi sinyal
-
-Saran: {saran_text}.
-"""
-
-            # Support & Resistance
-            sr_data = d.get('sr', {})
-            if sr_data.get('nearest_support') or sr_data.get('nearest_resistance'):
-                msg += """
-📐 Support & Resistance
-
-"""
-                if sr_data.get('nearest_support'):
-                    sup = sr_data['nearest_support']['level']
-                    msg += f"🟢 Support 1: Rp {sup:,.0f}\n"
-                if sr_data.get('nearest_resistance'):
-                    res = sr_data['nearest_resistance']['level']
-                    msg += f"🔴 Resistance 1: Rp {res:,.0f}\n"
-
-                # Show all supports
-                all_supports = sr_data.get('all_supports', [])
-                if all_supports:
-                    msg += "\n📊 All Support Levels:\n"
-                    for s in all_supports[:3]:
-                        msg += f"   - Rp {s['level']:,.0f} ({s['type']})\n"
-
-                # Show all resistances
-                all_resistances = sr_data.get('all_resistances', [])
-                if all_resistances:
-                    msg += "\n📊 All Resistance Levels:\n"
-                    for r in all_resistances[:3]:
-                        msg += f"   - Rp {r['level']:,.0f} ({r['type']})\n"
-
-                # Distance
-                sr_dist = sr_data.get('sr_distance', {})
-                if sr_dist.get('support_pct'):
-                    msg += f"\n📏 Jarak ke support: {sr_dist['support_pct']:.1f}%\n"
-                    msg += f"📏 Jarak ke resistance: {sr_dist.get('resistance_pct', 0):.1f}%\n"
-
-            msg += """
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ *Disclaimer:* Analisis bukan
-nasihat keuangan. Trading risiko
-tanggung sendiri.
-"""
-
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        logger.info(f"[ANALISA] Sending final result for {ticker}")
+        try:
+            await update.message.reply_text(msg, parse_mode='Markdown', read_timeout=120, write_timeout=120)
+            logger.info(f"[ANALISA] Done for {ticker}")
+        except Exception as send_err:
+            logger.error(f"[ANALISA] Failed to send result: {send_err}")
+            try:
+                if reply_msg:
+                    await reply_msg.edit_text(msg + "\n\n⚠️ *Terlambat mengirim*", parse_mode='Markdown')
+            except:
+                pass
 
     except Exception as e:
         logger.error(f"Analisa error: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        try:
+            await update.message.reply_text(f"❌ Error: {str(e)}", read_timeout=60, write_timeout=60)
+        except:
+            pass
 
 
 # === BUTTONS ===

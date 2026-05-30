@@ -741,3 +741,237 @@ def format_unified_stock_notification(
     lines.append("📊 IDX Saham Bot")
 
     return '\n'.join(lines)
+
+
+def format_analisa_simple(
+    ticker: str,
+    name: str,
+    data: Dict,
+    signal: Dict,
+    sentiment: Dict = None,
+    is_crypto: bool = False
+) -> str:
+    """
+    Clean, readable analisa output format.
+    """
+    lines = []
+
+    # Defensive: ensure data and signal are not None
+    if data is None:
+        data = {}
+    if signal is None:
+        signal = {'signal': 'HOLD', 'entry': 0, 'tp1': 0, 'tp2': 0, 'tp3': 0, 'sl': 0}
+
+    price = data.get('price') or 0
+    rsi = data.get('rsi') or 50
+    change = data.get('change') or 0
+    ma_fast = data.get('ma_fast') or price
+    ma_slow = data.get('ma_slow') or price
+    macd_hist = data.get('macd_hist') or 0
+    volume_ratio = data.get('volume_ratio') or 1
+    candles = data.get('candles') or 0
+
+    # Currency symbol
+    if is_crypto:
+        curr = "$"
+        curr_price = f"${price:,.2f}"
+    else:
+        curr = "Rp "
+        curr_price = f"Rp {price:,.0f}"
+
+    # === HEADER ===
+    signal_type = signal.get('signal', 'HOLD')
+    if signal_type == 'BUY':
+        header_emoji = "🟢"
+    elif signal_type == 'SELL':
+        header_emoji = "🔴"
+    else:
+        header_emoji = "🟡"
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 *Analisa {name} ({ticker})*")
+    lines.append(f"{header_emoji} Signal: **{signal_type}** | {curr_price} ({change:+.2f}%)")
+    lines.append(f"⏱️ Timeframe: 5 Menit | Candles: {candles}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # === TREND & INDICATORS ===
+    # Determine trend
+    if price > ma_fast > ma_slow and macd_hist > 0:
+        trend = "📈 Trend Naik"
+        trend_desc = "Golden Cross + MACD Bullish"
+    elif price < ma_fast < ma_slow and macd_hist < 0:
+        trend = "📉 Trend Turun"
+        trend_desc = "Death Cross + MACD Bearish"
+    elif price > ma_fast:
+        trend = "📊 Trend Naik Terbatas"
+        trend_desc = "Di atas MA Fast"
+    elif price < ma_fast:
+        trend = "📊 Trend Turun Terbatas"
+        trend_desc = "Di bawah MA Fast"
+    else:
+        trend = "➡️ Sideways"
+        trend_desc = "Netral"
+
+    # RSI status
+    if rsi < 30:
+        rsi_status = "Oversold (RSI {:.0f})".format(rsi)
+    elif rsi > 70:
+        rsi_status = "Overbought (RSI {:.0f})".format(rsi)
+    elif rsi < 45:
+        rsi_status = "Bullish (RSI {:.0f})".format(rsi)
+    elif rsi > 55:
+        rsi_status = "Bearish (RSI {:.0f})".format(rsi)
+    else:
+        rsi_status = "Netral (RSI {:.0f})".format(rsi)
+
+    lines.append("")
+    lines.append("*📈 Trend & Indikator:*")
+    lines.append(f"• {trend}")
+    lines.append(f"• MA Fast: {curr}{ma_fast:,.0f} | MA Slow: {curr}{ma_slow:,.0f}")
+    lines.append(f"• RSI: {rsi_status}")
+    lines.append(f"• Volume: {volume_ratio:.1f}x ({'Tinggi' if volume_ratio > 1 else 'Normal'})")
+
+    # === SUPPORT & RESISTANCE ===
+    sr = data.get('sr') or {}
+    nearest_support = (sr.get('nearest_support') or {}) if sr else {}
+    nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
+
+    lines.append("")
+    lines.append("*📐 Support & Resistance:*")
+    if nearest_support:
+        sup_level = nearest_support.get('level', 0) or 0
+        sup_type = nearest_support.get('type', 'Support')
+        lines.append(f"• Support: {curr}{sup_level:,.0f} ({sup_type})")
+    else:
+        sl = signal.get('sl') or 0
+        if sl > 0:
+            lines.append(f"• Support: {curr}{sl:,.0f} (dari SL)")
+    if nearest_resistance:
+        res_level = nearest_resistance.get('level', 0) or 0
+        res_type = nearest_resistance.get('type', 'Resistance')
+        lines.append(f"• Resistance: {curr}{res_level:,.0f} ({res_type})")
+    else:
+        tp1 = signal.get('tp1') or 0
+        if tp1 > 0:
+            lines.append(f"• Resistance: {curr}{tp1:,.0f} (dari TP1)")
+
+    # === ENTRY, TP, SL ===
+    entry = signal.get('entry', price) or price
+    tp1 = signal.get('tp1') or 0
+    tp2 = signal.get('tp2') or 0
+    tp3 = signal.get('tp3') or 0
+    sl = signal.get('sl') or 0
+
+    lines.append("")
+    lines.append("*💰 Entry, TP & SL:*")
+    lines.append(f"• Entry: {curr}{entry:,.0f}")
+    if tp1 > 0:
+        tp1_pct = ((tp1 - entry) / entry) * 100 if entry > 0 else 0
+        lines.append(f"• TP1: {curr}{tp1:,.0f} ({tp1_pct:+.1f}%)")
+    if tp2 > 0:
+        tp2_pct = ((tp2 - entry) / entry) * 100 if entry > 0 else 0
+        lines.append(f"• TP2: {curr}{tp2:,.0f} ({tp2_pct:+.1f}%)")
+    if tp3 > 0:
+        tp3_pct = ((tp3 - entry) / entry) * 100 if entry > 0 else 0
+        lines.append(f"• TP3: {curr}{tp3:,.0f} ({tp3_pct:+.1f}%)")
+    if sl > 0:
+        sl_pct = ((sl - entry) / entry) * 100 if entry > 0 else 0
+        lines.append(f"• SL: {curr}{sl:,.0f} ({sl_pct:+.1f}%)")
+
+    # === PENJELASAN ===
+    lines.append("")
+    lines.append("*🤖 Penjelasan:*")
+
+    reasons = []
+    if rsi < 35:
+        reasons.append(f"RSI oversold ({rsi:.0f}) - peluang rebound")
+    elif rsi > 65:
+        reasons.append(f"RSI overbought ({rsi:.0f}) - hati-hati koreksi")
+    if ma_fast > ma_slow:
+        reasons.append("MA Golden Cross - trend naik terkonfirmasi")
+    else:
+        reasons.append("MA Death Cross - trend turun")
+    if macd_hist > 0:
+        reasons.append("MACD histogram positif - momentum naik")
+    else:
+        reasons.append("MACD histogram negatif - momentum turun")
+    if volume_ratio > 1.5:
+        reasons.append(f"Volume spike ({volume_ratio:.1f}x) - minat tinggi")
+    if change > 2:
+        reasons.append(f"Harga naik {change:.1f}% - momentum positif")
+    elif change < -2:
+        reasons.append(f"Harga turun {abs(change):.1f}% - tekanan jual")
+
+    for reason in reasons[:4]:
+        lines.append(f"• {reason}")
+
+    # === SENTIMENT (if available) ===
+    if sentiment and isinstance(sentiment, dict) and sentiment.get('headline_count', 0) > 0:
+        lines.append("")
+        emoji = sentiment.get('emoji') or '🟡'
+        overall = sentiment.get('overall') or 'netral'
+        summary = sentiment.get('summary') or ''
+        count = sentiment.get('headline_count') or 0
+        lines.append(f"*📰 Sentimen: {emoji} {overall.title()}*")
+        lines.append(f"• {summary}")
+        lines.append(f"• {count} berita dianalisa")
+
+        # Show top headlines
+        top_hl = sentiment.get('top_headlines') or []
+        if top_hl:
+            lines.append("")
+            for hl in top_hl[:2]:
+                if hl and isinstance(hl, dict):
+                    hl_text = hl.get('headline') or ''
+                    if hl_text:
+                        lines.append(f"  • {hl_text[:60]}...")
+    elif sentiment:
+        lines.append("")
+        lines.append("*📰 Sentimen: Tidak ada berita terbaru*")
+
+    # === REKOMENDASI ===
+    lines.append("")
+    lines.append("*💡 Rekomendasi:*")
+
+    # Calculate entry area (current price or slight pullback)
+    entry_price = signal.get('entry') or price
+    if entry_price is None or entry_price == 0:
+        entry_price = price
+    entry_area_low = entry_price * 0.98  # 2% below entry
+    entry_area_high = entry_price * 1.02  # 2% above entry
+
+    # Get resistance for confirmation levels
+    sr = data.get('sr', {})
+    nearest_resistance = sr.get('nearest_resistance', {})
+    resistance_level = nearest_resistance.get('level') or (tp1 if tp1 and tp1 > 0 else price * 1.05)
+
+    # Get support for SL
+    nearest_support = sr.get('nearest_support', {})
+    support_level = nearest_support.get('level') or (sl if sl and sl > 0 else price * 0.95)
+
+    if signal_type == 'BUY':
+        lines.append(f"• Sudah punya posisi: Hold, dengan Stop Loss di bawah {curr}{support_level:,.0f}")
+        lines.append(f"• Ingin entry: Entry di area {curr}{entry_area_low:,.0f}-{curr}{entry_area_high:,.0f}, dengan Stop Loss di {curr}{support_level:,.0f}")
+        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {curr}{resistance_level:,.0f} dengan volume kuat")
+        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {curr}{support_level:,.0f} dengan volume besar")
+    elif signal_type == 'SELL':
+        lines.append(f"• Sudah punya posisi: Sell / lepas posisi, Support di {curr}{support_level:,.0f}")
+        lines.append(f"• Ingin short: Entry di area {curr}{entry_area_low:,.0f}-{curr}{entry_area_high:,.0f}, dengan Stop Loss di {curr}{resistance_level:,.0f}")
+        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {curr}{support_level:,.0f} dengan volume besar")
+        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {curr}{resistance_level:,.0f} dengan volume kuat")
+    else:
+        lines.append("• Tunggu konfirmasi sinyal")
+        lines.append("• Perhatikan area support di {0}{1:,.0f} dan resistance di {0}{2:,.0f}".format(curr, support_level, resistance_level))
+
+    # === FOOTER ===
+    ts = datetime.now().strftime('%d %b %Y %H:%M')
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"⏰ {ts}")
+    if is_crypto:
+        lines.append("₿ Crypto Bot")
+    else:
+        lines.append("📊 IDX Saham Bot")
+
+    return '\n'.join(lines)
+
