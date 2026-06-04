@@ -1013,7 +1013,9 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Check patterns that indicate crypto
         is_crypto = (
-            ticker_upper in crypto_service.crypto_pairs or  # In CoinGecko list
+            ticker_upper in crypto_service.crypto_pairs or  # In CoinGecko list (e.g. BEAT-USD)
+            (ticker_upper + '-USD') in crypto_service.crypto_pairs or  # Symbol only (e.g. BEAT)
+            (ticker_upper + '-USDT') in crypto_service.crypto_pairs or  # Symbol only USDT variant
             ticker_upper in crypto_service.coingecko_ids or  # In CoinGecko IDs
             ticker.endswith('-USD') or  # Already has -USD suffix
             ticker.endswith('-USDT') or  # USDT pair
@@ -1037,8 +1039,26 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     if len(ticker) <= 10:
                         full_ticker = ticker.upper() + '-USD'
 
+            # Verify ticker exists in our crypto database
+            ticker_known = (
+                ticker_upper in crypto_service.crypto_pairs
+                or (ticker_upper + '-USD') in crypto_service.crypto_pairs
+                or (ticker_upper + '-USDT') in crypto_service.crypto_pairs
+                or full_ticker in crypto_service.crypto_pairs
+            )
+
             # Get crypto data - use 5d period to get enough candles for indicators
-            d = crypto_service.get_crypto_data_combined(full_ticker, '1h', '5d')
+            try:
+                d = crypto_service.get_crypto_data_combined(full_ticker, '1h', '5d')
+            except Exception as fetch_err:
+                logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
+                await update.message.reply_text(
+                    f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
+                    f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
+                    "Coba lagi dalam beberapa saat.",
+                    parse_mode='Markdown'
+                )
+                return
 
             # Fallback: try without -USD suffix
             if not d and full_ticker.endswith('-USD'):
@@ -1051,9 +1071,32 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 d = crypto_service.get_crypto_data_combined(alt_ticker, '1h', '5d')
 
             if not d:
+                if not ticker_known:
+                    await update.message.reply_text(
+                        f"❌ Crypto `{ticker}` tidak ditemukan di CoinGecko\n\n"
+                        f"Pastikan ticker benar. Contoh:\n"
+                        f"• `/analisa BTC` atau `/analisa BTC-USD`\n"
+                        f"• `/analisa ETH` atau `/analisa ETH-USD`\n"
+                        f"• `/analisa BEAT` (Audiera)\n\n"
+                        f"Cek daftar lengkap di https://www.coingecko.com/",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ Gagal mengambil data untuk `{ticker}`\n\n"
+                        f"Ticker dikenal di database, tapi CoinGecko & Yahoo Finance keduanya tidak merespon.\n"
+                        f"Mungkin API sedang down atau kena rate limit. Coba lagi dalam 1-2 menit.",
+                        parse_mode='Markdown'
+                    )
+                return
+
+            # Check if data has enough candles
+            if d.get('candles', 0) < 50:
+                source = d.get('source', 'unknown')
                 await update.message.reply_text(
-                    f"❌ Gagal mengambil data untuk `{ticker}`\n"
-                    "Kode tidak ditemukan di CoinGecko/Yahoo Finance",
+                    f"❌ Data `{ticker}` tidak cukup untuk dianalisis\n\n"
+                    f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
+                    f"Crypto ini mungkin baru listing atau volume sangat rendah.",
                     parse_mode='Markdown'
                 )
                 return
@@ -1087,12 +1130,45 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             # Stock analysis - use combined method for fallback support
             full_ticker = ticker + ".JK"
-            d = stock_service.get_stock_data_combined(full_ticker, '5m', '3d')
+            ticker_known = ticker in ALL_STOCKS
 
-            if not d or d.get('candles', 0) < 50:
+            try:
+                d = stock_service.get_stock_data_combined(full_ticker, '5m', '3d')
+            except Exception as fetch_err:
+                logger.error(f"[ANALISA] Stock fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
                 await update.message.reply_text(
-                    f"❌ Gagal mengambil data untuk `{ticker}`\n"
-                    "Saham tidak ditemukan atau data insufficient",
+                    f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
+                    f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
+                    "Coba lagi dalam beberapa saat.",
+                    parse_mode='Markdown'
+                )
+                return
+
+            if not d:
+                if not ticker_known:
+                    await update.message.reply_text(
+                        f"❌ Saham `{ticker}` tidak ditemukan\n\n"
+                        f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
+                        f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
+                        f"ℹ️ Ini command untuk saham. Untuk crypto gunakan:\n"
+                        f"`/analisa BTC` atau `/analisa BEAT`",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ Gagal mengambil data untuk `{ticker}`\n\n"
+                        f"Saham ada di database IDX, tapi Yahoo Finance & TradingView keduanya tidak merespon.\n"
+                        f"Mungkin API sedang down atau kena rate limit. Coba lagi dalam 1-2 menit.",
+                        parse_mode='Markdown'
+                    )
+                return
+
+            if d.get('candles', 0) < 50:
+                source = d.get('source', 'unknown')
+                await update.message.reply_text(
+                    f"❌ Data saham `{ticker}` tidak cukup untuk dianalisis\n\n"
+                    f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
+                    f"Coba lagi saat jam pasar (09:00-15:00 WIB) atau saham baru listing.",
                     parse_mode='Markdown'
                 )
                 return

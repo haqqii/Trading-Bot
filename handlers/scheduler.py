@@ -195,6 +195,23 @@ def cleanup_old_signals():
     return removed_count
 
 
+def _schedule_followup_scan(app, kind: str, delay: int = 60):
+    """After a TP3 close, fire the matching signal scan once with a short delay
+    so the user doesn't wait up to 5 minutes for a fresh BUY."""
+    target = None
+    if kind == 'crypto':
+        target = check_crypto_signals
+    elif kind == 'stock':
+        target = check_stock_signals
+    if target is None:
+        return
+    try:
+        app.job_queue.run_once(target, when=delay)
+        logger.info(f"Follow-up {kind} scan scheduled in {delay}s after TP3")
+    except Exception as e:
+        logger.error(f"Failed to schedule follow-up {kind} scan: {e}")
+
+
 def set_all_stocks(stocks):
     """Set stocks reference"""
     global ALL_STOCKS
@@ -493,18 +510,6 @@ async def check_stock_signals(app):
 
                     if should_send:
                         signal_type = 'REVERSAL' if s['signal'] == 'REVERSAL' else 'BUY'
-                        signals[key] = {
-                            'name': ALL_STOCKS.get(ticker, ticker),
-                            'entry': s['entry'],
-                            'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
-                            'sl': s['sl'], 'time': now,
-                            'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                            'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
-                            'buy_score': s.get('buy_score', 0),
-                            'quality': s.get('quality', 'WEAK'),
-                            'signal_type': signal_type,
-                            'is_reversal': s.get('is_reversal', False)
-                        }
                         logger.info(f"✅ {signal_type} Signal: {ticker} - {ALL_STOCKS.get(ticker, ticker)} @ Rp{s['entry']:,.0f} (Score: {s.get('buy_score', 0)})")
                         return (ticker, ALL_STOCKS.get(ticker, ticker), d, s)
 
@@ -549,6 +554,9 @@ async def check_stock_signals(app):
             top_signals = buy_signals[:3]  # Max 3 signals
 
             logger.info(f"[STOCK] Found {len(buy_signals)} BUY signals, sending TOP 3 to {len(stock_users)} users")
+
+            # Get fresh signals reference for storage (only signals actually sent get tracked)
+            signals = _get_last_buy_signals()
 
             for uid in stock_users:
                 try:
@@ -694,6 +702,23 @@ async def check_stock_signals(app):
                                 read_timeout=10, connect_timeout=10
                             )
                             logger.info(f"[STOCK] Sent BUY signal for {ticker} to user {uid}")
+
+                            # Only store signal for TP/SL tracking after successful delivery
+                            key = f"STOCK_{ticker}"
+                            if key not in signals:
+                                signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                                signals[key] = {
+                                    'name': name,
+                                    'entry': s['entry'],
+                                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
+                                    'sl': s['sl'], 'time': now,
+                                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
+                                    'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
+                                    'buy_score': s.get('buy_score', 0),
+                                    'quality': s.get('quality', 'WEAK'),
+                                    'signal_type': signal_type,
+                                    'is_reversal': s.get('is_reversal', False)
+                                }
                         except Exception as e:
                             logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
 
@@ -854,6 +879,9 @@ async def check_stock_tp_sl(app):
                         # Auto-remove from tracking after TP3 (position closed)
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
+
+                        # Trigger a fresh signal scan within ~60s so user gets a new BUY quickly
+                        _schedule_followup_scan(app, 'stock', delay=60)
                         continue  # Skip remaining checks for this signal
 
                 except Exception as e:
@@ -1174,18 +1202,6 @@ async def check_crypto_signals(app):
                 # Determine signal type
                 signal_type = s['signal'] if s['signal'] in ('BUY', 'REVERSAL') else 'BUY'
 
-                signals[key] = {
-                    'name': name,
-                    'entry': s['entry'],
-                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
-                    'sl': s['sl'], 'time': now,
-                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                    'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
-                    'buy_score': s.get('buy_score', 0),
-                    'quality': s.get('quality', 'WEAK'),
-                    'signal_type': signal_type,
-                    'is_reversal': s.get('is_reversal', False)
-                }
                 buy_signals.append((ticker, name, d, s))
                 logger.info(f"✅ CRYPTO {signal_type} Signal: {ticker} - {name} @ ${s['entry']:,.2f} (Score: {s.get('buy_score', 0)})")
 
@@ -1296,6 +1312,23 @@ async def check_crypto_signals(app):
                                 read_timeout=10, connect_timeout=10
                             )
                             logger.info(f"[CRYPTO] Sent BUY signal for {ticker} to user {uid}")
+
+                            # Only store signal for TP/SL tracking after successful delivery
+                            key = f"CRYPTO_{ticker}"
+                            if key not in signals:
+                                signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                                signals[key] = {
+                                    'name': name,
+                                    'entry': s['entry'],
+                                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
+                                    'sl': s['sl'], 'time': now,
+                                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
+                                    'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
+                                    'buy_score': s.get('buy_score', 0),
+                                    'quality': s.get('quality', 'WEAK'),
+                                    'signal_type': signal_type,
+                                    'is_reversal': s.get('is_reversal', False)
+                                }
                         except Exception as e:
                             logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
 
@@ -1453,6 +1486,9 @@ async def check_crypto_tp_sl(app):
                         # Auto-remove from tracking after TP3 (position closed)
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
+
+                        # Trigger a fresh signal scan within ~60s so user gets a new BUY quickly
+                        _schedule_followup_scan(app, 'crypto', delay=60)
                         continue  # Skip remaining checks for this signal
 
                 except Exception as e:
