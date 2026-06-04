@@ -29,3 +29,7 @@ user_data.json.bak
 last_signals.json
 last_signals.json.bak
 ORACLE_CLOUD_SETUP.md
+
+# Bot runtime (lock + dedup state)
+bot.lock
+bsjp_sent.txt
