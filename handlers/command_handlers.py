@@ -1024,6 +1024,23 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ticker_upper in ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'WLD', 'SUI', 'APT', 'ARB', 'OP', 'MATIC', 'AVAX', 'LINK', 'DOT', 'UNI', 'ATOM', 'LTC', 'WORLDCOIN', 'PEPE', 'SHIB', 'FIL', 'NEAR', 'AAVE', 'GRT', 'VET', 'ALGO', 'ICP', 'EGLD', 'AXS', 'MANA', 'SAND', 'GALA', 'ENJ']  # Common crypto symbols
         )
 
+        # Fallback probe: if ticker unknown and not an IDX stock, ask Yahoo Finance
+        # (covers coins outside CoinGecko top-1250 list, e.g. MYX Finance, BEAT, etc.)
+        yahoo_probe = None
+        if not is_crypto and len(ticker) <= 12 and ticker not in ALL_STOCKS:
+            try:
+                probe = crypto_service.get_crypto_data(ticker_upper + '-USD', '1h', '1d')
+                if probe and probe.get('candles', 0) >= 5:
+                    rsi = probe.get('rsi', float('nan'))
+                    import math as _math
+                    if not (isinstance(rsi, float) and _math.isnan(rsi)) and rsi > 0:
+                        is_crypto = True
+                        yahoo_probe = probe
+                        yahoo_probe['source'] = 'yahoo'
+                        logger.info(f"[ANALISA] Yahoo probe matched crypto for {ticker_upper}")
+            except Exception as probe_err:
+                logger.debug(f"[ANALISA] Yahoo probe failed for {ticker_upper}: {probe_err}")
+
         if is_crypto:
             # Try to find full ticker in CoinGecko pairs
             full_ticker = ticker
@@ -1045,20 +1062,25 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 or (ticker_upper + '-USD') in crypto_service.crypto_pairs
                 or (ticker_upper + '-USDT') in crypto_service.crypto_pairs
                 or full_ticker in crypto_service.crypto_pairs
+                or yahoo_probe is not None  # Yahoo probe counts as known
             )
 
             # Get crypto data - use 5d period to get enough candles for indicators
-            try:
-                d = crypto_service.get_crypto_data_combined(full_ticker, '1h', '5d')
-            except Exception as fetch_err:
-                logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
-                await update.message.reply_text(
-                    f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
-                    f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
-                    "Coba lagi dalam beberapa saat.",
-                    parse_mode='Markdown'
-                )
-                return
+            if yahoo_probe is not None:
+                # Reuse the Yahoo probe result (avoid 2nd API call)
+                d = yahoo_probe
+            else:
+                try:
+                    d = crypto_service.get_crypto_data_combined(full_ticker, '1h', '5d')
+                except Exception as fetch_err:
+                    logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
+                    await update.message.reply_text(
+                        f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
+                        f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
+                        "Coba lagi dalam beberapa saat.",
+                        parse_mode='Markdown'
+                    )
+                    return
 
             # Fallback: try without -USD suffix
             if not d and full_ticker.endswith('-USD'):
