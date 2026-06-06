@@ -941,12 +941,12 @@ def format_analisa_simple(
     entry_area_high = entry_price * 1.02  # 2% above entry
 
     # Get resistance for confirmation levels
-    sr = data.get('sr', {})
-    nearest_resistance = sr.get('nearest_resistance', {})
+    sr = data.get('sr') or {}
+    nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
     resistance_level = nearest_resistance.get('level') or (tp1 if tp1 and tp1 > 0 else price * 1.05)
 
     # Get support for SL
-    nearest_support = sr.get('nearest_support', {})
+    nearest_support = (sr.get('nearest_support') or {}) if sr else {}
     support_level = nearest_support.get('level') or (sl if sl and sl > 0 else price * 0.95)
 
     if signal_type == 'BUY':

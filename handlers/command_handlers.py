@@ -1227,19 +1227,25 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode='Markdown', read_timeout=120, write_timeout=120)
             logger.info(f"[ANALISA] Done for {ticker}")
         except Exception as send_err:
-            logger.error(f"[ANALISA] Failed to send result: {send_err}")
+            err_str = str(send_err)
+            logger.error(f"[ANALISA] Markdown send failed ({err_str[:80]}), retrying as plain text")
             try:
-                if reply_msg:
-                    await reply_msg.edit_text(msg + "\n\n⚠️ *Terlambat mengirim*", parse_mode='Markdown')
-            except:
-                pass
+                await update.message.reply_text(msg, read_timeout=120, write_timeout=120)
+                logger.info(f"[ANALISA] Done for {ticker} (plain text fallback)")
+            except Exception as plain_err:
+                logger.error(f"[ANALISA] Plain text send also failed: {plain_err}")
+                try:
+                    if reply_msg:
+                        await reply_msg.edit_text(msg[:3500] + "\n\n⚠️ _Gagal kirim hasil_", parse_mode='Markdown')
+                except Exception as edit_err:
+                    logger.error(f"[ANALISA] edit_text fallback also failed: {edit_err}")
 
     except Exception as e:
-        logger.error(f"Analisa error: {e}")
+        logger.error(f"Analisa error: {e}", exc_info=True)
         try:
-            await update.message.reply_text(f"❌ Error: {str(e)}", read_timeout=60, write_timeout=60)
-        except:
-            pass
+            await update.message.reply_text(f"❌ Error: {str(e)[:300]}", read_timeout=60, write_timeout=60)
+        except Exception as reply_err:
+            logger.error(f"[ANALISA] Error reply also failed: {reply_err}")
 
 
 # === BUTTONS ===
