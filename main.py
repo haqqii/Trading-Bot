@@ -33,8 +33,8 @@ if os.path.exists(LOCK_FILE):
         else:
             print(f"Stale lock file found (PID {pid}), removing...")
             os.remove(LOCK_FILE)
-    except:
-        pass
+    except Exception as e:
+        print(f"Warning: stale lock probe failed: {e}")
 
 # Write our PID to lock file
 with open(LOCK_FILE, 'w') as f:
@@ -72,8 +72,10 @@ class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
                 self.stream.close()
                 self.stream = self._open()
                 super().emit(record)
-            except:
-                pass
+            except Exception as e:
+                # Meta-logger is broken; fall back to stderr so we don't
+                # lose the failure silently.
+                print(f"[log handler] reopen failed: {e}", file=sys.stderr)
 
 # Configure logging with safe file rotation
 file_handler = SafeRotatingFileHandler(
@@ -206,8 +208,8 @@ def cleanup():
         try:
             os.remove(LOCK_FILE)
             print("Lock file removed")
-        except:
-            pass
+        except Exception as e:
+            print(f"Warning: failed to remove lock file: {e}")
 
 def signal_handler(sig, frame):
     print("\n\n🛑 Bot dihentikan!")

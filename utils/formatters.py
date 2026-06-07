@@ -5,6 +5,24 @@ from datetime import datetime
 from typing import Dict, List, Any, Tuple
 
 
+# Characters that Telegram's legacy Markdown parser treats as formatting.
+# Dynamic content (company names, news headlines, sentiment text) must be
+# passed through escape_md() before being embedded in a `*...*` template,
+# otherwise stray chars cause "can't find end of the entity" parse errors
+# and the message is rejected silently.
+_MD_SPECIAL = ('\\', '*', '_', '`', '[')
+
+
+def escape_md(text) -> str:
+    """Escape Markdown special characters for Telegram legacy parse mode."""
+    if text is None:
+        return ''
+    s = str(text)
+    for ch in _MD_SPECIAL:
+        s = s.replace(ch, '\\' + ch)
+    return s
+
+
 # Separators
 SEP = "═" * 35
 SEP40 = "═" * 40
@@ -39,7 +57,7 @@ def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:
             quality = s.get('quality', 'WEAK')
             quality_emoji = "⭐" if quality == 'STRONG' else "✨" if quality == 'MODERATE' else "💫"
 
-            msg += f"┌ {t} - {n} {quality_emoji}\n"
+            msg += f"┌ {escape_md(t)} - {escape_md(n)} {quality_emoji}\n"
             msg += f"│ 💰 Entry: Rp {s['entry']:,.0f}\n"
             if s.get('tp1'):
                 tp1_pct = ((s['tp1'] - s['entry']) / s['entry']) * 100
@@ -64,7 +82,7 @@ def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:
             quality = s.get('quality', 'WEAK')
             quality_emoji = "⭐" if quality == 'STRONG' else "✨" if quality == 'MODERATE' else "💫"
 
-            msg += f"┌ {t} - {n} {quality_emoji}\n"
+            msg += f"┌ {escape_md(t)} - {escape_md(n)} {quality_emoji}\n"
             msg += f"│ 💰 Entry: Rp {s['entry']:,.0f}\n"
             sl_pct = ((s['sl'] - s['entry']) / s['entry']) * 100
             msg += f"│ 🛡️ SL: Rp {s['sl']:,.0f} (+{sl_pct:.1f}%)\n"
@@ -120,7 +138,7 @@ def format_crypto_msg(signals: List) -> str:
             adx = s.get('adx', 25)
             quality_emoji = "⭐" if quality == 'STRONG' else "✨" if quality == 'MODERATE' else "💫"
 
-            msg += f"┌ {t} - {n} {quality_emoji}\n"
+            msg += f"┌ {escape_md(t)} - {escape_md(n)} {quality_emoji}\n"
             msg += f"│ 💰 Entry: ${s['entry']:,.2f}\n"
             if s.get('tp1'):
                 msg += f"│ 🎯 TP1: ${s['tp1']:,.2f}\n"
@@ -141,7 +159,7 @@ def format_crypto_msg(signals: List) -> str:
             quality = s.get('quality', 'WEAK')
             quality_emoji = "⭐" if quality == 'STRONG' else "✨" if quality == 'MODERATE' else "💫"
 
-            msg += f"┌ {t} - {n} {quality_emoji}\n"
+            msg += f"┌ {escape_md(t)} - {escape_md(n)} {quality_emoji}\n"
             msg += f"│ 💰 Entry: ${s['entry']:,.2f}\n"
             msg += f"│ 🛡️ SL: ${s['sl']:,.2f}\n"
             msg += f"│ 📊 RSI: {rsi:.0f} | MACD: {macd_hist:+.4f} | Vol: {vol_ratio:.1f}x\n"
@@ -183,7 +201,7 @@ def format_bsjp_msg(signals: List) -> str:
 """
 
     for i, s in enumerate(signals[:15], 1):
-        msg += f"""{i}. *{s['ticker']}* - {s['name']}
+        msg += f"""{i}. *{escape_md(s['ticker'])}* - {escape_md(s['name'])}
    💵 Harga: Rp {s['price']:,.0f}
    📈 Perubahan: {s['change']:+.1f}%
    📊 RSI: {s['rsi']:.0f}
@@ -229,7 +247,7 @@ def format_morning_msg(signals: List) -> str:
 """
 
     for i, s in enumerate(signals[:10], 1):
-        msg += f"""{i}. *{s['ticker']}* - {s['name']}
+        msg += f"""{i}. *{escape_md(s['ticker'])}* - {escape_md(s['name'])}
    💰 Harga: Rp {s['price']:,.0f}
    📈 Perubahan: {s['change']:+.1f}%
    📊 RSI: {s['rsi']:.0f}
@@ -261,9 +279,9 @@ def format_indicator_msg(ticker: str, name: str, indicators: Dict, price: str) -
     def e(key): return em.get(indicators.get(key, 'NEUTRAL'), '⚪')
     def f(val, fmt='.2f'): return f"{val:{fmt}}" if isinstance(val, (int, float)) else str(val)
 
-    msg = f"📈 *INDIKATOR TEKNIS - {ticker}*\n"
+    msg = f"📈 *INDIKATOR TEKNIS - {escape_md(ticker)}*\n"
     msg += "━" * 35 + "\n"
-    msg += f"📌 *{name}*\n"
+    msg += f"📌 *{escape_md(name)}*\n"
     msg += f"💰 Harga: {price}\n\n"
 
     # MACD
@@ -422,7 +440,7 @@ def format_unified_crypto_notification(
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
-    lines.append(f"📌 *{name} ({sym})*")
+    lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
     lines.append(f"💸 Gain: {gain_str}")
     lines.append("")
 
@@ -433,7 +451,7 @@ def format_unified_crypto_notification(
         reversal_reasons = analysis_data.get('reversal_reasons', [])
         if reversal_reasons:
             for reason in reversal_reasons:
-                lines.append(f"   ✅ {reason}")
+                lines.append(f"   ✅ {escape_md(reason)}")
         lines.append("")
         lines.append("💡 RSI oversold + momentum rising")
         lines.append("   Entry di support, potensi rebound")
@@ -459,9 +477,9 @@ def format_unified_crypto_notification(
         lines.append("📐 *Chart Patterns Detected:*")
         for p in detected_patterns:
             strength_bar = "█" * int(p.get('strength', 0) * 5)
-            lines.append(f"   🔹 {p.get('name', 'Unknown')} [{strength_bar}]")
+            lines.append(f"   🔹 {escape_md(p.get('name', 'Unknown'))} [{strength_bar}]")
             if p.get('description'):
-                lines.append(f"      {p.get('description')}")
+                lines.append(f"      {escape_md(p.get('description'))}")
 
     # Leverage
     lev = analysis_data.get('leverage')
@@ -549,7 +567,7 @@ def format_unified_crypto_notification(
 
         ns = market_data.get('news_sentiment')
         if ns:
-            lines.append(f"📰 News: {ns}")
+            lines.append(f"📰 News: {escape_md(ns)}")
 
         lines.append("")
 
@@ -557,7 +575,7 @@ def format_unified_crypto_notification(
     ai = analysis_data.get('ai_insight')
     if ai:
         lines.append("━━━ 🤖 CRYPTO AI INSIGHT ━━━")
-        lines.append(f"💡 {ai}")
+        lines.append(f"💡 {escape_md(ai)}")
         lines.append("")
 
     # Final line
@@ -621,7 +639,7 @@ def format_unified_stock_notification(
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
-    lines.append(f"📌 *{name} ({ticker})*")
+    lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
     lines.append(f"💸 Gain: {gain_str}")
     lines.append("")
 
@@ -661,9 +679,9 @@ def format_unified_stock_notification(
         lines.append("📐 *Chart Patterns Detected:*")
         for p in detected_patterns:
             strength_bar = "█" * int(p.get('strength', 0) * 5)
-            lines.append(f"   🔹 {p.get('name', 'Unknown')} [{strength_bar}]")
+            lines.append(f"   🔹 {escape_md(p.get('name', 'Unknown'))} [{strength_bar}]")
             if p.get('description'):
-                lines.append(f"      {p.get('description')}")
+                lines.append(f"      {escape_md(p.get('description'))}")
 
     lines.append(f"📊 RSI: {rsi:.0f} | Score: {score} ({quality})")
     lines.append(f"📊 Change: {change:+.1f}% | Vol: {volume_ratio:.1f}x")
@@ -714,7 +732,7 @@ def format_unified_stock_notification(
         lines.append("")
         lines.append("📋 *Alasan:*")
         for reason in reasons[:5]:
-            lines.append(f"  ✅ {reason}")
+            lines.append(f"  ✅ {escape_md(reason)}")
 
     # Support & Resistance levels
     sr = analysis_data.get('sr', {})
@@ -749,7 +767,8 @@ def format_analisa_simple(
     data: Dict,
     signal: Dict,
     sentiment: Dict = None,
-    is_crypto: bool = False
+    is_crypto: bool = False,
+    usd_idr_rate: float = 0
 ) -> str:
     """
     Clean, readable analisa output format.
@@ -771,12 +790,24 @@ def format_analisa_simple(
     volume_ratio = data.get('volume_ratio') or 1
     candles = data.get('candles') or 0
 
-    # Currency symbol
+    def fp(v, with_idr: bool = False) -> str:
+        """Format a price value with proper decimals and optional IDR conversion."""
+        if v is None or v == 0:
+            return "N/A"
+        if is_crypto:
+            s = f"${v:,.2f}"
+            if with_idr and usd_idr_rate > 0:
+                s += f" | Rp {v * usd_idr_rate:,.0f}"
+        else:
+            s = f"Rp {v:,.0f}"
+        return s
+
+    # Header price (compact — just USD or IDR, no dual display)
     if is_crypto:
-        curr = "$"
         curr_price = f"${price:,.2f}"
+        if usd_idr_rate > 0:
+            curr_price += f" (Rp {price * usd_idr_rate:,.0f})"
     else:
-        curr = "Rp "
         curr_price = f"Rp {price:,.0f}"
 
     # === HEADER ===
@@ -789,8 +820,8 @@ def format_analisa_simple(
         header_emoji = "🟡"
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"📊 *Analisa {name} ({ticker})*")
-    lines.append(f"{header_emoji} Signal: **{signal_type}** | {curr_price} ({change:+.2f}%)")
+    lines.append(f"📊 *Analisa {escape_md(name)} ({escape_md(ticker)})*")
+    lines.append(f"{header_emoji} Signal: *{escape_md(signal_type)}* | {curr_price} ({change:+.2f}%)")
     lines.append(f"⏱️ Timeframe: 5 Menit | Candles: {candles}")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
@@ -827,7 +858,7 @@ def format_analisa_simple(
     lines.append("")
     lines.append("*📈 Trend & Indikator:*")
     lines.append(f"• {trend}")
-    lines.append(f"• MA Fast: {curr}{ma_fast:,.0f} | MA Slow: {curr}{ma_slow:,.0f}")
+    lines.append(f"• MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
     lines.append(f"• RSI: {rsi_status}")
     lines.append(f"• Volume: {volume_ratio:.1f}x ({'Tinggi' if volume_ratio > 1 else 'Normal'})")
 
@@ -841,19 +872,19 @@ def format_analisa_simple(
     if nearest_support:
         sup_level = nearest_support.get('level', 0) or 0
         sup_type = nearest_support.get('type', 'Support')
-        lines.append(f"• Support: {curr}{sup_level:,.0f} ({sup_type})")
+        lines.append(f"• Support: {fp(sup_level)} ({sup_type})")
     else:
         sl = signal.get('sl') or 0
         if sl > 0:
-            lines.append(f"• Support: {curr}{sl:,.0f} (dari SL)")
+            lines.append(f"• Support: {fp(sl)} (dari SL)")
     if nearest_resistance:
         res_level = nearest_resistance.get('level', 0) or 0
         res_type = nearest_resistance.get('type', 'Resistance')
-        lines.append(f"• Resistance: {curr}{res_level:,.0f} ({res_type})")
+        lines.append(f"• Resistance: {fp(res_level)} ({res_type})")
     else:
         tp1 = signal.get('tp1') or 0
         if tp1 > 0:
-            lines.append(f"• Resistance: {curr}{tp1:,.0f} (dari TP1)")
+            lines.append(f"• Resistance: {fp(tp1)} (dari TP1)")
 
     # === ENTRY, TP, SL ===
     entry = signal.get('entry', price) or price
@@ -864,19 +895,19 @@ def format_analisa_simple(
 
     lines.append("")
     lines.append("*💰 Entry, TP & SL:*")
-    lines.append(f"• Entry: {curr}{entry:,.0f}")
+    lines.append(f"• Entry: {fp(entry, with_idr=True)}")
     if tp1 > 0:
         tp1_pct = ((tp1 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP1: {curr}{tp1:,.0f} ({tp1_pct:+.1f}%)")
+        lines.append(f"• TP1: {fp(tp1, with_idr=True)} ({tp1_pct:+.1f}%)")
     if tp2 > 0:
         tp2_pct = ((tp2 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP2: {curr}{tp2:,.0f} ({tp2_pct:+.1f}%)")
+        lines.append(f"• TP2: {fp(tp2, with_idr=True)} ({tp2_pct:+.1f}%)")
     if tp3 > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP3: {curr}{tp3:,.0f} ({tp3_pct:+.1f}%)")
+        lines.append(f"• TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
     if sl > 0:
         sl_pct = ((sl - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• SL: {curr}{sl:,.0f} ({sl_pct:+.1f}%)")
+        lines.append(f"• SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
 
     # === PENJELASAN ===
     lines.append("")
@@ -912,8 +943,8 @@ def format_analisa_simple(
         overall = sentiment.get('overall') or 'netral'
         summary = sentiment.get('summary') or ''
         count = sentiment.get('headline_count') or 0
-        lines.append(f"*📰 Sentimen: {emoji} {overall.title()}*")
-        lines.append(f"• {summary}")
+        lines.append(f"*📰 Sentimen: {emoji} {escape_md(overall.title())}*")
+        lines.append(f"• {escape_md(summary)}")
         lines.append(f"• {count} berita dianalisa")
 
         # Show top headlines
@@ -924,7 +955,7 @@ def format_analisa_simple(
                 if hl and isinstance(hl, dict):
                     hl_text = hl.get('headline') or ''
                     if hl_text:
-                        lines.append(f"  • {hl_text[:60]}...")
+                        lines.append(f"  • {escape_md(hl_text[:60])}...")
     elif sentiment:
         lines.append("")
         lines.append("*📰 Sentimen: Tidak ada berita terbaru*")
@@ -950,18 +981,18 @@ def format_analisa_simple(
     support_level = nearest_support.get('level') or (sl if sl and sl > 0 else price * 0.95)
 
     if signal_type == 'BUY':
-        lines.append(f"• Sudah punya posisi: Hold, dengan Stop Loss di bawah {curr}{support_level:,.0f}")
-        lines.append(f"• Ingin entry: Entry di area {curr}{entry_area_low:,.0f}-{curr}{entry_area_high:,.0f}, dengan Stop Loss di {curr}{support_level:,.0f}")
-        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {curr}{resistance_level:,.0f} dengan volume kuat")
-        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {curr}{support_level:,.0f} dengan volume besar")
+        lines.append(f"• Sudah punya posisi: Hold, dengan Stop Loss di bawah {fp(support_level)}")
+        lines.append(f"• Ingin entry: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(support_level)}")
+        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
+        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
     elif signal_type == 'SELL':
-        lines.append(f"• Sudah punya posisi: Sell / lepas posisi, Support di {curr}{support_level:,.0f}")
-        lines.append(f"• Ingin short: Entry di area {curr}{entry_area_low:,.0f}-{curr}{entry_area_high:,.0f}, dengan Stop Loss di {curr}{resistance_level:,.0f}")
-        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {curr}{support_level:,.0f} dengan volume besar")
-        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {curr}{resistance_level:,.0f} dengan volume kuat")
+        lines.append(f"• Sudah punya posisi: Sell / lepas posisi, Support di {fp(support_level)}")
+        lines.append(f"• Ingin short: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(resistance_level)}")
+        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
+        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
     else:
         lines.append("• Tunggu konfirmasi sinyal")
-        lines.append("• Perhatikan area support di {0}{1:,.0f} dan resistance di {0}{2:,.0f}".format(curr, support_level, resistance_level))
+        lines.append(f"• Perhatikan area support di {fp(support_level)} dan resistance di {fp(resistance_level)}")
 
     # === FOOTER ===
     ts = datetime.now().strftime('%d %b %Y %H:%M')

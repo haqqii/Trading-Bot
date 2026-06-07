@@ -144,7 +144,8 @@ def cleanup_old_signals():
         if isinstance(signal_time, str):
             try:
                 signal_time = datetime.fromisoformat(signal_time)
-            except:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Bad datetime for stock signal {key}: {e}; using now()")
                 signal_time = now
 
         # Remove if too old
@@ -159,7 +160,8 @@ def cleanup_old_signals():
         if isinstance(signal_time, str):
             try:
                 signal_time = datetime.fromisoformat(signal_time)
-            except:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Bad datetime for crypto signal {key}: {e}; using now()")
                 signal_time = now
 
         if signal_time.timestamp() < cutoff_time:
@@ -376,8 +378,8 @@ async def check_bsjp_signals(app):
                         'tp': price * 1.02,
                         'sl': price * 0.985
                     }
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"bsjp scheduler analyze inner failure: {e}")
             return None
 
         semaphore = asyncio.Semaphore(20)
@@ -961,8 +963,8 @@ def _check_sent_today(filepath: str) -> bool:
                 last_sent = f.read().strip()
             today = now_wib().date().isoformat()
             return last_sent == today
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to read sent-marker {filepath}: {e}")
     return False
 
 
@@ -971,8 +973,8 @@ def _mark_sent_today(filepath: str):
     try:
         with open(filepath, 'w') as f:
             f.write(now_wib().date().isoformat())
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to write sent-marker {filepath}: {e}")
 
 
 # Backward compatibility wrappers
@@ -1062,8 +1064,8 @@ async def check_morning_notification(app):
                         'tp': price * 1.03,
                         'sl': price * 0.98
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"morning scheduler analyze inner failure: {e}")
             return None
 
         semaphore = asyncio.Semaphore(20)
@@ -1595,8 +1597,8 @@ async def prefetch_stock_cache(app):
                 d = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '3d')
                 if d and d.get('candles', 0) >= 5:
                     return ticker
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"favorit stock probe failed for {ticker}: {e}")
             return None
 
         semaphore = asyncio.Semaphore(15)
@@ -1637,8 +1639,8 @@ async def prefetch_crypto_cache(app):
                 d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d')
                 if d and d.get('candles', 0) >= 5:
                     return ticker
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"favorit crypto probe failed for {ticker}: {e}")
             return None
 
         semaphore = asyncio.Semaphore(3)  # Reduced from 10 to 3 to avoid rate limits

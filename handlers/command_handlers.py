@@ -83,7 +83,8 @@ def load_user_data():
                 if isinstance(last_buy_signals[key].get('time'), str):
                     try:
                         last_buy_signals[key]['time'] = datetime.fromisoformat(last_buy_signals[key]['time'])
-                    except:
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Bad datetime for signal {key}: {e}; using now()")
                         last_buy_signals[key]['time'] = datetime.now()
             logger.info(f"Loaded {len(last_buy_signals)} signals from {SIGNALS_FILE}")
         else:
@@ -122,8 +123,8 @@ def _atomic_write(filepath: str, data: dict):
         backup_path = filepath + '.bak'
         try:
             shutil.copy2(filepath, backup_path)
-        except Exception:
-            pass  # Backup failed, continue anyway
+        except Exception as e:
+            logger.warning(f"Backup write failed for {filepath}: {e}")
 
     # Write to temp file
     temp_fd, temp_path = tempfile.mkstemp(suffix='.tmp', dir=os.path.dirname(filepath) or '.')
@@ -143,16 +144,16 @@ def _atomic_write(filepath: str, data: dict):
         # Try to remove temp file
         try:
             os.unlink(temp_path)
-        except:
-            pass
+        except Exception as cleanup_err:
+            logger.warning(f"Failed to remove temp file {temp_path}: {cleanup_err}")
         # Restore from backup
         backup_path = filepath + '.bak'
         if os.path.exists(backup_path):
             try:
                 shutil.copy2(backup_path, filepath)
                 logger.warning(f"Restored {filepath} from backup")
-            except:
-                pass
+            except Exception as restore_err:
+                logger.error(f"Backup restore also failed for {filepath}: {restore_err}")
         return False
 
 
@@ -353,7 +354,7 @@ async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(ctx.args) > 1:
         try:
             target_price = float(ctx.args[1])
-        except:
+        except (ValueError, TypeError, IndexError):
             await update.message.reply_text("❌ Harga harus angka!")
             return
 
@@ -536,7 +537,7 @@ async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lot = int(ctx.args[2])
         u.setdefault('portfolio', []).append({'ticker': t, 'buy_price': price, 'lot': lot})
         await update.message.reply_text(f"✅ Buy {t} @ {price:,} | Lot {lot}")
-    except:
+    except (ValueError, TypeError, IndexError, KeyError):
         await update.message.reply_text("❌ Format salah!")
 
 
@@ -571,7 +572,7 @@ async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return
 
         await update.message.reply_text(f"ℹ️ Tidak ada posisi {t}")
-    except:
+    except (ValueError, TypeError, IndexError, KeyError):
         await update.message.reply_text("❌ Format salah!")
 
 
@@ -659,8 +660,8 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     'tp': price * 1.02,
                     'sl': price * 0.985
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"bsjp analyze inner failure: {e}")
         return None
 
     semaphore = asyncio.Semaphore(30)
@@ -728,8 +729,8 @@ async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     'tp': price * 1.03,
                     'sl': price * 0.98
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"morning analyze inner failure: {e}")
         return None
 
     semaphore = asyncio.Semaphore(25)
@@ -808,7 +809,8 @@ async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Try markdown, fallback to plain text if error
     try:
         await update.message.reply_text(msg, parse_mode='Markdown')
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Markdown send failed, falling back to plain text: {e}")
         plain_msg = msg.replace('*', '').replace('_', ' ')
         await update.message.reply_text(plain_msg)
 
@@ -1146,7 +1148,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 data=d,
                 signal=s,
                 sentiment=sentiment,
-                is_crypto=True
+                is_crypto=True,
+                usd_idr_rate=crypto_service.get_usd_idr_rate()
             )
 
         else:

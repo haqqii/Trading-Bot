@@ -33,8 +33,8 @@ def load_token():
                             if line.startswith('TELEGRAM_BOT_TOKEN='):
                                 token = line.split('=', 1)[1].strip()
                                 break
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Warning: failed to read {env_file}: {e}")
     return token if token else 'YOUR_BOT_TOKEN_HERE'
 
 

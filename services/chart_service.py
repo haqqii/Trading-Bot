@@ -202,8 +202,8 @@ class ChartService:
             logger.error(f"Chart error for {ticker}: {e}")
             try:
                 plt.close()
-            except:
-                pass
+            except Exception as cleanup_err:
+                logger.debug(f"plt.close() failed: {cleanup_err}")
             return None
 
     def _calculate_sr_levels(self, df):
@@ -223,7 +223,8 @@ class ChartService:
             resistances = [(r1, 'R1'), (r2, 'R2')]
 
             return {'supports': supports, 'resistances': resistances}
-        except:
+        except Exception as e:
+            logger.debug(f"_calculate_sr_levels failed: {e}")
             return None
 
     def generate_crypto_chart(self, ticker: str, interval: str = '1h', period: str = '3d', indicators=None):

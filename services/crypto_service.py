@@ -145,8 +145,8 @@ class CryptoService:
                 rate = data.get('tether', {}).get('idr', 16000)
                 self.usd_cache.set('usd_idr_rate', rate, ttl=300)
                 return rate
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"USD/IDR rate fetch failed, using fallback 16000: {e}")
         return 16000
 
     def get_crypto_data(self, ticker: str, interval: str = '15m', period: str = '3d',
@@ -224,7 +224,8 @@ class CryptoService:
                     # Calculate Support & Resistance
                     try:
                         sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
-                    except:
+                    except Exception as e:
+                        logger.debug(f"S/R calculation failed for {ticker}: {e}")
                         sr_data = {}
 
                     latest = df.iloc[-1]

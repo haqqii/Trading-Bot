@@ -104,7 +104,8 @@ class StockService:
                 # Calculate Support & Resistance levels
                 try:
                     sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
-                except:
+                except Exception as e:
+                    logger.debug(f"S/R calculation failed for {ticker}: {e}")
                     sr_data = {}
 
                 if breaker:
