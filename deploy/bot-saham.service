@@ -1,0 +1,27 @@
+[Unit]
+Description=Bot Sinyal Saham Indonesia - Telegram Bot
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/bot-saham
+Environment=PYTHONUNBUFFERED=1
+# Bot token dari environment (set di /etc/environment atau systemd env)
+Environment=BOT_TOKEN_FILE=/home/ubuntu/bot-saham/.env
+ExecStart=/usr/bin/python3 /home/ubuntu/bot-saham/main.py
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=30
+
+# Batas resource
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

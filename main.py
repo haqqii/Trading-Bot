@@ -212,17 +212,18 @@ def cleanup():
             print(f"Warning: failed to remove lock file: {e}")
 
 def signal_handler(sig, frame):
-    print("\n\n🛑 Bot dihentikan!")
+    sig_name = 'SIGTERM' if sig == signal.SIGTERM else 'SIGINT'
+    print(f"\n\n🛑 Bot dihentikan ({sig_name})!")
     cleanup()
-    os._exit(0)
+    sys.exit(0)
 
-# Windows doesn't have SIGTERM, so only use SIGINT
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         print("\n\n🛑 Bot dihentikan!")
         cleanup()
     finally:
