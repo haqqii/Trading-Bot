@@ -581,7 +581,7 @@ def format_unified_crypto_notification(
     # Final line
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"⏰ {ts}")
-    lines.append("₿ IDX Crypto Bot")
+    lines.append("₿ Crypto - Ochobot")
 
     return '\n'.join(lines)
 
@@ -756,7 +756,7 @@ def format_unified_stock_notification(
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"⏰ {ts}")
-    lines.append("📊 IDX Saham Bot")
+    lines.append("📊 IDX Saham - Ochobot")
 
     return '\n'.join(lines)
 
@@ -1000,9 +1000,9 @@ def format_analisa_simple(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"⏰ {ts}")
     if is_crypto:
-        lines.append("₿ Crypto Bot")
+        lines.append("₿ Crypto - Ochobot")
     else:
-        lines.append("📊 IDX Saham Bot")
+        lines.append("📊 IDX Saham - Ochobot")
 
     return '\n'.join(lines)
 
