@@ -872,7 +872,7 @@ def format_analisa_simple(
     if nearest_support:
         sup_level = nearest_support.get('level', 0) or 0
         sup_type = nearest_support.get('type', 'Support')
-        lines.append(f"• Support: {fp(sup_level)} ({sup_type})")
+        lines.append(f"• Support: {fp(sup_level)} ({escape_md(sup_type)})")
     else:
         sl = signal.get('sl') or 0
         if sl > 0:
@@ -880,7 +880,7 @@ def format_analisa_simple(
     if nearest_resistance:
         res_level = nearest_resistance.get('level', 0) or 0
         res_type = nearest_resistance.get('type', 'Resistance')
-        lines.append(f"• Resistance: {fp(res_level)} ({res_type})")
+        lines.append(f"• Resistance: {fp(res_level)} ({escape_md(res_type)})")
     else:
         tp1 = signal.get('tp1') or 0
         if tp1 > 0:

@@ -22,6 +22,22 @@ from idx_stocks import ALL_IDX_STOCKS
 
 logger = logging.getLogger(__name__)
 
+
+def _strip_markdown_chars(text: str) -> str:
+    """Remove Telegram Markdown formatting chars for clean plain text fallback.
+
+    Used when parse_mode='Markdown' fails — keeps the text readable instead of
+    showing literal *...* / _..._ / `...` / [...] in the chat.
+    """
+    if not text:
+        return text
+    # Unescape first (so \* -> *), then strip the formatting markers
+    out = text.replace('\\*', '*').replace('\\_', '_').replace('\\`', '`').replace('\\[', '[')
+    for ch in ('*', '_', '`', '['):
+        out = out.replace(ch, '')
+    return out
+
+
 # Global state
 ALL_STOCKS = ALL_IDX_STOCKS
 user_data_db = {}
@@ -1232,14 +1248,15 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as send_err:
             err_str = str(send_err)
             logger.error(f"[ANALISA] Markdown send failed ({err_str[:80]}), retrying as plain text")
+            sanitized = _strip_markdown_chars(msg)
             try:
-                await update.message.reply_text(msg, read_timeout=120, write_timeout=120)
+                await update.message.reply_text(sanitized, read_timeout=120, write_timeout=120)
                 logger.info(f"[ANALISA] Done for {ticker} (plain text fallback)")
             except Exception as plain_err:
                 logger.error(f"[ANALISA] Plain text send also failed: {plain_err}")
                 try:
                     if reply_msg:
-                        await reply_msg.edit_text(msg[:3500] + "\n\n⚠️ _Gagal kirim hasil_", parse_mode='Markdown')
+                        await reply_msg.edit_text((sanitized or msg)[:3500] + "\n\n⚠️ _Gagal kirim hasil_", parse_mode='Markdown')
                 except Exception as edit_err:
                     logger.error(f"[ANALISA] edit_text fallback also failed: {edit_err}")
 
