@@ -23,10 +23,10 @@ WIB = timezone(timedelta(hours=7))
 def now_wib():
     """Get current time in WIB timezone (UTC+7)
 
-    Uses local system time directly since user's timezone is set to UTC+7.
+    Always converts from UTC to ensure correct WIB time regardless of
+    system timezone setting.
     """
-    # Get local time and treat it as WIB (system timezone is UTC+7)
-    return datetime.now(WIB)
+    return datetime.now(timezone.utc).astimezone(WIB)
 
 
 async def reset_stock_circuit_breaker(app):
@@ -344,18 +344,12 @@ async def check_bsjp_signals(app):
     """Check BSJP (Beli Sore Jual Pagi) signals and send notifications"""
     try:
         now = now_wib()
-        is_weekend = now.weekday() >= 5
 
-        # Window: 15:00 - 15:30 WIB (30 minute window)
-        is_bsjp_time = (now.hour == 15 and now.minute <= 30)
+        if now.weekday() >= 5:
+            return  # Skip weekends
 
-        if is_weekend:
-            logger.info("[BSJP] Weekend - skipping")
-            return
-
-        # Only send BSJP at 15:00-15:05
-        if not is_bsjp_time:
-            logger.info(f"[BSJP] Outside BSJP time ({now.hour}:{now.minute:02d} WIB) - skipping")
+        # Window: 14:00 - 16:00 WIB (market afternoon before close)
+        if not (14 <= now.hour < 16):
             return
 
         # Check if already sent today (file-based)
