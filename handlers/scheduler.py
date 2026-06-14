@@ -14,6 +14,7 @@ from utils.formatters import format_unified_crypto_notification, format_unified_
 
 # Import caches for cleanup
 from utils.cache import _price_cache, _signal_cache, _market_cache, _usd_cache
+from utils.rate_limiter import _circuit_breakers, APIState
 
 # WIB timezone (UTC+7)
 WIB = timezone(timedelta(hours=7))
@@ -26,6 +27,41 @@ def now_wib():
     """
     # Get local time and treat it as WIB (system timezone is UTC+7)
     return datetime.now(WIB)
+
+
+async def reset_stock_circuit_breaker(app):
+    """Reset Yahoo stock circuit breaker at market open (09:00 WIB).
+
+    Clears any stale OPEN state from the previous trading day so stock
+    fetching starts fresh. Also clears the shared Yahoo breaker to avoid
+    crypto scanner interference.
+    """
+    try:
+        now = now_wib()
+        if now.weekday() >= 5:
+            return  # Skip weekends
+
+        # Only act around 09:00 WIB (02:00 UTC)
+        if now.hour != 9 or now.minute > 5:
+            return
+
+        breaker = _circuit_breakers.get('yahoo_stock')
+        if breaker:
+            breaker.state = APIState.CLOSED
+            breaker.failure_count = 0
+            breaker.half_open_calls = 0
+            logger.info("[MARKET OPEN] Yahoo stock circuit breaker RESET")
+
+        # Also reset shared Yahoo breaker to avoid crypto→stock interference
+        yahoo_breaker = _circuit_breakers.get('yahoo')
+        if yahoo_breaker:
+            yahoo_breaker.state = APIState.CLOSED
+            yahoo_breaker.failure_count = 0
+            yahoo_breaker.half_open_calls = 0
+            logger.info("[MARKET OPEN] Shared Yahoo circuit breaker RESET")
+
+    except Exception as e:
+        logger.error(f"[MARKET OPEN] Circuit breaker reset failed: {e}")
 
 
 def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str = '3d'):
@@ -1661,6 +1697,10 @@ async def prefetch_crypto_cache(app):
 
 def register_jobs(app):
     """Register all background jobs to the application"""
+    # === MARKET OPEN RESET (run first) ===
+    # Reset circuit breakers at 09:00 WIB so stock scanning starts fresh
+    app.job_queue.run_repeating(reset_stock_circuit_breaker, interval=60, first=5)
+
     # === PREFETCH JOBS (run first to warm cache) ===
     # Prefetch stock cache every 2 minutes during market hours
     app.job_queue.run_repeating(prefetch_stock_cache, interval=120, first=5)

@@ -199,7 +199,10 @@ _yahoo_limiter = RateLimiter(max_calls=30, period=60, name="yahoo")
 _circuit_breakers: Dict[str, CircuitBreaker] = {
     # CoinGecko: very slow recovery since free tier is very limited
     'coingecko': CircuitBreaker(failure_threshold=10, recovery_timeout=300, name="coingecko"),
+    # Yahoo: shared between crypto and stock services
     'yahoo': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="yahoo"),
+    # Yahoo stock: separate breaker so crypto scanner doesn't block stock fetches
+    'yahoo_stock': CircuitBreaker(failure_threshold=30, recovery_timeout=60, name="yahoo_stock"),
     'tradingview': CircuitBreaker(failure_threshold=10, recovery_timeout=30, name="tradingview"),
     'finnhub': CircuitBreaker(failure_threshold=10, recovery_timeout=60, name="finnhub"),
 }

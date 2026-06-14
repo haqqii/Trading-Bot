@@ -57,10 +57,10 @@ class StockService:
         if cached is not None:
             return cached
 
-        breaker = _circuit_breakers.get('yahoo')
+        breaker = _circuit_breakers.get('yahoo_stock')
 
         if breaker and not breaker.can_execute():
-            logger.warning(f"Yahoo circuit breaker OPEN for {ticker}, skipping")
+            logger.warning(f"Yahoo stock circuit breaker OPEN for {ticker}, skipping")
             return None
 
         for attempt in range(retry):
