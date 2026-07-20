@@ -969,34 +969,32 @@ def format_analisa_simple(
     for reason in reasons[:4]:
         lines.append(f"• {reason}")
 
-    # === SENTIMENT (if available) ===
+    # === SENTIMENT & BERITA ===
     if sentiment and isinstance(sentiment, dict) and sentiment.get('headline_count', 0) > 0:
-        lines.append("")
         emoji = sentiment.get('emoji') or '🟡'
         overall = sentiment.get('overall') or 'netral'
         summary = sentiment.get('summary') or ''
         count = sentiment.get('headline_count') or 0
-        lines.append(f"*📰 Sentimen: {emoji} {escape_md(overall.title())}*")
-        lines.append(f"• {escape_md(summary)}")
 
-        # Show all headlines (up to 3)
+        lines.append("")
+        lines.append(f"*📰 Sentimen: {emoji} {escape_md(overall.title())}*")
+        lines.append(f"• {escape_md(summary)} ({count} berita)")
+
+        # Show all headlines (full text, no truncation)
         all_hl = sentiment.get('all_headlines') or []
         if all_hl:
-            lines.append("")
-            lines.append("*📋 Berita Terbaru:*")
             for hl in all_hl[:3]:
                 if hl and isinstance(hl, dict):
                     hl_text = hl.get('headline') or ''
-                    source = hl.get('source') or ''
                     if hl_text:
-                        lines.append(f"  • {escape_md(hl_text[:60])}... [{source}]")
+                        lines.append(f"  • {escape_md(hl_text)}")
         elif sentiment.get('top_headlines'):
             # Fallback to top headlines if all_headlines not available
-            for hl in sentiment.get('top_headlines', [])[:2]:
+            for hl in sentiment.get('top_headlines', [])[:3]:
                 if hl and isinstance(hl, dict):
                     hl_text = hl.get('headline') or ''
                     if hl_text:
-                        lines.append(f"  • {escape_md(hl_text[:70])}...")
+                        lines.append(f"  • {escape_md(hl_text)}")
     elif sentiment:
         lines.append("")
         lines.append("*📰 Sentimen: Tidak ada berita terbaru*")
