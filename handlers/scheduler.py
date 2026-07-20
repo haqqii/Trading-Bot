@@ -368,12 +368,14 @@ async def check_bsjp_signals(app):
 
         # Scan stocks for BSJP signals (parallel fetch)
         bsjp_signals = []
-        tickers = list(ALL_STOCKS.keys())[:100]
+        # Scan more stocks for better coverage
+        tickers = list(ALL_STOCKS.keys())[:200]
 
         def analyze_bsjp(ticker):
             """Blocking BSJP analysis - runs in thread pool"""
             try:
-                d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '3d')
+                # Try 1h interval first for intraday momentum
+                d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '5d')
                 if not d or d.get('candles', 0) < 10:
                     return None
 
@@ -381,22 +383,49 @@ async def check_bsjp_signals(app):
                 rsi = d.get('rsi', 50)
                 ma_fast = d.get('ma_fast', price)
                 ma_slow = d.get('ma_slow', price)
+                macd_hist = d.get('macd_hist', 0)
                 change = d.get('change', 0)
+                volume_ratio = d.get('volume_ratio', 1.0)
 
-                # BSJP criteria:
-                # 1. Price above MAs (bullish)
-                # 2. RSI not overbought (RSI < 70 for flexibility)
-                # 3. Positive change
-                above_ma = price > ma_fast > ma_slow
-                rsi_ok = 30 < rsi < 70
+                # BSJP criteria - more flexible:
+                # 1. Price above at least MA Fast (bullish)
+                # 2. RSI not overbought/oversold (flexible range)
+                # 3. MACD histogram positive (momentum confirmation)
+                # 4. Volume above average (optional boost)
 
-                if above_ma and rsi_ok:
-                    score = 2
-                    reasons = ["Above MA", f"RSI {rsi:.0f}"]
-                    if change > 0:
-                        score += 1
-                        reasons.append(f"+{change:.1f}%")
+                score = 0
+                reasons = []
 
+                # MA condition: price above MA fast is minimum
+                if price > ma_fast:
+                    score += 2
+                    reasons.append("Above MA Fast")
+                if ma_fast > ma_slow:
+                    score += 1
+                    reasons.append("Golden Cross")
+
+                # RSI: wider range (25-75)
+                if 25 < rsi < 75:
+                    score += 1
+                    reasons.append(f"RSI {rsi:.0f} OK")
+
+                # MACD momentum
+                if macd_hist > 0:
+                    score += 1
+                    reasons.append("MACD Bullish")
+
+                # Volume confirmation
+                if volume_ratio > 1.2:
+                    score += 1
+                    reasons.append(f"Vol {volume_ratio:.1f}x")
+
+                # Change bonus
+                if change > 0:
+                    score += 1
+                    reasons.append(f"+{change:.1f}%")
+
+                # Minimum score threshold
+                if score >= 3:
                     return {
                         'ticker': ticker,
                         'name': ALL_STOCKS.get(ticker, ticker),
@@ -404,6 +433,8 @@ async def check_bsjp_signals(app):
                         'rsi': rsi,
                         'change': change,
                         'score': score,
+                        'macd': macd_hist,
+                        'volume_ratio': volume_ratio,
                         'reasons': ', '.join(reasons),
                         'tp': price * 1.02,
                         'sl': price * 0.985
@@ -412,7 +443,8 @@ async def check_bsjp_signals(app):
                 logger.debug(f"bsjp scheduler analyze inner failure: {e}")
             return None
 
-        semaphore = asyncio.Semaphore(20)
+        # Increase semaphore for faster scanning
+        semaphore = asyncio.Semaphore(50)
         async def fetch_with_semaphore(ticker):
             async with semaphore:
                 return await asyncio.to_thread(analyze_bsjp, ticker)
