@@ -530,10 +530,20 @@ async def remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # === NOTIFIKASI ===
+NOTIFICATION_DESCRIPTIONS = {
+    'saham': ('Sinyal Saham', 'Sinyal BUY/SELL saham IDX otomatis', 'Saat ada sinyal kuat'),
+    'crypto': ('Sinyal Crypto', 'Sinyal BUY crypto 24/7 (250+ pair)', 'Saat ada sinyal kuat'),
+    'bsjp': ('BSJP', 'Beli Sore Jual Pagi - saham potensial', '14:00-16:00 WIB (sebelum market close)'),
+    'morning': ('Sinyal Pagi', 'Rekomendasi saham potensial untuk hari ini', '07:15-08:00 WIB (sebelum market open)'),
+    'alert_favorit': ('Alert Favorit', 'Notifikasi saat saham favorit bergerak signifikan', 'Real-time saat harga berubah'),
+}
+
+
 async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show and manage notification settings"""
     uid = str(update.effective_user.id)
     u = get_user(uid)
+    tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
 
     def status_emoji(val):
         return "✅" if val else "❌"
@@ -546,18 +556,18 @@ async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    msg = """🔔 *PENGATURAN NOTIFIKASI*
+    msg = f"""🔔 *PENGATURAN NOTIFIKASI*
+
+⏱️ Timeframe aktif: *{tf_name}*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-Aktifkan notifikasi yang diinginkan:
+Klik untuk toggle ON/OFF:"""
 
-• *Sinyal Saham* - Sinyal BUY saham IDX
-• *Sinyal Crypto* - Sinyal BUY crypto 24/7
-• *BSJP* - Sinyal Beli Sore Jual Pagi
-• *Sinyal Pagi* - Rekomendasi pagi hari
+    for key, (name, desc, schedule) in NOTIFICATION_DESCRIPTIONS.items():
+        marker = status_emoji(u.get(f'notif_{key}'))
+        msg += f"\n{marker} *{name}*\n   _{desc}_\n   📅 _{schedule}_"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-Klik tombol untuk toggle ON/OFF"""
+    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Gunakan /tf untuk ganti timeframe"
 
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -570,12 +580,14 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = get_user(uid)
 
     notif_key = query.data.replace('notif_', '')
-    if notif_key in ('saham', 'crypto', 'bsjp', 'morning'):
+    if notif_key in ('saham', 'crypto', 'bsjp', 'morning', 'alert_favorit'):
         u[f'notif_{notif_key}'] = not u.get(f'notif_{notif_key}', False)
         save_user_data()
 
     def status_emoji(val):
         return "✅" if val else "❌"
+
+    tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
 
     keyboard = [
         [InlineKeyboardButton(f"{status_emoji(u.get('notif_saham'))} Sinyal Saham", callback_data="notif_saham")],
@@ -585,22 +597,20 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text(
-        """🔔 *PENGATURAN NOTIFIKASI*
+    msg = f"""🔔 *PENGATURAN NOTIFIKASI*
+
+⏱️ Timeframe aktif: *{tf_name}*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-Aktifkan notifikasi yang diinginkan:
+Klik untuk toggle ON/OFF:"""
 
-• *Sinyal Saham* - Sinyal BUY saham IDX
-• *Sinyal Crypto* - Sinyal BUY crypto 24/7
-• *BSJP* - Sinyal Beli Sore Jual Pagi
-• *Sinyal Pagi* - Rekomendasi pagi hari
+    for key, (name, desc, schedule) in NOTIFICATION_DESCRIPTIONS.items():
+        marker = status_emoji(u.get(f'notif_{key}'))
+        msg += f"\n{marker} *{name}*\n   _{desc}_\n   📅 _{schedule}_"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-Klik tombol untuk toggle ON/OFF""",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Gunakan /tf untuk ganti timeframe"
+
+    await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
 
 
 # === PORTFOLIO ===
