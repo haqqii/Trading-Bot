@@ -1,13 +1,15 @@
 """
 News and Sentiment Analysis Service
-Fetches news from Finnhub + NewsAPI and performs sentiment analysis.
+Fetches news from Google News RSS, Finnhub + NewsAPI and performs sentiment analysis.
 """
 import os
 import time
 import logging
 import requests
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ class NewsService:
 
     def __init__(self):
         self.cache = {}  # Simple in-memory cache
-        self.cache_ttl = 1800  # 30 minutes
+        self.cache_ttl = 3600  # 1 hour for news (news doesn't change frequently)
 
     def _get_cache(self, key: str) -> Optional[List]:
         """Get from cache if not expired"""
@@ -145,6 +147,101 @@ class NewsService:
             logger.warning(f"NewsAPI error: {e}")
             return []
 
+    def fetch_google_news(self, ticker: str, stock_name: str = None) -> List[Dict]:
+        """Fetch news from Google News RSS for Indonesian stock market"""
+        articles = []
+        ticker_upper = ticker.upper().replace('.JK', '')
+
+        # Search queries to try (Indonesian stock specific)
+        queries = [
+            f"{ticker_upper} saham",
+            f"{ticker_upper} idx",
+        ]
+        # Add stock name if available
+        if stock_name:
+            # Extract short name (e.g., "PT Astrindo" from full name)
+            short_name = stock_name.split()[0] if stock_name else None
+            if short_name and len(short_name) > 2:
+                queries.append(f"{short_name} saham Indonesia")
+
+        seen_titles = set()
+
+        for query in queries:
+            try:
+                encoded_query = quote(query)
+                url = (
+                    f"https://news.google.com/rss/search"
+                    f"?q={encoded_query}"
+                    f"&hl=id-ID&gl=ID&ceid=ID:id"
+                )
+
+                resp = _session.get(url, timeout=8)  # Reduced from 15s for faster response
+                if resp.status_code != 200:
+                    continue
+
+                # Parse RSS XML
+                root = ET.fromstring(resp.content)
+
+                # Items are inside <channel> element
+                channel = root.find('channel')
+                if channel is None:
+                    continue
+
+                for item in channel.findall('item'):
+                    title = item.find('title')
+                    link = item.find('link')
+                    description = item.find('description')
+                    pub_date = item.find('pubDate')
+                    source = item.find('source')
+
+                    title_text = title.text if title is not None else ''
+                    if not title_text or title_text in seen_titles:
+                        continue
+
+                    # Skip if too old (more than 7 days)
+                    if pub_date is not None and pub_date.text:
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            pub_dt = parsedate_to_datetime(pub_date.text)
+                            if (datetime.now().astimezone() - pub_dt).days > 7:
+                                continue
+                        except:
+                            pass
+
+                    seen_titles.add(title_text)
+
+                    articles.append({
+                        'headline': self._clean_html(title_text),
+                        'summary': self._clean_html(description.text if description is not None else ''),
+                        'source': source.text if source is not None else 'Google News',
+                        'datetime': pub_date.text if pub_date is not None else '',
+                        'url': link.text if link is not None else ''
+                    })
+
+                    if len(articles) >= 15:  # Max 15 articles
+                        break
+
+                if len(articles) >= 15:
+                    break
+
+            except Exception as e:
+                logger.debug(f"Google News RSS error for query '{query}': {e}")
+                continue
+
+        return articles
+
+    def _clean_html(self, text: str) -> str:
+        """Remove HTML tags from text"""
+        if not text:
+            return ''
+        import re
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        # Decode common HTML entities
+        text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        text = text.replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+        return text.strip()
+
     def analyze_sentiment(self, articles: List[Dict]) -> Dict:
         """
         Analyze sentiment from articles.
@@ -233,9 +330,9 @@ class NewsService:
             'top_headlines': headlines_analyzed[:3]
         }
 
-    def get_stock_news(self, ticker: str) -> Tuple[List[Dict], Dict]:
+    def get_stock_news(self, ticker: str, stock_name: str = None) -> Tuple[List[Dict], Dict]:
         """
-        Get news and sentiment for a stock.
+        Get news and sentiment for a stock (Indonesian IDX stocks).
         Returns (articles, sentiment)
         """
         cache_key = f"stock_news_{ticker}"
@@ -244,19 +341,21 @@ class NewsService:
             return cached
 
         articles = []
-
-        # Remove .JK suffix for API queries
         clean_ticker = ticker.replace('.JK', '').upper()
 
-        # Fetch from Finnhub
-        finnhub_news = self.fetch_finnhub_news(clean_ticker, 'general')
-        articles.extend(finnhub_news)
+        # 1. Try Google News RSS first (best for Indonesian stocks)
+        google_news = self.fetch_google_news(clean_ticker, stock_name)
+        articles.extend(google_news)
+        logger.info(f"[NEWS] Google News for {ticker}: {len(google_news)} articles")
 
-        # Also get sector/industry news if available
-        sector_news = self.fetch_finnhub_news(clean_ticker, 'forex')
-        articles.extend(sector_news)
+        # 2. Fallback to Finnhub (for international coverage)
+        if not articles:
+            finnhub_news = self.fetch_finnhub_news(clean_ticker, 'general')
+            articles.extend(finnhub_news)
+            sector_news = self.fetch_finnhub_news(clean_ticker, 'forex')
+            articles.extend(sector_news)
 
-        # Fallback to NewsAPI
+        # 3. Fallback to NewsAPI
         if not articles and NEWS_API_KEY:
             newsapi_news = self.fetch_newsapi_news(f"{clean_ticker} stock Indonesia")
             articles.extend(newsapi_news)

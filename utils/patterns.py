@@ -34,7 +34,7 @@ def find_swing_points(df: pd.DataFrame, lookback: int = 20) -> Tuple[np.ndarray,
     return highs, lows
 
 
-def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
+def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect triangle patterns: Symmetrical, Ascending, Descending"""
     patterns = []
     close = df['Close'].values
@@ -44,73 +44,54 @@ def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]
     if len(df) < lookback:
         return patterns
 
-    recent_highs = high[-lookback:]
-    recent_lows = low[-lookback:]
-
-    # Fit trendlines
-    # Upper trendline (resistance) - connecting swing highs
-    upper_points = []
-    lower_points = []
-
-    for i in range(1, lookback - 1):
-        # Local high
-        if high[i] > high[i-1] and high[i] > high[i+1]:
-            upper_points.append((i, high[i]))
-        # Local low
-        if low[i] < low[i-1] and low[i] < low[i+1]:
-            lower_points.append((i, low[i]))
-
-    if len(upper_points) < 2 or len(lower_points) < 2:
+    price_level = np.mean(close[-lookback:])
+    price_range_pct = (np.max(high[-lookback:]) - np.min(low[-lookback:])) / price_level * 100
+    if price_range_pct < 1.5:
         return patterns
 
-    # Calculate slope of trendlines
-    upper_slope = (upper_points[-1][1] - upper_points[0][1]) / (upper_points[-1][0] - upper_points[0][0] + 0.001)
-    lower_slope = (lower_points[-1][1] - lower_points[0][1]) / (lower_points[-1][0] - lower_points[0][0] + 0.001)
+    x = np.arange(lookback)
+    upper_coef = np.polyfit(x, high[-lookback:], 1)
+    lower_coef = np.polyfit(x, low[-lookback:], 1)
 
-    # Normalize slopes by price level
-    price_level = np.mean(close[-lookback:])
-    upper_slope_pct = upper_slope / price_level * 100
-    lower_slope_pct = lower_slope / price_level * 100
+    upper_slope_pct = upper_coef[0] / price_level * 100
+    lower_slope_pct = lower_coef[0] / price_level * 100
 
-    # Detect pattern type based on trendline convergence
+    # Measure convergence: range at start vs end
+    early_high = upper_coef[0] * 5 + upper_coef[1]
+    early_low = lower_coef[0] * 5 + lower_coef[1]
+    late_high = upper_coef[0] * (lookback - 5) + upper_coef[1]
+    late_low = lower_coef[0] * (lookback - 5) + lower_coef[1]
+    early_range = early_high - early_low
+    late_range = late_high - late_low
+    convergence = (early_range - late_range) / early_range if early_range > 0 else 0
+
     pattern_name = None
     description = None
 
-    # Symmetrical Triangle: both lines converging, upper sloping down, lower sloping up
-    if abs(upper_slope_pct) < 0.5 and abs(lower_slope_pct) < 0.5:
-        # Check if they're converging
-        upper_start = upper_points[0][1]
-        lower_start = lower_points[0][1]
-        upper_end = upper_points[-1][1]
-        lower_end = lower_points[-1][1]
-
-        upper_range_start = upper_start - lower_start
-        upper_range_end = upper_end - lower_end
-
-        if upper_range_start > upper_range_end * 1.2:  # Converging
-            pattern_name = "Symmetrical Triangle"
-            description = "Bouncing between converging support and resistance"
-
-    # Ascending Triangle: flat upper, rising lower
-    elif upper_slope_pct < 0.2 and lower_slope_pct > 0.3:
+    # Ascending Triangle: flat/gentle resistance, clearly rising support
+    # Upper must be nearly flat (rising less than 0.15), lower must be clearly rising (>0.15)
+    if abs(upper_slope_pct) < 0.15 and lower_slope_pct > 0.15:
         pattern_name = "Ascending Triangle"
         description = "Flat resistance being tested, rising support"
-
-    # Descending Triangle: falling upper, flat lower
-    elif upper_slope_pct < -0.3 and lower_slope_pct > -0.1:
+    # Descending Triangle: clearly falling resistance, flat/slightly rising support
+    elif upper_slope_pct < -0.15 and abs(lower_slope_pct) < 0.25:
         pattern_name = "Descending Triangle"
         description = "Declining resistance, flat support being tested"
+    # Symmetrical Triangle: both lines sloping toward center with significant convergence
+    elif convergence > 0.15:  # At least 15% narrowing
+        pattern_name = "Symmetrical Triangle"
+        description = "Bouncing between converging support and resistance"
 
     if pattern_name:
-        # Calculate pattern strength based on number of touches
-        strength = min(len(upper_points), len(lower_points)) / 5.0
-        strength = min(1.0, strength)
+        # Directional triangles get higher base strength than convergence-based
+        base = 0.5 if pattern_name in ["Ascending Triangle", "Descending Triangle"] else 0.3
+        strength = min(0.9, base + convergence * 0.5)
 
         patterns.append({
             'type': 'triangle',
             'name': pattern_name,
             'description': description,
-            'strength': strength,
+            'strength': max(0.3, strength),
             'bullish': pattern_name in ["Ascending Triangle"],
             'bearish': pattern_name in ["Descending Triangle"],
             'neutral': pattern_name == "Symmetrical Triangle"
@@ -119,7 +100,7 @@ def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]
     return patterns
 
 
-def detect_channel_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
+def detect_channel_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect channel patterns: Uptrend, Downtrend, Ranging"""
     patterns = []
     high = df['High'].values
@@ -146,38 +127,66 @@ def detect_channel_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
     # Check parallelism
     slope_diff = abs(high_slope_pct - low_slope_pct)
 
-    pattern_name = None
-    description = None
+    # Minimum volatility check: price must move enough to form a real channel
+    # Use ATR-based check: range must be > 1.5% of price to avoid noise
+    price_range_pct = (np.max(recent_highs) - np.min(recent_lows)) / price_level * 100
+    if price_range_pct < 1.5:
+        # Too flat — skip channel detection entirely, return empty
+        # This prevents Ranging Channel from falsely matching sideways noise
+        return patterns
 
-    if slope_diff < 0.3:  # Parallel lines
-        if high_slope_pct > 0.2 and low_slope_pct > 0.2:
+    # Determine trend strength
+    avg_abs_slope = (abs(high_slope_pct) + abs(low_slope_pct)) / 2
+
+    if avg_abs_slope > 0.3:
+        # Meaningful trend — check direction
+        if high_slope_pct > 0.15 and low_slope_pct > 0.15:
             pattern_name = "Uptrend Channel"
             description = "Higher highs and higher lows, bullish continuation"
-        elif high_slope_pct < -0.2 and low_slope_pct < -0.2:
+        elif high_slope_pct < -0.15 and low_slope_pct < -0.15:
             pattern_name = "Downtrend Channel"
             description = "Lower highs and lower lows, bearish continuation"
-        elif abs(high_slope_pct) < 0.2 and abs(low_slope_pct) < 0.2:
-            pattern_name = "Ranging Channel"
-            description = "Horizontal movement, consolidation phase"
+        else:
+            # Slopes exist but not both clearly up/down — could be ascending/descending wedge
+            if high_slope_pct > 0.05 and low_slope_pct > 0.15:
+                pattern_name = "Ascending Wedge"
+                description = "Rising support faster than resistance, potential bearish reversal"
+            elif high_slope_pct < -0.15 and low_slope_pct < -0.05:
+                pattern_name = "Descending Wedge"
+                description = "Falling support faster than resistance, potential bullish reversal"
+            else:
+                # Conflicting slopes, no clear channel
+                return patterns
+    else:
+        # Flat — only call it Ranging if it's genuinely consolidating
+        # (not just noise). Require some back-and-forth swings.
+        if price_range_pct >= 1.5:
+            pattern_name = "Ranging"
+            description = "Sideways consolidation, no clear trend direction"
+        else:
+            return patterns
 
     if pattern_name:
-        strength = min(len(recent_highs), len(recent_lows)) / 10.0
-        strength = min(1.0, strength)
+        # Strength: penalize Ranging slightly so directional channels win
+        base_strength = min(1.0, price_range_pct / 5.0)
+        if pattern_name == "Ranging":
+            # Only strong if there's actual swing within the range
+            base_strength = min(0.6, base_strength)
 
         patterns.append({
             'type': 'channel',
             'name': pattern_name,
             'description': description,
-            'strength': strength,
-            'bullish': pattern_name == "Uptrend Channel",
-            'bearish': pattern_name == "Downtrend Channel",
-            'neutral': pattern_name == "Ranging Channel"
+            'strength': base_strength,
+            'bullish': pattern_name in ["Uptrend Channel"],
+            'bearish': pattern_name in ["Downtrend Channel"],
+            'neutral': pattern_name == "Ranging"
         })
 
     return patterns
 
 
-def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
+def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect wedge patterns: Rising, Falling, Contracting, Expanding"""
     patterns = []
     high = df['High'].values
@@ -187,16 +196,14 @@ def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
     if len(df) < lookback:
         return patterns
 
-    recent_highs = high[-lookback:]
-    recent_lows = low[-lookback:]
+    price_level = np.mean(close[-lookback:])
+    price_range_pct = (np.max(high[-lookback:]) - np.min(low[-lookback:])) / price_level * 100
+    if price_range_pct < 1.5:
+        return patterns
 
     x = np.arange(lookback)
-
-    # Calculate trend slopes
-    high_slope, _ = np.polyfit(x, recent_highs, 1)
-    low_slope, _ = np.polyfit(x, recent_lows, 1)
-
-    price_level = np.mean(close[-lookback:])
+    high_slope, _ = np.polyfit(x, high[-lookback:], 1)
+    low_slope, _ = np.polyfit(x, low[-lookback:], 1)
     high_slope_pct = high_slope / price_level * 100
     low_slope_pct = low_slope / price_level * 100
 
@@ -223,22 +230,25 @@ def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 50) -> List[Dict]:
 
     # Contracting Triangle: both lines relatively flat but converging
     elif abs(high_slope_pct) < 0.3 and abs(low_slope_pct) < 0.3:
-        # Check for convergence
-        early_range = recent_highs[0] - recent_lows[0]
-        late_range = recent_highs[-1] - recent_lows[-1]
-
-        if early_range > late_range * 1.2:
+        early_range = high[-lookback:][0] - low[-lookback:][0]
+        late_range = high[-lookback:][-1] - low[-lookback:][-1]
+        if early_range > late_range * 1.15:
             pattern_name = "Contracting Triangle"
             description = "Narrowing price range, breakout imminent"
 
     if pattern_name:
-        strength = 0.7  # Default strength for wedge
+        early_range = high[-lookback:][0] - low[-lookback:][0]
+        late_range = high[-lookback:][-1] - low[-lookback:][-1]
+        convergence = (early_range - late_range) / early_range if early_range > 0 else 0
+        # Directional wedges get higher base strength to beat triangle detector
+        base = 0.6 if pattern_name in ["Rising Wedge", "Falling Wedge"] else 0.3
+        strength = min(0.9, base + convergence * 0.4)
 
         patterns.append({
             'type': 'wedge',
             'name': pattern_name,
             'description': description,
-            'strength': strength,
+            'strength': max(0.3, strength),
             'bullish': pattern_name in ["Falling Wedge"],
             'bearish': pattern_name in ["Rising Wedge"],
             'neutral': pattern_name in ["Contracting Triangle", "Expanding Triangle"]
@@ -376,26 +386,27 @@ def detect_harmonic_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict
     return patterns
 
 
-def detect_all_patterns(df: pd.DataFrame) -> Dict:
+def detect_all_patterns(df: pd.DataFrame, lookback: int = 100) -> Dict:
     """
     Detect all chart patterns and return comprehensive analysis.
+    Uses lookback=100 (candles) for sufficient market structure detection.
     """
     all_patterns = []
 
-    # Triangle patterns
-    triangles = detect_triangle_patterns(df)
+    # Triangle patterns — lookback=100 for proper trendline convergence
+    triangles = detect_triangle_patterns(df, lookback=lookback)
     all_patterns.extend(triangles)
 
-    # Channel patterns
-    channels = detect_channel_patterns(df)
+    # Channel patterns — lookback=100 for meaningful trend slopes
+    channels = detect_channel_patterns(df, lookback=lookback)
     all_patterns.extend(channels)
 
-    # Wedge patterns
-    wedges = detect_wedge_patterns(df)
+    # Wedge patterns — lookback=100 for converging/diverging lines
+    wedges = detect_wedge_patterns(df, lookback=lookback)
     all_patterns.extend(wedges)
 
-    # Harmonic patterns
-    harmonics = detect_harmonic_patterns(df)
+    # Harmonic patterns — lookback=100 already default
+    harmonics = detect_harmonic_patterns(df, lookback=lookback)
     all_patterns.extend(harmonics)
 
     # Summary

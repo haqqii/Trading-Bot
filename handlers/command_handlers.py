@@ -1008,18 +1008,17 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ticker = args[0].upper()
     logger.info(f"[ANALISA] Replying immediately for {ticker}")
 
-    # Reply immediately to user (with error handling for network issues)
-    reply_msg = None
+    # Reply immediately to user - send this FIRST before any processing
+    # Use short timeout so it doesn't block the analysis
     try:
-        reply_msg = await update.message.reply_text(
-            f"📊 Menganalisis `{ticker}`...",
+        await update.message.reply_text(
+            f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
             parse_mode='Markdown',
-            read_timeout=120,
-            write_timeout=120
+            read_timeout=10,
+            write_timeout=10
         )
-        logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
     except Exception as reply_err:
-        logger.error(f"[ANALISA] Failed to send immediate reply: {reply_err}")
+        logger.debug(f"[ANALISA] Immediate reply failed: {reply_err}")
 
     try:
         # Load crypto pairs if not loaded
@@ -1172,18 +1171,39 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # Stock analysis - use combined method for fallback support
             full_ticker = ticker + ".JK"
             ticker_known = ticker in ALL_STOCKS
+            name = ALL_STOCKS.get(ticker, ticker)
 
-            try:
-                d = stock_service.get_stock_data_combined(full_ticker, '5m', '3d')
-            except Exception as fetch_err:
-                logger.error(f"[ANALISA] Stock fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
-                await update.message.reply_text(
-                    f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
-                    f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
-                    "Coba lagi dalam beberapa saat.",
-                    parse_mode='Markdown'
-                )
-                return
+            # Run stock data fetch and news fetch in PARALLEL to speed up response
+            d, sentiment = None, None
+
+            def fetch_stock_data():
+                try:
+                    # Use 1d period for faster fetching (78 candles at 5m interval is enough for RSI14)
+                    return stock_service.get_stock_data_combined(full_ticker, '5m', '1d')
+                except Exception as e:
+                    logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
+                    return None
+
+            async def fetch_news_async():
+                try:
+                    result = await asyncio.to_thread(news_service.get_stock_news, ticker, name)
+                    if result and len(result) >= 2:
+                        return result[1]
+                except Exception as e:
+                    logger.warning(f"[ANALISA] News fetch failed for {ticker}: {e}")
+                return None
+
+            # Execute stock fetch and news fetch in parallel
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                stock_future = executor.submit(fetch_stock_data)
+                news_coro = fetch_news_async()
+
+                # Wait for stock data first (needed for analysis)
+                d = stock_future.result()
+
+                # Also wait for news (may be slower but doesn't block result)
+                sentiment = await news_coro
 
             if not d:
                 if not ticker_known:
@@ -1219,19 +1239,6 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if s is None:
                 s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
             logger.info(f"[ANALISA] Signal generated: {s.get('signal')}")
-
-            # Fetch news and sentiment for stock (run in thread to not block)
-            sentiment = None
-            try:
-                result = await asyncio.to_thread(news_service.get_stock_news, ticker)
-                if result and len(result) >= 2:
-                    articles, sentiment = result[0], result[1]
-                    logger.info(f"[ANALISA] News fetched: {len(articles)} articles")
-            except Exception as e:
-                logger.warning(f"Failed to fetch news for {ticker}: {e}")
-
-            # Use clean format with sentiment
-            name = ALL_STOCKS.get(ticker, ticker)
             msg = format_analisa_simple(
                 ticker=ticker,
                 name=name,

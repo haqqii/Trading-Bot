@@ -49,7 +49,7 @@ class StockService:
     def __init__(self):
         self.cache = _price_cache
 
-    def get_stock_data(self, ticker: str, interval: str = '5m', period: str = '5d', retry: int = 2):
+    def get_stock_data(self, ticker: str, interval: str = '5m', period: str = '5d', retry: int = 1):
         """Get stock data from Yahoo Finance with rate limiting and circuit breaker"""
         # Check cache first
         cache_key = f"{ticker}:{interval}:{period}"
@@ -71,7 +71,7 @@ class StockService:
                     warnings.simplefilter("ignore")
 
                 stock = yf.Ticker(ticker)
-                hist = stock.history(interval=interval, period=period, timeout=10)
+                hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
 
                 if hist.empty or len(hist) < 50:
                     if attempt < retry - 1:
@@ -155,7 +155,7 @@ class StockService:
 
         return None
 
-    def get_stock_data_tradingview(self, ticker: str, retry: int = 2):
+    def get_stock_data_tradingview(self, ticker: str, retry: int = 1):
         """Get stock data from TradingView API"""
         breaker = _circuit_breakers.get('tradingview')
 
@@ -265,7 +265,7 @@ class StockService:
 
         return None
 
-    def get_stock_data_finnhub(self, ticker: str, retry: int = 2):
+    def get_stock_data_finnhub(self, ticker: str, retry: int = 1):
         """Get stock data from Finnhub API"""
         if not FINNHUB_API_KEY:
             return None
@@ -364,7 +364,7 @@ class StockService:
             }
 
             try:
-                resp = _session.post(url, json=payload, timeout=30)
+                resp = _session.post(url, json=payload, timeout=15)  # Reduced from 30s for faster response
                 data = resp.json()
                 items = data.get('data', [])
                 if not items:

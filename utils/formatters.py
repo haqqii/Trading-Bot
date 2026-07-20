@@ -843,24 +843,40 @@ def format_analisa_simple(
         trend = "➡️ Sideways"
         trend_desc = "Netral"
 
-    # RSI status
+    # RSI status - more descriptive labels
     if rsi < 30:
-        rsi_status = "Oversold (RSI {:.0f})".format(rsi)
+        rsi_status = "Oversold - Potensi Rebound (RSI {:.0f})".format(rsi)
     elif rsi > 70:
-        rsi_status = "Overbought (RSI {:.0f})".format(rsi)
+        rsi_status = "Overbought - Risiko Koreksi (RSI {:.0f})".format(rsi)
+    elif rsi < 40:
+        rsi_status = "Bearish - Tekanan Jual (RSI {:.0f})".format(rsi)
+    elif rsi > 60:
+        rsi_status = "Bullish - Momentum Naik (RSI {:.0f})".format(rsi)
     elif rsi < 45:
-        rsi_status = "Bullish (RSI {:.0f})".format(rsi)
+        rsi_status = "Kecil - Belum Overbought (RSI {:.0f})".format(rsi)
     elif rsi > 55:
-        rsi_status = "Bearish (RSI {:.0f})".format(rsi)
+        rsi_status = "Tinggi - Mendekati Overbought (RSI {:.0f})".format(rsi)
     else:
-        rsi_status = "Netral (RSI {:.0f})".format(rsi)
+        rsi_status = "Netral - Belum Ada Sinyal (RSI {:.0f})".format(rsi)
+
+    # Volume status - more descriptive
+    if volume_ratio > 2.0:
+        vol_status = "Sangat Tinggi - Vol Spike"
+    elif volume_ratio > 1.5:
+        vol_status = "Tinggi - Minat Tinggi"
+    elif volume_ratio > 1.0:
+        vol_status = "Di Atas Rata-rata"
+    elif volume_ratio > 0.5:
+        vol_status = "Di Bawah Rata-rata"
+    else:
+        vol_status = "Rendah - Minim Vol"
 
     lines.append("")
     lines.append("*📈 Trend & Indikator:*")
     lines.append(f"• {trend}")
     lines.append(f"• MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
     lines.append(f"• RSI: {rsi_status}")
-    lines.append(f"• Volume: {volume_ratio:.1f}x ({'Tinggi' if volume_ratio > 1 else 'Normal'})")
+    lines.append(f"• Volume: {volume_ratio:.1f}x ({vol_status})")
 
     # === SUPPORT & RESISTANCE ===
     sr = data.get('sr') or {}
@@ -914,20 +930,37 @@ def format_analisa_simple(
     lines.append("*🤖 Penjelasan:*")
 
     reasons = []
-    if rsi < 35:
+    # RSI explanation
+    if rsi < 30:
         reasons.append(f"RSI oversold ({rsi:.0f}) - peluang rebound")
-    elif rsi > 65:
+    elif rsi > 70:
         reasons.append(f"RSI overbought ({rsi:.0f}) - hati-hati koreksi")
+    elif rsi >= 30 and rsi < 45:
+        reasons.append(f"RSI bearish ({rsi:.0f}) - tekanan jual")
+    elif rsi > 55 and rsi <= 70:
+        reasons.append(f"RSI bullish ({rsi:.0f}) - momentum naik")
+
+    # MA explanation
     if ma_fast > ma_slow:
-        reasons.append("MA Golden Cross - trend naik terkonfirmasi")
-    else:
-        reasons.append("MA Death Cross - trend turun")
+        reasons.append(f"MA Golden Cross - Fast {fp(ma_fast)} > Slow {fp(ma_slow)}")
+    elif ma_fast < ma_slow:
+        reasons.append(f"MA Death Cross - Fast {fp(ma_fast)} < Slow {fp(ma_slow)}")
+
+    # MACD explanation
     if macd_hist > 0:
         reasons.append("MACD histogram positif - momentum naik")
-    else:
+    elif macd_hist < 0:
         reasons.append("MACD histogram negatif - momentum turun")
-    if volume_ratio > 1.5:
-        reasons.append(f"Volume spike ({volume_ratio:.1f}x) - minat tinggi")
+
+    # Volume explanation
+    if volume_ratio > 2.0:
+        reasons.append(f"Volume spike ({volume_ratio:.1f}x) - minat sangat tinggi")
+    elif volume_ratio > 1.5:
+        reasons.append(f"Volume tinggi ({volume_ratio:.1f}x) - minat tinggi")
+    elif volume_ratio < 0.5:
+        reasons.append(f"Volume rendah ({volume_ratio:.1f}x) - minim aktivitas")
+
+    # Price change explanation
     if change > 2:
         reasons.append(f"Harga naik {change:.1f}% - momentum positif")
     elif change < -2:
