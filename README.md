@@ -1,6 +1,8 @@
 # 🤖 Ochobot - IDX Stock & Crypto Signal Bot
 
-Telegram bot for getting Indonesian stock and crypto trading signals based on technical analysis.
+📈 **Bot sinyal trading saham IDX & crypto Indonesia** dengan multi-indikator teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
+
+Menganalisis **683+ saham IDX** & **250+ crypto pairs** dengan auto-notifikasi, news sentiment, dan pattern detection.
 
 ## 📁 Project Structure
 
@@ -11,39 +13,57 @@ Bot Saham 2/
 │   ├── settings.py         # Settings & TIMEFRAMES
 │   └── __init__.py
 ├── handlers/               # Command handlers
-│   ├── command_handlers.py # All command handlers
+│   ├── command_handlers.py # All command handlers (60+ tests)
 │   ├── scheduler.py        # Background jobs (notifications)
 │   └── __init__.py
 ├── services/               # Business logic
-│   ├── stock_service.py    # Stock data (Yahoo, TradingView, Finnhub)
-│   ├── crypto_service.py   # Crypto data (Yahoo, CoinGecko)
+│   ├── stock_service.py    # Stock data (Yahoo + TradingView fallback + idx_stocks.py fallback)
+│   ├── crypto_service.py   # Crypto data (Yahoo + CoinGecko + _FALLBACK_CRYPTO_PAIRS)
 │   ├── signal_service.py   # Signal generation (BUY/SELL/HOLD/REVERSAL)
-│   ├── chart_service.py    # Chart generation
-│   └── news_service.py     # News fetching & sentiment analysis
+│   ├── chart_service.py    # Chart generation (TradingView-style)
+│   └── news_service.py     # News fetching (Google News RSS Indonesia) & sentiment analysis
 ├── utils/                  # Utilities
 │   ├── formatters.py       # Message formatting for Telegram
 │   ├── cache.py            # In-memory cache with TTL & stale-while-revalidate
-│   ├── indicators.py       # Technical indicators
+│   ├── indicators.py       # Technical indicators (RSI, MACD, BB, Stochastic, ADX, etc.)
 │   ├── rate_limiter.py     # API rate limiting & circuit breaker
-│   ├── patterns.py         # Chart pattern detection
+│   ├── patterns.py         # Chart pattern detection (Channel, Triangle, Wedge)
 │   └── __init__.py
-├── tests/                  # Unit tests (352 tests)
-│   ├── test_indicators.py
-│   ├── test_patterns.py
-│   ├── test_signal_service.py
-│   ├── test_news_service.py
-│   ├── test_formatters.py
-│   ├── test_cache_rate_limiter.py
-│   ├── test_command_handlers.py
-│   ├── test_scheduler.py
-│   ├── test_stock_service.py
-│   ├── test_crypto_service.py
-│   └── test_chart_service.py
+├── db.py                   # SQLite database (users, favorites, portfolio, signals, alerts)
+├── scripts/
+│   └── migrate_bot.py      # Bot migration utility (backup, broadcast, verify)
+├── tests/                  # Unit tests (393 tests, all passing)
+│   ├── test_db.py          # SQLite database tests (41)
+│   ├── test_indicators.py  # Technical indicators (33)
+│   ├── test_patterns.py    # Pattern detection (35)
+│   ├── test_signal_service.py # Signal generation (38)
+│   ├── test_news_service.py   # News & sentiment (26)
+│   ├── test_formatters.py  # Message formatting (47)
+│   ├── test_cache_rate_limiter.py # Cache & rate limiter (45)
+│   ├── test_command_handlers.py # Command handlers (29)
+│   ├── test_scheduler.py   # Scheduler utilities (22)
+│   ├── test_stock_service.py # Stock data service (26)
+│   ├── test_crypto_service.py # Crypto service (33)
+│   └── test_chart_service.py # Chart service (18)
 ├── pytest.ini              # Pytest configuration
 ├── requirements.txt        # Runtime dependencies
 ├── requirements-test.txt    # Test dependencies
+├── deploy/                 # Oracle Cloud deployment files & docs
+│   ├── README.md           # Step-by-step Oracle Cloud setup
+│   └── bot-saham.service   # systemd service file
 └── README.md
 ```
+
+## 🎯 Highlights
+
+- ✅ **393 unit tests** (all passing) - comprehensive test coverage
+- ✅ **SQLite storage** - atomic writes, crash-safe, concurrent access
+- ✅ **Multi-source fallback** - Yahoo → TradingView → CoinGecko → local data
+- ✅ **Pattern detection** - Channel, Triangle, Wedge with confidence scores
+- ✅ **News sentiment** - Google News RSS Indonesia with sentiment analysis
+- ✅ **Graceful shutdown** - Clean Ctrl+C handling
+- ✅ **API protection** - Rate limiting + circuit breaker pattern
+- ✅ **Parallel fetching** - Stock + news data concurrent for fast response
 
 ## 📋 Features
 
@@ -97,6 +117,8 @@ Bot Saham 2/
 
 ## 🚀 Installation
 
+### Quick Start (Local)
+
 1. **Clone or download this repository**
 
 2. **Install runtime dependencies:**
@@ -110,10 +132,9 @@ pip install -r requirements-test.txt
 ```
 
 4. **Get Bot Token:**
-   - Open Telegram
-   - Search for @BotFather
-   - Type `/newbot`
-   - Follow instructions and save your bot token
+   - Open Telegram → search for @BotFather
+   - Type `/newbot` and follow instructions
+   - Save your bot token
 
 5. **Create `.env` file:**
 ```bash
@@ -124,17 +145,35 @@ FINNHUB_API_KEY=your_finnhub_key
 NEWS_API_KEY=your_newsapi_key
 ```
 
+### Production Deployment (24/7)
+
+For free 24/7 hosting, see **[deploy/README.md](deploy/README.md)** with step-by-step Oracle Cloud Always Free Tier setup (systemd service included).
+
+```bash
+# Quick migration utility
+python scripts/migrate_bot.py backup      # Backup database
+python scripts/migrate_bot.py verify      # Verify new bot token
+python scripts/migrate_bot.py broadcast   # Notify users of migration
+```
+
 ## ▶️ Running
 
 ```bash
 python main.py
 ```
 
-or on Windows, click `run_bot.bat`
+Or on Windows: `run_bot.bat`
+
+The bot will:
+1. Load IDX stocks (TradingView → fallback to local `idx_stocks.py`)
+2. Load crypto pairs (CoinGecko → fallback to `_FALLBACK_CRYPTO_PAIRS`)
+3. Load user data from SQLite (with auto-migration from JSON if needed)
+4. Start background schedulers for notifications
+5. Start Telegram polling
 
 ## 🧪 Testing
 
-The project has a comprehensive test suite with **352 tests** covering all major modules.
+The project has a comprehensive test suite with **393 tests** covering all major modules.
 
 ```bash
 # Run all tests
@@ -147,23 +186,25 @@ python -m pytest tests/ -v
 python -m pytest tests/test_indicators.py
 
 # Run with coverage
-python -m pytest tests/ --cov=utils --cov=services --cov=handlers
+python -m pytest tests/ --cov=utils --cov=services --cov=handlers --cov=db
 ```
 
 **Test Coverage:**
 | Module | Tests | Description |
 |--------|-------|-------------|
+| `db.py` | 41 | SQLite database operations, migration, thread safety |
 | `utils/indicators.py` | 33 | RSI, MACD, BB, Stochastic, ADX, ATR, Fibonacci, Ichimoku, Pivot |
 | `utils/patterns.py` | 35 | Channel, Triangle, Wedge pattern detection |
 | `services/signal_service.py` | 38 | BUY/SELL/REVERSAL signal generation |
 | `services/news_service.py` | 26 | Sentiment analysis, cache, HTML cleaning |
 | `utils/formatters.py` | 47 | All message formatting functions |
 | `utils/cache.py` & `utils/rate_limiter.py` | 45 | Cache TTL, rate limiting, circuit breaker |
-| `handlers/command_handlers.py` | 29 | Markdown stripping, atomic file write |
+| `handlers/command_handlers.py` | 29 | Markdown stripping, atomic file write, SQLite |
 | `handlers/scheduler.py` | 22 | Timezone, sent-file markers |
-| `services/stock_service.py` | 26 | Blacklist, routing logic, API keys |
+| `services/stock_service.py` | 26 | Blacklist, routing logic, API keys, fallback |
 | `services/crypto_service.py` | 33 | Yahoo/CoinGecko routing, fallback pairs |
 | `services/chart_service.py` | 18 | Matplotlib config, chart generation |
+| **TOTAL** | **393** | ✅ All passing |
 
 ## 📱 How to Use
 
@@ -290,13 +331,62 @@ Free API keys:
 
 | Notification | Schedule | Active Time |
 |-------------|----------|-------------|
-| Morning | Once daily | 07:15 (weekdays) |
-| Stock Favorites Alert | Every 2 minutes | 08:00-16:00 (weekdays) |
-| Crypto Favorites Alert | Every 2 minutes | 24/7 |
+| Morning (Sinyal Pagi) | Once daily | 07:15-08:00 WIB (weekdays) |
+| Stock Signals (Saham) | Every 5 minutes | 09:00-15:30 WIB (market hours) |
+| Stock Favorites Alert | Every 2 minutes | 08:00-16:00 WIB (weekdays) |
 | Crypto Signals | Every 5 minutes | 24/7 |
 | Crypto TP/SL | Every 2 minutes | 24/7 |
-| BSJP | Once daily | 15:00 (weekdays) |
-| Price Alerts | Every 1 minute | 08:00-16:00 (weekdays) |
+| Crypto Favorites Alert | Every 2 minutes | 24/7 |
+| BSJP | Once daily | 14:00-16:00 WIB (weekdays, before market close) |
+| Price Alerts | Every 1 minute | 08:00-16:00 WIB (weekdays) |
+
+## ⏱️ Timeframes
+
+| Timeframe | Interval | Use Case |
+|-----------|----------|----------|
+| 1m | 1 minute | Scalping (very fast, 1-5 min holds) |
+| 5m | 5 minutes | Default. Suitable for beginners & day traders (15-60 min holds) |
+| 15m | 15 minutes | Intraday swing. 1-4 hour holds |
+| 1h | 1 hour | Swing trading. 1-3 day holds, more accurate but fewer signals |
+
+## 💾 Storage
+
+Bot uses **SQLite database** (`ochobot.db`) for all persistent data:
+
+- **users** - User accounts, notification settings
+- **favorites** - User favorite stocks/crypto
+- **portfolio** - Buy/sell positions tracking
+- **signals** - Generated signals with metadata
+- **price_alerts** - User price alert triggers
+
+Benefits over JSON files:
+- ✅ Atomic writes (no corruption on crash)
+- ✅ Concurrent access (WAL mode)
+- ✅ Auto-migration from old JSON format
+- ✅ SQL queries for analytics
+
+## 🔄 Bot Migration
+
+To migrate to a new bot token (e.g., after account change):
+
+```bash
+# 1. Backup current database
+python scripts/migrate_bot.py backup
+
+# 2. Verify new token works
+NEW_BOT_TOKEN=new_token python scripts/migrate_bot.py verify
+
+# 3. Notify users of migration
+OLD_BOT_TOKEN=old_token python scripts/migrate_bot.py broadcast
+
+# 4. Update .env with new token
+echo "TELEGRAM_BOT_TOKEN=new_token" > .env
+
+# 5. Restart bot
+python main.py
+```
+
+See `scripts/migrate_bot.py --help` for full options.
 
 ## 📈 Sample Output
 
@@ -310,9 +400,9 @@ Free API keys:
 💸 Gain: -1.0% → +6.0% ⚡️
 
 🤖 CRYPTO SIGNAL DETECTED
-📅 Detected: 25 Apr 2026 at 10:30 WIB 🔍
+📅 Detected: 20 Jul 2026 at 10:30 WIB 🔍
 
-📈 Chart Pattern: UPTREND
+📈 Chart Pattern: Uptrend Channel
 📊 Reliability: 72%
 📊 Leverage: 5x
 💰 Entry: $82,000 | Rp 1,312,000,000
@@ -324,8 +414,8 @@ Free API keys:
 😱 Fear & Greed: 45 - 🔴 Fear
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ 25 Apr 2026 at 10:30 WIB
-₿ IDX Crypto Bot
+⏰ 20 Jul 2026 at 10:30 WIB
+📊 IDX Saham - Ochobot
 ```
 
 ### TP/SL Notifications
@@ -373,9 +463,67 @@ Free API keys:
 | Ichimoku | 10% | Tenkan > Kijun + cloud above | Tenkan < Kijun + cloud below |
 | Volume + Momentum | 10% | Vol spike + momentum | Vol spike + downtrend |
 
+## 🎯 Welcome Message
+
+When user starts the bot:
+```
+🤖 *Ochobot*
+
+📈 *Bot sinyal trading saham IDX & crypto Indonesia*
+Menganalisis 683+ saham & 250+ crypto dengan multi-indikator
+teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+👋 Halo Haqqi!
+
+📊 Saham: *683*
+⏱️ Timeframe: *5 Menit*
+
+💡 _Timeframe = interval candle yg dianalisis_
+• 1m/5m → Scalping (trading cepat, 5-15 menit)
+• 15m/1h → Intraday (trading harian)
+• Default: 5 Menit (cocok untuk pemula)
+
+🔔 Notifikasi: 🔔 AKTIF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+📱 *MENU*
+
+🎯 Sinyal - Sinyal BUY saham
+📊 Harga - Daftar harga
+⭐ Favorit - Saham favorit + alert
+🌙 BSJP - Beli sore jual pagi
+💼 Portfolio - Portfolio Anda
+🔔 Notifikasi - Setting notifikasi
+₿ Crypto - Sinyal crypto
+⏱️ TF - Ganti timeframe
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 */help* untuk daftar command lengkap
+⚠️ Trading risiko tanggung sendiri
+```
+
+## 📰 News Sentiment
+
+Bot pulls Indonesian stock-specific news from Google News RSS with these search variations:
+- `$TICKER` (Stockbit-style notation)
+- `TICKER.JK` (Indonesian market suffix)
+- `TICKER saham` (Indonesian phrasing)
+- Company full name with "saham Indonesia"
+
+Sentiment analysis uses English keywords (gain, rise, surge vs loss, fall, decline).
+
 ## ⚠️ Disclaimer
 
 This bot is only an analysis tool. Trading decisions are your own responsibility. Always do your research before trading.
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feature/amazing`)
+3. Add tests for new functionality
+4. Ensure all tests pass: `python -m pytest tests/`
+5. Submit a Pull Request
 
 ## 📝 License
 
