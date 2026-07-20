@@ -1,4 +1,4 @@
-# 🤖 IDX Stock & Crypto Signal Bot
+# 🤖 Ochobot - IDX Stock & Crypto Signal Bot
 
 Telegram bot for getting Indonesian stock and crypto trading signals based on technical analysis.
 
@@ -6,26 +6,42 @@ Telegram bot for getting Indonesian stock and crypto trading signals based on te
 
 ```
 Bot Saham 2/
-├── main.py                 # Entry point
+├── main.py                 # Entry point with graceful shutdown
 ├── config/                 # Configuration
 │   ├── settings.py         # Settings & TIMEFRAMES
 │   └── __init__.py
 ├── handlers/               # Command handlers
 │   ├── command_handlers.py # All command handlers
-│   ├── scheduler.py        # Background jobs
+│   ├── scheduler.py        # Background jobs (notifications)
 │   └── __init__.py
 ├── services/               # Business logic
-│   ├── stock_service.py    # Stock data
-│   ├── crypto_service.py    # Crypto data
-│   ├── signal_service.py    # Signal generation
-│   ├── chart_service.py     # Chart generation
-│   └── __init__.py
+│   ├── stock_service.py    # Stock data (Yahoo, TradingView, Finnhub)
+│   ├── crypto_service.py   # Crypto data (Yahoo, CoinGecko)
+│   ├── signal_service.py   # Signal generation (BUY/SELL/HOLD/REVERSAL)
+│   ├── chart_service.py    # Chart generation
+│   └── news_service.py     # News fetching & sentiment analysis
 ├── utils/                  # Utilities
-│   ├── formatters.py       # Message formatting
-│   ├── cache.py            # In-memory cache
+│   ├── formatters.py       # Message formatting for Telegram
+│   ├── cache.py            # In-memory cache with TTL & stale-while-revalidate
 │   ├── indicators.py       # Technical indicators
-│   ├── rate_limiter.py     # API rate limiting
+│   ├── rate_limiter.py     # API rate limiting & circuit breaker
+│   ├── patterns.py         # Chart pattern detection
 │   └── __init__.py
+├── tests/                  # Unit tests (352 tests)
+│   ├── test_indicators.py
+│   ├── test_patterns.py
+│   ├── test_signal_service.py
+│   ├── test_news_service.py
+│   ├── test_formatters.py
+│   ├── test_cache_rate_limiter.py
+│   ├── test_command_handlers.py
+│   ├── test_scheduler.py
+│   ├── test_stock_service.py
+│   ├── test_crypto_service.py
+│   └── test_chart_service.py
+├── pytest.ini              # Pytest configuration
+├── requirements.txt        # Runtime dependencies
+├── requirements-test.txt    # Test dependencies
 └── README.md
 ```
 
@@ -41,12 +57,14 @@ Bot Saham 2/
 - **🎯 TP/SL Tracking** - Auto notification when TP or SL is reached
 - **⭐ Favorites** - Monitor your favorite stocks/crypto (manual add)
 - **💼 Portfolio Tracker** - Record and track your positions
+- **📰 News Sentiment** - Indonesian stock-specific news from Google News RSS with sentiment analysis
 
 ### Crypto (24/7)
 - **₿ Crypto Signals** - Signals for 250+ crypto pairs
 - **💰 Dual Currency** - Price display in USD and IDR
 - **📈 Price Alert** - Real-time notification for crypto price movements
 - **🎯 TP/SL Tracking** - Auto notification when targets are reached (TP1, TP2, TP3, SL)
+- **🔄 REVERSAL Detection** - Special signal for oversold rebounds
 
 ### Technical Analysis (Multi-Indicator Scoring)
 - **RSI (Relative Strength Index)** - Overbought/Oversold detection
@@ -59,34 +77,51 @@ Bot Saham 2/
 - **ADX (Average Directional Index)** - Trend strength & direction
 - **Ichimoku Cloud** - Cloud analysis (Tenkan, Kijun, Senkou)
 - **Fibonacci Retracement** - Support/resistance levels (23.6%, 38.2%, 50%, 61.8%)
+- **Pattern Detection** - Channel, Triangle, Wedge patterns with confidence scores
 - **Weighted Scoring** - Combination of all indicators with weights
-- **Interactive Charts** - Price chart with RSI, MACD, Volume (via `/chart`)
+- **Interactive Charts** - TradingView-style candlestick charts (via `/chart`)
 
 ### Notifications
-- **Stock Notifications** - TP/SL hit (09:00-15:00)
+- **Stock Notifications** - TP/SL hit (09:00-15:00 WIB)
 - **Favorites Notifications** - Alert if price changes ≥1% (stocks & crypto)
-- **Morning Notifications** - Stock signals before market open (07:15)
+- **Morning Notifications** - Stock signals before market open (07:15-08:00 WIB)
 - **Crypto Notifications** - Active 24/7
-- **BSJP Notifications** - Auto at 15:00 (before market close)
+- **BSJP Notifications** - Auto at 14:00-16:00 WIB (before market close)
+
+### Reliability & Performance
+- **API Protection** - Rate limiting + circuit breaker for all external APIs
+- **Caching** - TTL-based cache with stale-while-revalidate fallback
+- **Parallel Fetching** - Stock + news data fetched concurrently for fast response
+- **Graceful Shutdown** - Clean Ctrl+C handling without traceback
+- **Stock vs Crypto Priority** - IDX stocks take priority over ticker name collisions
 
 ## 🚀 Installation
 
 1. **Clone or download this repository**
 
-2. **Install dependencies:**
+2. **Install runtime dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Get Bot Token:**
+3. **Install test dependencies (optional, for development):**
+```bash
+pip install -r requirements-test.txt
+```
+
+4. **Get Bot Token:**
    - Open Telegram
    - Search for @BotFather
    - Type `/newbot`
    - Follow instructions and save your bot token
 
-4. **Create `.env` file:**
+5. **Create `.env` file:**
 ```bash
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# Optional API keys for enhanced functionality
+FINNHUB_API_KEY=your_finnhub_key
+NEWS_API_KEY=your_newsapi_key
 ```
 
 ## ▶️ Running
@@ -95,7 +130,40 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 python main.py
 ```
 
-or click `start.bat` (Windows)
+or on Windows, click `run_bot.bat`
+
+## 🧪 Testing
+
+The project has a comprehensive test suite with **352 tests** covering all major modules.
+
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run with verbose output
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_indicators.py
+
+# Run with coverage
+python -m pytest tests/ --cov=utils --cov=services --cov=handlers
+```
+
+**Test Coverage:**
+| Module | Tests | Description |
+|--------|-------|-------------|
+| `utils/indicators.py` | 33 | RSI, MACD, BB, Stochastic, ADX, ATR, Fibonacci, Ichimoku, Pivot |
+| `utils/patterns.py` | 35 | Channel, Triangle, Wedge pattern detection |
+| `services/signal_service.py` | 38 | BUY/SELL/REVERSAL signal generation |
+| `services/news_service.py` | 26 | Sentiment analysis, cache, HTML cleaning |
+| `utils/formatters.py` | 47 | All message formatting functions |
+| `utils/cache.py` & `utils/rate_limiter.py` | 45 | Cache TTL, rate limiting, circuit breaker |
+| `handlers/command_handlers.py` | 29 | Markdown stripping, atomic file write |
+| `handlers/scheduler.py` | 22 | Timezone, sent-file markers |
+| `services/stock_service.py` | 26 | Blacklist, routing logic, API keys |
+| `services/crypto_service.py` | 33 | Yahoo/CoinGecko routing, fallback pairs |
+| `services/chart_service.py` | 18 | Matplotlib config, chart generation |
 
 ## 📱 How to Use
 
@@ -177,27 +245,46 @@ Click **🔔 Notifikasi** button to toggle:
 /chart BBCA 1h 5d   → Generate chart
 ```
 
-## 📊 Data Source
+## 📊 Data Sources
 
-Bot uses multiple data sources as fallback:
+Bot uses multiple data sources with intelligent fallback:
 
-1. **Yahoo Finance** - Primary for stocks and crypto
-2. **TradingView** - Fallback for stock data
-3. **Finnhub** - Last fallback (free registration at https://finnhub.io)
-4. **CoinGecko** - Fallback for crypto data and USD/IDR exchange rate
+### Stock Data
+1. **Yahoo Finance** (primary) - Indonesian stocks (.JK suffix), real-time data
+2. **TradingView** (fallback) - When Yahoo is rate-limited or unavailable
+3. **Finnhub** (last fallback) - Requires API key
 
-### API Key Setup
+### Crypto Data
+1. **Yahoo Finance** (primary) - Most crypto pairs
+2. **CoinGecko** (fallback) - When Yahoo fails
 
-Add API key in `.env` file:
+### News Data
+1. **Google News RSS** - Indonesian stock-specific news
+2. **Finnhub** (fallback) - General market news
+3. **NewsAPI** (last fallback) - English-language news
+
+### API Key Setup (Optional)
+
+Add API keys in `.env` file for enhanced functionality:
 ```bash
-FINNHUB_API_KEY=your_finnhub_api_key
+TELEGRAM_BOT_TOKEN=your_bot_token_required
+
+# Optional - improves fallback coverage
+FINNHUB_API_KEY=your_finnhub_key
+NEWS_API_KEY=your_newsapi_key
 ```
 
-### API Protection
-- **Rate Limiting**: Request limit per minute
-- **Circuit Breaker**: Auto-reset every 15 seconds on API error
+Free API keys:
+- Finnhub: https://finnhub.io/
+- NewsAPI: https://newsapi.org/
+
+### API Protection & Reliability
+
+- **Rate Limiting**: Per-API request limits (configurable)
+- **Circuit Breaker**: Auto-open after N failures, auto-reset on market open
 - **Exponential Backoff**: Retry with increasing delay
-- **In-Memory Caching**: Cache data to reduce API calls
+- **TTL Cache**: Fresh data with stale-while-revalidate fallback
+- **In-Memory Caching**: Reduces API calls by ~80%
 
 ## ⏰ Notification Schedule
 
