@@ -265,6 +265,7 @@ class NewsService:
         negative_count = 0
         total_score = 0
         headlines_analyzed = []
+        all_headlines_list = []
 
         for article in articles[:10]:  # Analyze up to 10 articles
             headline = article.get('headline', '').lower()
@@ -298,6 +299,13 @@ class NewsService:
                     'score': article_score
                 })
 
+            # Always keep all headlines (for display)
+            all_headlines_list.append({
+                'headline': article.get('headline', '')[:100],
+                'score': article_score,
+                'source': article.get('source', '')
+            })
+
         # Determine overall sentiment
         avg_score = total_score / len(articles)
 
@@ -327,7 +335,8 @@ class NewsService:
             'positive_count': positive_count,
             'negative_count': negative_count,
             'emoji': emoji,
-            'top_headlines': headlines_analyzed[:3]
+            'top_headlines': headlines_analyzed[:3],
+            'all_headlines': all_headlines_list[:5]  # Include all headlines for display
         }
 
     def get_stock_news(self, ticker: str, stock_name: str = None) -> Tuple[List[Dict], Dict]:

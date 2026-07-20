@@ -978,17 +978,25 @@ def format_analisa_simple(
         count = sentiment.get('headline_count') or 0
         lines.append(f"*📰 Sentimen: {emoji} {escape_md(overall.title())}*")
         lines.append(f"• {escape_md(summary)}")
-        lines.append(f"• {count} berita dianalisa")
 
-        # Show top headlines
-        top_hl = sentiment.get('top_headlines') or []
-        if top_hl:
+        # Show all headlines (up to 3)
+        all_hl = sentiment.get('all_headlines') or []
+        if all_hl:
             lines.append("")
-            for hl in top_hl[:2]:
+            lines.append("*📋 Berita Terbaru:*")
+            for hl in all_hl[:3]:
+                if hl and isinstance(hl, dict):
+                    hl_text = hl.get('headline') or ''
+                    source = hl.get('source') or ''
+                    if hl_text:
+                        lines.append(f"  • {escape_md(hl_text[:60])}... [{source}]")
+        elif sentiment.get('top_headlines'):
+            # Fallback to top headlines if all_headlines not available
+            for hl in sentiment.get('top_headlines', [])[:2]:
                 if hl and isinstance(hl, dict):
                     hl_text = hl.get('headline') or ''
                     if hl_text:
-                        lines.append(f"  • {escape_md(hl_text[:60])}...")
+                        lines.append(f"  • {escape_md(hl_text[:70])}...")
     elif sentiment:
         lines.append("")
         lines.append("*📰 Sentimen: Tidak ada berita terbaru*")
