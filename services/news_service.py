@@ -148,21 +148,41 @@ class NewsService:
             return []
 
     def fetch_google_news(self, ticker: str, stock_name: str = None) -> List[Dict]:
-        """Fetch news from Google News RSS for Indonesian stock market"""
+        """Fetch news from Google News RSS for Indonesian stock market.
+        Uses multiple query variations to capture ticker-specific news like
+        those from Stockbit, Kontan, Investor.id, etc.
+        """
         articles = []
         ticker_upper = ticker.upper().replace('.JK', '')
 
-        # Search queries to try (Indonesian stock specific)
+        # Build multiple search queries for better coverage
         queries = [
+            # Direct ticker mentions (Stockbit uses $TICKER format)
+            f"${ticker_upper}",
+            # Common Indonesian variations
+            f"{ticker_upper}.JK",
             f"{ticker_upper} saham",
-            f"{ticker_upper} idx",
+            # Sector-specific searches
+            f"{ticker_upper} IDX",
         ]
-        # Add stock name if available
+
+        # Add stock name variations
         if stock_name:
-            # Extract short name (e.g., "PT Astrindo" from full name)
-            short_name = stock_name.split()[0] if stock_name else None
-            if short_name and len(short_name) > 2:
-                queries.append(f"{short_name} saham Indonesia")
+            # Try the full company name
+            queries.append(f"{stock_name}")
+
+            # Try short brand name (usually last meaningful word before "Tbk")
+            # e.g., "PT Astra International Tbk" -> "Astra"
+            name_words = stock_name.split()
+            for i, word in enumerate(name_words):
+                # Skip generic words
+                if word.upper() in ['PT', 'TBK', 'PERSERO', 'TBK.', 'PERSERODA']:
+                    continue
+                # Try first non-generic word (usually the brand)
+                brand = name_words[i] if i > 0 else name_words[0]
+                if brand and len(brand) > 2 and brand.upper() not in ['PT', 'TBK']:
+                    queries.append(f"{brand} saham Indonesia")
+                    break
 
         seen_titles = set()
 
