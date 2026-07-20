@@ -22,7 +22,7 @@ POSITIVE_KEYWORDS = [
     'bullish', 'surge', 'gain', 'profit', 'rise', 'up', 'growth',
     'positive', 'upgrade', 'buy', 'rally', 'soar', 'jump', 'climb',
     'optimistic', 'recovery', 'rebound', 'breakout', ' outperform',
-    'beat', 'exceed', 'growth', 'expansion', 'strong', 'high'
+    'beat', 'exceed', 'expansion', 'strong', 'high'
 ]
 
 NEGATIVE_KEYWORDS = [
