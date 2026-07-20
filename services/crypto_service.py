@@ -59,12 +59,13 @@ class CryptoService:
         self._crypto_loaded = False
 
     def load_crypto_pairs(self):
-        """Auto-load crypto pairs from CoinGecko (top 500 coins)"""
+        """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback"""
         if self._crypto_loaded:
             return self.crypto_pairs
 
         coingecko_mappings = {}
         major_set = set()
+        cg_failed = False
 
         try:
             url = "https://api.coingecko.com/api/v3/coins/markets"
@@ -76,9 +77,15 @@ class CryptoService:
                 'price_change_percentage': '24h'
             }
 
-            # Fetch pages 1-5 (top 1250 coins)
-            for page in [1, 2, 3, 4, 5]:
-                resp = _cg_session.get(url, params=params, timeout=15)
+            # Fetch pages 1-2 (top 500 coins) - reduce from 5 to avoid rate limits
+            for page in [1, 2]:
+                try:
+                    resp = _cg_session.get(url, params=params, timeout=10)
+                except Exception as req_err:
+                    logger.warning(f"CoinGecko request failed: {req_err}")
+                    cg_failed = True
+                    break
+
                 if resp.status_code == 200:
                     coins = resp.json()
                     for coin in coins:
@@ -92,36 +99,30 @@ class CryptoService:
                             if rank <= 100:
                                 major_set.add(ticker)
                 elif resp.status_code == 429:
-                    # Rate limited - wait and retry once
-                    logger.warning(f"CoinGecko rate limited, waiting 60s...")
-                    time.sleep(60)
-                    resp = _cg_session.get(url, params=params, timeout=15)
-                    if resp.status_code == 200:
-                        coins = resp.json()
-                        for coin in coins:
-                            sym = coin.get('symbol', '').upper()
-                            cg_id = coin.get('id', '')
-                            name = coin.get('name', '')
-                            rank = coin.get('market_cap_rank') or 999
-                            if sym and cg_id:
-                                ticker = f"{sym}-USD"
-                                coingecko_mappings[ticker] = (name, cg_id)
-                                if rank <= 100:
-                                    major_set.add(ticker)
-                    else:
-                        logger.warning(f"CoinGecko page {page} error after retry: {resp.status_code}")
-                        break
+                    # Rate limited - skip immediately, use fallback
+                    logger.warning(f"CoinGecko rate limited, skipping to fallback")
+                    cg_failed = True
+                    break
                 else:
                     logger.warning(f"CoinGecko page {page} error: {resp.status_code}")
+                    cg_failed = True
                     break
 
-                # Delay between pages to avoid rate limit
-                time.sleep(2)
+                # Delay between pages
+                time.sleep(1)
 
-            logger.info(f"CoinGecko: fetched {len(coingecko_mappings)} coins (top 1250)")
+            logger.info(f"CoinGecko: fetched {len(coingecko_mappings)} coins")
         except Exception as e:
             logger.warning(f"CoinGecko fetch failed: {e}, falling back to hardcoded list")
-            coingecko_mappings = _FALLBACK_CRYPTO_PAIRS
+            cg_failed = True
+
+        # Fallback if CoinGecko failed or returned too few coins
+        if cg_failed or len(coingecko_mappings) < 10:
+            logger.warning(f"Using fallback crypto list ({len(_FALLBACK_CRYPTO_PAIRS)} coins)")
+            # Merge with what we got from CoinGecko (prefer CoinGecko data)
+            for ticker, value in _FALLBACK_CRYPTO_PAIRS.items():
+                if ticker not in coingecko_mappings:
+                    coingecko_mappings[ticker] = value
 
         self.crypto_pairs = {ticker: name for ticker, (name, _) in coingecko_mappings.items()}
         self.coingecko_ids = {ticker: cg_id for ticker, (_, cg_id) in coingecko_mappings.items()}

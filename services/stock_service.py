@@ -350,7 +350,7 @@ class StockService:
         return None
 
     def load_stocks(self):
-        """Load all IDX stocks from TradingView"""
+        """Load all IDX stocks from TradingView, fallback to local idx_stocks.py"""
         url = "https://scanner.tradingview.com/indonesia/scan"
         stocks = {}
 
@@ -364,7 +364,7 @@ class StockService:
             }
 
             try:
-                resp = _session.post(url, json=payload, timeout=15)  # Reduced from 30s for faster response
+                resp = _session.post(url, json=payload, timeout=10)
                 data = resp.json()
                 items = data.get('data', [])
                 if not items:
@@ -377,10 +377,20 @@ class StockService:
                         name = d[1] if len(d) > 1 else (d[0] if d else ticker)
                         stocks[ticker] = name
             except Exception as e:
-                logger.error(f"Error loading stocks: {e}")
+                logger.warning(f"TradingView error (page {page}): {e}")
                 break
 
-        logger.info(f"Loaded {len(stocks)} stocks from TradingView")
+        # Fallback to local idx_stocks.py if TradingView failed
+        if not stocks:
+            logger.warning("TradingView returned 0 stocks, falling back to local idx_stocks.py")
+            try:
+                from idx_stocks import ALL_IDX_STOCKS
+                stocks = dict(ALL_IDX_STOCKS)
+                logger.info(f"Loaded {len(stocks)} stocks from local idx_stocks.py")
+            except ImportError:
+                logger.error("Could not import idx_stocks.py fallback")
+
+        logger.info(f"Loaded {len(stocks)} stocks total")
         return stocks
 
 
