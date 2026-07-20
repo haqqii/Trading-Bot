@@ -873,9 +873,9 @@ def format_analisa_simple(
 
     lines.append("")
     lines.append(f"*📊 Trend & Indikator: {trend}*")
-    lines.append(f"  MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
-    lines.append(f"  RSI: {rsi_status}")
-    lines.append(f"  Volume: {volume_ratio:.1f}x ({vol_status})")
+    lines.append(f"  • MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
+    lines.append(f"  • RSI: {rsi_status}")
+    lines.append(f"  • Volume: {volume_ratio:.1f}x ({vol_status})")
 
     # === SUPPORT & RESISTANCE ===
     sr = data.get('sr') or {}
@@ -887,19 +887,19 @@ def format_analisa_simple(
     if nearest_support:
         sup_level = nearest_support.get('level', 0) or 0
         sup_type = nearest_support.get('type', 'Support')
-        lines.append(f"  Support: {fp(sup_level)} ({escape_md(sup_type)})")
+        lines.append(f"  • Support: {fp(sup_level)} ({escape_md(sup_type)})")
     else:
         sl = signal.get('sl') or 0
         if sl > 0:
-            lines.append(f"  Support: {fp(sl)} (dari SL)")
+            lines.append(f"  • Support: {fp(sl)} (dari SL)")
     if nearest_resistance:
         res_level = nearest_resistance.get('level', 0) or 0
         res_type = nearest_resistance.get('type', 'Resistance')
-        lines.append(f"  Resistance: {fp(res_level)} ({escape_md(res_type)})")
+        lines.append(f"  • Resistance: {fp(res_level)} ({escape_md(res_type)})")
     else:
         tp1 = signal.get('tp1') or 0
         if tp1 > 0:
-            lines.append(f"  Resistance: {fp(tp1)} (dari TP1)")
+            lines.append(f"  • Resistance: {fp(tp1)} (dari TP1)")
 
     # === ENTRY, TP, SL ===
     entry = signal.get('entry', price) or price
@@ -910,19 +910,19 @@ def format_analisa_simple(
 
     lines.append("")
     lines.append(f"*💰 Entry, TP & SL:*")
-    lines.append(f"  Entry: {fp(entry, with_idr=True)}")
+    lines.append(f"  • Entry: {fp(entry, with_idr=True)}")
     if tp1 > 0:
         tp1_pct = ((tp1 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"  TP1: {fp(tp1, with_idr=True)} ({tp1_pct:+.1f}%)")
+        lines.append(f"  • TP1: {fp(tp1, with_idr=True)} ({tp1_pct:+.1f}%)")
     if tp2 > 0:
         tp2_pct = ((tp2 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"  TP2: {fp(tp2, with_idr=True)} ({tp2_pct:+.1f}%)")
+        lines.append(f"  • TP2: {fp(tp2, with_idr=True)} ({tp2_pct:+.1f}%)")
     if tp3 > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"  TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
+        lines.append(f"  • TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
     if sl > 0:
         sl_pct = ((sl - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"  SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
+        lines.append(f"  • SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
 
     # === PENJELASAN ===
     lines.append("")
