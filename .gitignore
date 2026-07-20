@@ -28,6 +28,11 @@ user_data.json
 user_data.json.bak
 last_signals.json
 last_signals.json.bak
+ochobot.db
+ochobot.db-journal
+ochobot.db-wal
+ochobot.db-shm
+ochobot_backup_*.db
 ORACLE_CLOUD_SETUP.md
 
 # Bot runtime (lock + dedup state)
