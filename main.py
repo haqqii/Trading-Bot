@@ -212,10 +212,14 @@ def cleanup():
             print(f"Warning: failed to remove lock file: {e}")
 
 def signal_handler(sig, frame):
+    """Handle shutdown signals gracefully without interrupting ongoing operations."""
     sig_name = 'SIGTERM' if sig == signal.SIGTERM else 'SIGINT'
     print(f"\n\n🛑 Bot dihentikan ({sig_name})!")
     cleanup()
-    sys.exit(0)
+    # Use os._exit to terminate without raising SystemExit exception
+    # which would interrupt time.sleep() in rate limiter
+    import os
+    os._exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)

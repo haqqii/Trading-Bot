@@ -42,7 +42,7 @@ class RateLimiter:
             return len(self.calls) < self.max_calls
 
     def wait_if_needed(self):
-        """Wait until a call can be made"""
+        """Wait until a call can be made - interruptible by shutdown signals"""
         with self.lock:
             now = time.time()
             while self.calls and self.calls[0] < now - self.period:
@@ -52,7 +52,16 @@ class RateLimiter:
                 wait_time = self.calls[0] + self.period - now
                 if wait_time > 0:
                     self._total_waits += 1
-                    time.sleep(wait_time)
+                    # Interruptible sleep - allow graceful shutdown
+                    slept = 0.0
+                    while slept < wait_time:
+                        chunk = min(0.5, wait_time - slept)
+                        try:
+                            time.sleep(chunk)
+                        except (KeyboardInterrupt, SystemExit):
+                            # Re-raise but allow cleanup
+                            raise
+                        slept += chunk
                     now = time.time()
                     while self.calls and self.calls[0] < now - self.period:
                         self.calls.popleft()
