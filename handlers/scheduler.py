@@ -1065,16 +1065,17 @@ async def check_morning_notification(app):
 
         # Check if already sent today (file-based)
         if _check_morning_sent_today():
+            logger.info("[MORNING] Already sent today - skipping")
             return
 
         # Check if any user has notif_morning enabled
         morning_users = [uid for uid, u in _get_user_db().items() if u.get('notif_morning', False)]
 
         if not morning_users:
-            logger.debug("[MORNING] No users with notif_morning enabled")
+            logger.info("[MORNING] No users with notif_morning enabled")
             return
 
-        logger.info(f"[MORNING] Scanning for {len(morning_users)} users...")
+        logger.info(f"[MORNING] Window open at {now.strftime('%H:%M')} - scanning for {len(morning_users)} users...")
 
         # Scan stocks for morning signals (parallel fetch)
         morning_signals = []
@@ -1170,6 +1171,9 @@ async def check_morning_notification(app):
             # Mark as sent today AFTER all users processed
             _mark_morning_sent()
             logger.info("[MORNING] Marked as sent for today")
+        else:
+            logger.info("[MORNING] No signals found - marking as sent")
+            _mark_morning_sent()
 
         logger.info(f"[MORNING] Scan complete: {len(morning_signals)} signals")
 
