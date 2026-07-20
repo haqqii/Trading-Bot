@@ -292,7 +292,13 @@ teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
 👋 Halo {user.first_name}!
 
 📊 Saham: *{len(ALL_STOCKS)}*
-⏱️ Timeframe: {tf_name}
+⏱️ Timeframe: *{tf_name}*
+
+💡 _Timeframe = interval candle yg dianalisis_
+• 1m/5m → Scalping (trading cepat, 5-15 menit)
+• 15m/1h → Intraday (trading harian)
+• Default: 5 Menit (cocok untuk pemula)
+
 🔔 Notifikasi: {notif_status}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -353,15 +359,34 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # === TIMEFRAME ===
+TIMEFRAME_DESCRIPTIONS = {
+    '1':  ('1 Menit',  'Scalping - trading sangat cepat (hold 1-5 menit). Untuk trader berpengalaman.'),
+    '5':  ('5 Menit',  'Default. Cocok untuk pemula & trader harian (hold 15-60 menit).'),
+    '15': ('15 Menit', 'Intraday swing. Hold 1-4 jam, tren lebih jelas terlihat.'),
+    '60': ('1 Jam',    'Swing trading. Hold bisa 1-3 hari, sinyal lebih akurat tapi lebih jarang.'),
+}
+
+
 async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     u = get_user(uid)
     curr = u.get('timeframe', '5')
 
-    kb = [[InlineKeyboardButton(f"{'✅ ' if k==curr else ''}{v['name']}", callback_data=f"tf_{k}")]
-          for k, v in TIMEFRAMES.items()]
+    kb = []
+    for k, v in TIMEFRAMES.items():
+        _, desc = TIMEFRAME_DESCRIPTIONS.get(k, (v['name'], ''))
+        kb.append([InlineKeyboardButton(
+            f"{'✅ ' if k==curr else ''}{v['name']} - {desc[:40]}{'...' if len(desc) > 40 else ''}",
+            callback_data=f"tf_{k}"
+        )])
 
-    await update.message.reply_text("⏱️ PILIH TIMEFRAME", reply_markup=InlineKeyboardMarkup(kb))
+    msg = "⏱️ *PILIH TIMEFRAME*\n\n"
+    msg += "_Timeframe = interval candle yang dianalisis_\n\n"
+    for k, (name, desc) in TIMEFRAME_DESCRIPTIONS.items():
+        marker = '✅' if k == curr else '⚪'
+        msg += f"{marker} *{name}* - {desc}\n"
+
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 
 async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -370,7 +395,11 @@ async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tf_key = query.data.replace('tf_', '')
     uid = str(query.from_user.id)
     get_user(uid)['timeframe'] = tf_key
-    await query.edit_message_text(f"✅ Timeframe: {TIMEFRAMES[tf_key]['name']}")
+    _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
+    await query.edit_message_text(
+        f"✅ Timeframe diubah ke: *{TIMEFRAMES[tf_key]['name']}*\n\n_{desc}_",
+        parse_mode='Markdown'
+    )
 
 
 # === FAVORIT ===
