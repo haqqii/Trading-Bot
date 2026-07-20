@@ -282,7 +282,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
     notif_status = "🔔 AKTIF" if u.get('notifications') else "🔕 NONAKTIF"
 
-    msg = f"""🤖 *IDX SAHAM BOT*
+    msg = f"""🤖 *Ochobot*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 👋 Halo {user.first_name}!

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Bot Sinyal Saham Indonesia - IDX Stocks & Crypto Signal Bot
+Ochobot - Indonesian Stocks & Crypto Signal Bot
 Entry point for the Telegram bot.
 
 Modular structure:
