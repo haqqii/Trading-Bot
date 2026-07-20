@@ -23,17 +23,28 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Bot data
-user_data.json
-user_data.json.bak
-last_signals.json
-last_signals.json.bak
+# Testing artifacts
+.pytest_cache/
+.playwright-mcp/
+
+# Bot data (SQLite in data/ folder)
+data/ochobot.db
+data/ochobot.db-journal
+data/ochobot.db-wal
+data/ochobot.db-shm
+data/ochobot_backup_*.db
+
+# Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal
 ochobot.db-wal
 ochobot.db-shm
-ochobot_backup_*.db
-ORACLE_CLOUD_SETUP.md
+
+# Legacy bot data (obsolete, kept for safety)
+user_data.json
+user_data.json.bak
+last_signals.json
+last_signals.json.bak
 
 # Bot runtime (lock + dedup state)
 bot.lock

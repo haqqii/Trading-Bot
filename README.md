@@ -30,6 +30,10 @@ Bot Saham 2/
 │   ├── patterns.py         # Chart pattern detection (Channel, Triangle, Wedge)
 │   └── __init__.py
 ├── db.py                   # SQLite database (users, favorites, portfolio, signals, alerts)
+├── data/                   # Data folder
+│   ├── idx_stocks.py       # Local fallback list of 683+ IDX stocks
+│   ├── ochobot.db          # SQLite database (auto-created at runtime)
+│   └── ochobot_backup_*.db # Migration backup files
 ├── scripts/
 │   └── migrate_bot.py      # Bot migration utility (backup, broadcast, verify)
 ├── tests/                  # Unit tests (393 tests, all passing)
@@ -51,6 +55,8 @@ Bot Saham 2/
 ├── deploy/                 # Oracle Cloud deployment files & docs
 │   ├── README.md           # Step-by-step Oracle Cloud setup
 │   └── bot-saham.service   # systemd service file
+├── docs/                   # Documentation
+│   └── SPEC.md             # Bot specification
 └── README.md
 ```
 
@@ -351,7 +357,7 @@ Free API keys:
 
 ## 💾 Storage
 
-Bot uses **SQLite database** (`ochobot.db`) for all persistent data:
+Bot uses **SQLite database** (`data/ochobot.db`) for all persistent data:
 
 - **users** - User accounts, notification settings
 - **favorites** - User favorite stocks/crypto

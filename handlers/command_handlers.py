@@ -18,7 +18,7 @@ from services.news_service import news_service
 from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg, format_analisa_simple
 from utils.rate_limiter import get_all_api_stats
 from utils.cache import _price_cache, _signal_cache
-from idx_stocks import ALL_IDX_STOCKS
+from data.idx_stocks import ALL_IDX_STOCKS
 from db import db
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,9 @@ def load_user_data():
         user_data_db.clear()
         # Query all users from DB and populate user_data_db cache
         import sqlite3
-        conn = sqlite3.connect('ochobot.db')
+        # Use db.DATA_DIR or fallback to local data/ folder
+        db_path = db.db_path if hasattr(db, 'db_path') else 'data/ochobot.db'
+        conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         for row in conn.execute(
             'SELECT user_id, username, first_name, notif_saham, notif_crypto, '

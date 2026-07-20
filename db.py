@@ -19,7 +19,10 @@ from typing import Optional, Dict, List, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-DB_FILE = 'ochobot.db'
+# Database file location - in data/ folder for cleaner organization
+import os as _os
+_DATA_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data')
+DB_FILE = _os.path.join(_DATA_DIR, 'ochobot.db')
 
 # Default notification settings for new users
 DEFAULT_NOTIFICATIONS = {

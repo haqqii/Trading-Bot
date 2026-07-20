@@ -153,18 +153,32 @@ class TestUserDataPersistence:
         # Change working directory to tmp
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
+        import db as db_module
 
-        ch.user_data_db = {}
-        ch.last_buy_signals = {}
-        ch.load_user_data()
-        # Should not crash, dicts remain empty
-        assert ch.user_data_db == {}
-        assert ch.last_buy_signals == {}
+        # Reset DB singleton to use temp path
+        original_db = db_module.db
+        test_db_path = str(tmp_path / 'data' / 'test.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db  # Also update reference in command_handlers
+
+        try:
+            ch.user_data_db = {}
+            ch.last_buy_signals = {}
+            ch.load_user_data()
+            # Should not crash, dicts remain empty (no users in fresh DB)
+            assert ch.user_data_db == {}
+            assert ch.last_buy_signals == {}
+        finally:
+            db_module.db = original_db
+            ch.db = original_db
 
     def test_load_user_data_main_file(self, monkeypatch, tmp_path):
         """Should migrate from JSON to SQLite on first load."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
+        import db as db_module
 
         # Create test data file
         test_data = {
@@ -179,9 +193,12 @@ class TestUserDataPersistence:
             json.dump(test_data, f)
 
         # Reset singleton DB to use temp file
-        import db as db_module
         original_db = db_module.db
-        db_module.db = db_module.Database(str(tmp_path / 'test_load.db'))
+        test_db_path = str(tmp_path / 'data' / 'test_load.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db
 
         try:
             ch.user_data_db = {}
@@ -193,11 +210,13 @@ class TestUserDataPersistence:
             assert user['username'] == 'alice'
         finally:
             db_module.db = original_db
+            ch.db = original_db
 
     def test_load_user_data_fallback_to_backup(self, monkeypatch, tmp_path):
         """Should fallback to backup during migration when main file is corrupt."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
+        import db as db_module
 
         # Write corrupt main file
         with open('user_data.json', 'w') as f:
@@ -215,9 +234,12 @@ class TestUserDataPersistence:
             json.dump(backup_data, f)
 
         # Reset singleton DB to use temp file
-        import db as db_module
         original_db = db_module.db
-        db_module.db = db_module.Database(str(tmp_path / 'test_backup.db'))
+        test_db_path = str(tmp_path / 'data' / 'test_backup.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db
 
         try:
             ch.user_data_db = {}
@@ -226,11 +248,13 @@ class TestUserDataPersistence:
             ch.load_user_data()
         finally:
             db_module.db = original_db
+            ch.db = original_db
 
     def test_load_user_data_both_corrupt(self, monkeypatch, tmp_path):
         """Should handle both files corrupt."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
+        import db as db_module
 
         # Write corrupt main file
         with open('user_data.json', 'w') as f:
@@ -239,10 +263,23 @@ class TestUserDataPersistence:
         with open('user_data.json.bak', 'w') as f:
             f.write('ALSO NOT VALID')
 
-        ch.user_data_db = {}
-        ch.load_user_data()
-        # Should not crash, dict should be empty
-        assert ch.user_data_db == {}
+        # Reset DB singleton to use temp path
+        original_db = db_module.db
+        test_db_path = str(tmp_path / 'data' / 'test_corrupt.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db
+
+        try:
+            ch.user_data_db = {}
+            ch.last_buy_signals = {}
+            ch.load_user_data()
+            # Should not crash, dict should be empty (no users)
+            assert ch.user_data_db == {}
+        finally:
+            db_module.db = original_db
+            ch.db = original_db
 
 
 class TestSignalDatetimeConversion:
@@ -252,47 +289,73 @@ class TestSignalDatetimeConversion:
         """String datetime should be converted to datetime object."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
-
-        # Write test signals with string datetime
-        signals = {
-            'signal1': {
-                'ticker': 'BBCA',
-                'time': '2026-07-20T10:30:00',
-                'price': 8500
-            }
-        }
-        with open('last_signals.json', 'w') as f:
-            json.dump(signals, f)
-
-        ch.last_buy_signals = {}
-        ch.load_user_data()
-
-        # Datetime should be converted
+        import db as db_module
         from datetime import datetime
-        assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
+
+        # Reset DB singleton to use temp path
+        original_db = db_module.db
+        test_db_path = str(tmp_path / 'data' / 'test_signal.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db
+
+        try:
+            # Write test signals with string datetime
+            signals = {
+                'signal1': {
+                    'ticker': 'BBCA',
+                    'time': '2026-07-20T10:30:00',
+                    'price': 8500
+                }
+            }
+            with open('last_signals.json', 'w') as f:
+                json.dump(signals, f)
+
+            ch.last_buy_signals = {}
+            ch.load_user_data()
+
+            # Datetime should be converted
+            assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
+        finally:
+            db_module.db = original_db
+            ch.db = original_db
 
     def test_already_datetime_unchanged(self, monkeypatch, tmp_path):
         """String datetime that can't be parsed should fall back to now()."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
+        import db as db_module
         from datetime import datetime
 
-        # Write signal with bad datetime string
-        signals = {
-            'signal1': {
-                'ticker': 'BBCA',
-                'time': 'not-a-valid-datetime',
-                'price': 8500
+        # Reset DB singleton to use temp path
+        original_db = db_module.db
+        test_db_path = str(tmp_path / 'data' / 'test_signal2.db')
+        (tmp_path / 'data').mkdir(exist_ok=True)
+        new_db = db_module.Database(test_db_path)
+        db_module.db = new_db
+        ch.db = new_db
+
+        try:
+            # Write signal with bad datetime string
+            signals = {
+                'signal1': {
+                    'ticker': 'BBCA',
+                    'time': 'not-a-valid-datetime',
+                    'price': 8500
+                }
             }
-        }
-        with open('last_signals.json', 'w') as f:
-            json.dump(signals, f)
+            with open('last_signals.json', 'w') as f:
+                json.dump(signals, f)
 
-        ch.last_buy_signals = {}
-        ch.load_user_data()
+            ch.last_buy_signals = {}
+            ch.load_user_data()
 
-        # Bad datetime should fall back to current time
-        assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
+            # Bad datetime should fall back to current time
+            assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
+        finally:
+            db_module.db = original_db
+            ch.db = original_db
 
 
 class TestTickerDetection:

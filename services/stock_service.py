@@ -384,7 +384,7 @@ class StockService:
         if not stocks:
             logger.warning("TradingView returned 0 stocks, falling back to local idx_stocks.py")
             try:
-                from idx_stocks import ALL_IDX_STOCKS
+                from data.idx_stocks import ALL_IDX_STOCKS
                 stocks = dict(ALL_IDX_STOCKS)
                 logger.info(f"Loaded {len(stocks)} stocks from local idx_stocks.py")
             except ImportError:
