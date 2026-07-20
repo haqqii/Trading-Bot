@@ -48,8 +48,8 @@ last_crypto_prices = {}
 last_buy_signals = {}
 
 # Persistence
-USER_DATA_FILE = 'user_data.json'
-SIGNALS_FILE = 'last_signals.json'
+USER_DATA_FILE = 'user_data.json'  # Legacy - kept for migration reference
+SIGNALS_FILE = 'last_signals.json'  # Legacy - kept for migration reference
 
 
 def load_user_data():
@@ -863,20 +863,6 @@ async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = get_user(uid)
     msg += f"   notif_saham: {u.get('notif_saham', False)}\n"
     msg += f"   notif_crypto: {u.get('notif_crypto', False)}\n"
-
-    # Show saved file status
-    import os
-    user_file = 'user_data.json'
-    if os.path.exists(user_file):
-        import json
-        with open(user_file, 'r') as f:
-            all_users = json.load(f)
-        saved_user = all_users.get(uid, {})
-        msg += f"\n💾 *SAVED DATA*\n"
-        msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"   notif_saham: {saved_user.get('notif_saham', False)}\n"
-    else:
-        msg += f"\n❌ user_data.json not found\n"
 
     # Try markdown, fallback to plain text if error
     try:
