@@ -73,14 +73,30 @@ def load_user_data():
             logger.info("[LOAD_USER] Migration complete")
         stats = db.stats()
 
-    # Load all users into global dict (legacy compatibility)
+    # Load all users into global dict (legacy compatibility for scheduler)
     try:
         user_data_db.clear()
-        # Get all users - we'd need to add a method for this, but for now
-        # load from DB only when accessed via get_user_data()
-        # Keep user_data_db as a cache for backward compatibility
-        logger.info(f"[LOAD_USER] Database ready: {stats['users']} users, "
-                    f"{stats['signals']} signals, {stats['favorites']} favorites")
+        # Query all users from DB and populate user_data_db cache
+        import sqlite3
+        conn = sqlite3.connect('ochobot.db')
+        conn.row_factory = sqlite3.Row
+        for row in conn.execute(
+            'SELECT user_id, username, first_name, notif_saham, notif_crypto, '
+            'notif_bsjp, notif_morning, notif_alert_favorit FROM users'
+        ).fetchall():
+            user_id_str = str(row['user_id'])
+            user_data_db[user_id_str] = {
+                'username': row['username'],
+                'first_name': row['first_name'],
+                'notif_saham': bool(row['notif_saham']),
+                'notif_crypto': bool(row['notif_crypto']),
+                'notif_bsjp': bool(row['notif_bsjp']),
+                'notif_morning': bool(row['notif_morning']),
+                'notif_alert_favorit': bool(row['notif_alert_favorit']),
+                'favorites': [f['ticker'] for f in db.get_favorites(row['user_id'])],
+            }
+        conn.close()
+        logger.info(f"[LOAD_USER] Loaded {len(user_data_db)} users into cache for scheduler")
     except Exception as e:
         logger.error(f"Error loading user data: {e}")
 
