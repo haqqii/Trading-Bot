@@ -872,11 +872,10 @@ def format_analisa_simple(
         vol_status = "Rendah - Minim Vol"
 
     lines.append("")
-    lines.append("*📈 Trend & Indikator:*")
-    lines.append(f"• {trend}")
-    lines.append(f"• MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
-    lines.append(f"• RSI: {rsi_status}")
-    lines.append(f"• Volume: {volume_ratio:.1f}x ({vol_status})")
+    lines.append(f"*📊 Trend & Indikator: {trend}*")
+    lines.append(f"  MA Fast: {fp(ma_fast)} | MA Slow: {fp(ma_slow)}")
+    lines.append(f"  RSI: {rsi_status}")
+    lines.append(f"  Volume: {volume_ratio:.1f}x ({vol_status})")
 
     # === SUPPORT & RESISTANCE ===
     sr = data.get('sr') or {}
@@ -884,23 +883,23 @@ def format_analisa_simple(
     nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
 
     lines.append("")
-    lines.append("*📐 Support & Resistance:*")
+    lines.append(f"*📐 Support & Resistance:*")
     if nearest_support:
         sup_level = nearest_support.get('level', 0) or 0
         sup_type = nearest_support.get('type', 'Support')
-        lines.append(f"• Support: {fp(sup_level)} ({escape_md(sup_type)})")
+        lines.append(f"  Support: {fp(sup_level)} ({escape_md(sup_type)})")
     else:
         sl = signal.get('sl') or 0
         if sl > 0:
-            lines.append(f"• Support: {fp(sl)} (dari SL)")
+            lines.append(f"  Support: {fp(sl)} (dari SL)")
     if nearest_resistance:
         res_level = nearest_resistance.get('level', 0) or 0
         res_type = nearest_resistance.get('type', 'Resistance')
-        lines.append(f"• Resistance: {fp(res_level)} ({escape_md(res_type)})")
+        lines.append(f"  Resistance: {fp(res_level)} ({escape_md(res_type)})")
     else:
         tp1 = signal.get('tp1') or 0
         if tp1 > 0:
-            lines.append(f"• Resistance: {fp(tp1)} (dari TP1)")
+            lines.append(f"  Resistance: {fp(tp1)} (dari TP1)")
 
     # === ENTRY, TP, SL ===
     entry = signal.get('entry', price) or price
@@ -910,24 +909,24 @@ def format_analisa_simple(
     sl = signal.get('sl') or 0
 
     lines.append("")
-    lines.append("*💰 Entry, TP & SL:*")
-    lines.append(f"• Entry: {fp(entry, with_idr=True)}")
+    lines.append(f"*💰 Entry, TP & SL:*")
+    lines.append(f"  Entry: {fp(entry, with_idr=True)}")
     if tp1 > 0:
         tp1_pct = ((tp1 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP1: {fp(tp1, with_idr=True)} ({tp1_pct:+.1f}%)")
+        lines.append(f"  TP1: {fp(tp1, with_idr=True)} ({tp1_pct:+.1f}%)")
     if tp2 > 0:
         tp2_pct = ((tp2 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP2: {fp(tp2, with_idr=True)} ({tp2_pct:+.1f}%)")
+        lines.append(f"  TP2: {fp(tp2, with_idr=True)} ({tp2_pct:+.1f}%)")
     if tp3 > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
+        lines.append(f"  TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
     if sl > 0:
         sl_pct = ((sl - entry) / entry) * 100 if entry > 0 else 0
-        lines.append(f"• SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
+        lines.append(f"  SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
 
     # === PENJELASAN ===
     lines.append("")
-    lines.append("*🤖 Penjelasan:*")
+    lines.append(f"*🤖 Penjelasan:*")
 
     reasons = []
     # RSI explanation
@@ -967,7 +966,7 @@ def format_analisa_simple(
         reasons.append(f"Harga turun {abs(change):.1f}% - tekanan jual")
 
     for reason in reasons[:4]:
-        lines.append(f"• {reason}")
+        lines.append(f"  • {reason}")
 
     # === SENTIMENT & BERITA ===
     if sentiment and isinstance(sentiment, dict) and sentiment.get('headline_count', 0) > 0:
@@ -978,7 +977,7 @@ def format_analisa_simple(
 
         lines.append("")
         lines.append(f"*📰 Sentimen: {emoji} {escape_md(overall.title())}*")
-        lines.append(f"• {escape_md(summary)} ({count} berita)")
+        lines.append(f"  {escape_md(summary)} ({count} berita)")
 
         # Show all headlines (full text, no truncation)
         all_hl = sentiment.get('all_headlines') or []
@@ -1020,18 +1019,18 @@ def format_analisa_simple(
     support_level = nearest_support.get('level') or (sl if sl and sl > 0 else price * 0.95)
 
     if signal_type == 'BUY':
-        lines.append(f"• Sudah punya posisi: Hold, dengan Stop Loss di bawah {fp(support_level)}")
-        lines.append(f"• Ingin entry: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(support_level)}")
-        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
-        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
+        lines.append(f"  • Sudah punya posisi: Hold, dengan Stop Loss di bawah {fp(support_level)}")
+        lines.append(f"  • Ingin entry: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(support_level)}")
+        lines.append(f"  • Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
+        lines.append(f"  • Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
     elif signal_type == 'SELL':
-        lines.append(f"• Sudah punya posisi: Sell / lepas posisi, Support di {fp(support_level)}")
-        lines.append(f"• Ingin short: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(resistance_level)}")
-        lines.append(f"• Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
-        lines.append(f"• Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
+        lines.append(f"  • Sudah punya posisi: Sell / lepas posisi, Support di {fp(support_level)}")
+        lines.append(f"  • Ingin short: Entry di area {fp(entry_area_low)}-{fp(entry_area_high)}, dengan Stop Loss di {fp(resistance_level)}")
+        lines.append(f"  • Konfirmasi turun: Harga bergerak di bawah {fp(support_level)} dengan volume besar")
+        lines.append(f"  • Konfirmasi naik: Harga berhasil menembus {fp(resistance_level)} dengan volume kuat")
     else:
-        lines.append("• Tunggu konfirmasi sinyal")
-        lines.append(f"• Perhatikan area support di {fp(support_level)} dan resistance di {fp(resistance_level)}")
+        lines.append("  • Tunggu konfirmasi sinyal")
+        lines.append(f"  • Perhatikan area support di {fp(support_level)} dan resistance di {fp(resistance_level)}")
 
     # === FOOTER ===
     ts = datetime.now().strftime('%d %b %Y %H:%M')
