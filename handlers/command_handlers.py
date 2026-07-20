@@ -19,6 +19,7 @@ from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, f
 from utils.rate_limiter import get_all_api_stats
 from utils.cache import _price_cache, _signal_cache
 from idx_stocks import ALL_IDX_STOCKS
+from db import db
 
 logger = logging.getLogger(__name__)
 
@@ -52,78 +53,74 @@ SIGNALS_FILE = 'last_signals.json'
 
 
 def load_user_data():
-    """Load user data from file with backup recovery"""
+    """Load user data from SQLite database (with JSON migration fallback)"""
     global user_data_db, last_buy_signals
     import logging
     logger = logging.getLogger(__name__)
 
     logger.info(f"[LOAD_USER] Starting load_user_data(), current user_data_db has {len(user_data_db)} users")
 
-    # Load user data with backup fallback
+    # Initialize SQLite database
+    db.initialize()
+    stats = db.stats()
+
+    # If database is empty but JSON files exist, migrate
+    if stats['users'] == 0 and (os.path.exists(USER_DATA_FILE) or os.path.exists(SIGNALS_FILE)):
+        logger.info("[LOAD_USER] SQLite empty, attempting JSON migration...")
+        from db import migrate_from_json
+        migrated = migrate_from_json(USER_DATA_FILE, SIGNALS_FILE)
+        if migrated:
+            logger.info("[LOAD_USER] Migration complete")
+        stats = db.stats()
+
+    # Load all users into global dict (legacy compatibility)
     try:
-        if os.path.exists(USER_DATA_FILE):
-            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-                user_data_db = json.load(f)
-            logger.info(f"[LOAD_USER] Loaded {len(user_data_db)} users from {USER_DATA_FILE}")
-            logger.info(f"[LOAD_USER] user_data_db id={id(user_data_db)}")
-        else:
-            backup_file = USER_DATA_FILE + '.bak'
-            if os.path.exists(backup_file):
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    user_data_db = json.load(f)
-                logger.warning(f"Loaded {len(user_data_db)} users from BACKUP {backup_file}")
-    except json.JSONDecodeError as e:
-        # Main file corrupt, try backup
-        backup_file = USER_DATA_FILE + '.bak'
-        if os.path.exists(backup_file):
-            try:
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    user_data_db = json.load(f)
-                logger.warning(f"Recovered {len(user_data_db)} users from BACKUP after JSON error: {e}")
-            except Exception as backup_err:
-                logger.error(f"Backup also corrupt: {backup_err}")
-                user_data_db = {}
-        else:
-            logger.error(f"JSON error loading user data, no backup available: {e}")
-            user_data_db = {}
+        user_data_db.clear()
+        # Get all users - we'd need to add a method for this, but for now
+        # load from DB only when accessed via get_user_data()
+        # Keep user_data_db as a cache for backward compatibility
+        logger.info(f"[LOAD_USER] Database ready: {stats['users']} users, "
+                    f"{stats['signals']} signals, {stats['favorites']} favorites")
     except Exception as e:
         logger.error(f"Error loading user data: {e}")
 
-    # Load signals with backup fallback
+    # Load signals into global dict (for BSJP tracking)
     try:
-        if os.path.exists(SIGNALS_FILE):
-            with open(SIGNALS_FILE, 'r', encoding='utf-8') as f:
-                last_buy_signals = json.load(f)
-            # Convert string keys back to datetime for existing entries
-            for key in list(last_buy_signals.keys()):
-                if isinstance(last_buy_signals[key].get('time'), str):
-                    try:
-                        last_buy_signals[key]['time'] = datetime.fromisoformat(last_buy_signals[key]['time'])
-                    except (ValueError, TypeError) as e:
-                        logger.debug(f"Bad datetime for signal {key}: {e}; using now()")
-                        last_buy_signals[key]['time'] = datetime.now()
-            logger.info(f"Loaded {len(last_buy_signals)} signals from {SIGNALS_FILE}")
-        else:
-            backup_file = SIGNALS_FILE + '.bak'
-            if os.path.exists(backup_file):
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    last_buy_signals = json.load(f)
-                logger.warning(f"Loaded {len(last_buy_signals)} signals from BACKUP")
-    except json.JSONDecodeError as e:
-        backup_file = SIGNALS_FILE + '.bak'
-        if os.path.exists(backup_file):
-            try:
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    last_buy_signals = json.load(f)
-                logger.warning(f"Recovered {len(last_buy_signals)} signals from BACKUP after JSON error: {e}")
-            except Exception as backup_err:
-                logger.error(f"Backup also corrupt: {backup_err}")
-                last_buy_signals = {}
-        else:
-            logger.error(f"JSON error loading signals, no backup available: {e}")
-            last_buy_signals = {}
+        last_buy_signals.clear()
+        signals_data = db.get_all_signals()
+        for key, signal in signals_data.items():
+            # Convert created_at string back to datetime
+            if 'created_at' in signal and isinstance(signal['created_at'], str):
+                try:
+                    signal['time'] = datetime.fromisoformat(signal['created_at'])
+                except (ValueError, TypeError):
+                    signal['time'] = datetime.now()
+            last_buy_signals[key] = signal
+        logger.info(f"[LOAD_USER] Loaded {len(last_buy_signals)} signals from DB")
     except Exception as e:
         logger.error(f"Error loading signals: {e}")
+
+
+def get_user_data(user_id: int) -> dict:
+    """Get user data dict for a specific user (loads from SQLite)."""
+    user = db.get_user(user_id)
+    if not user:
+        return {}
+    # Convert boolean-like int back to bool for notification keys
+    result = dict(user)
+    for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
+              'notif_morning', 'notif_alert_favorit']:
+        if k in result:
+            result[k] = bool(result[k])
+    # Add favorites list
+    result['favorites'] = [f['ticker'] for f in db.get_favorites(user_id)]
+    return result
+
+
+def get_user_data_db() -> dict:
+    """Legacy function - returns in-memory user_data_db cache.
+    Note: For new code, use get_user_data(user_id) instead."""
+    return user_data_db
 
 
 def _atomic_write(filepath: str, data: dict):
@@ -174,17 +171,76 @@ def _atomic_write(filepath: str, data: dict):
 
 
 def save_user_data():
-    """Save user data to file atomically"""
-    # Save user data
-    _atomic_write(USER_DATA_FILE, user_data_db)
+    """Save user data and signals to SQLite (atomic, crash-safe)."""
+    db.initialize()
 
-    # Convert datetime to string for JSON serialization
-    serializable_signals = {}
-    for key, val in last_buy_signals.items():
-        serializable_signals[key] = {**val, 'time': val.get('time', datetime.now()).isoformat()}
+    # Save user data (legacy cache → DB)
+    for user_id_str, user_info in user_data_db.items():
+        try:
+            user_id = int(user_id_str)
+        except (ValueError, TypeError):
+            continue
+        # Upsert user
+        db.upsert_user(
+            user_id=user_id,
+            username=user_info.get('username'),
+            first_name=user_info.get('first_name')
+        )
+        # Update notifications
+        notif_settings = {
+            k: bool(user_info.get(k, False))
+            for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
+                      'notif_morning', 'notif_alert_favorit']
+        }
+        db.update_notifications(user_id, **notif_settings)
+        # Sync favorites
+        for ticker in user_info.get('favorites', []):
+            db.add_favorite(user_id, ticker)
 
     # Save signals
-    _atomic_write(SIGNALS_FILE, serializable_signals)
+    for key, val in last_buy_signals.items():
+        ticker = val.get('ticker', 'UNKNOWN')
+        signal_type = val.get('signal_type', val.get('signal', 'BUY'))
+        asset_type = val.get('asset_type', 'stock')
+        db.save_signal(
+            key=key,
+            ticker=ticker,
+            asset_type=asset_type,
+            signal_type=signal_type,
+            price=val.get('price') or val.get('entry'),
+            target_price=val.get('tp') or val.get('tp1') or val.get('target_price'),
+            stop_loss=val.get('sl') or val.get('stop_loss'),
+            score=val.get('score'),
+            quality=val.get('quality'),
+            reason=val.get('reason'),
+            extra_data={k: v for k, v in val.items()
+                        if k not in ['ticker', 'signal_type', 'asset_type',
+                                      'price', 'target_price', 'stop_loss',
+                                      'score', 'quality', 'reason',
+                                      'entry', 'tp', 'tp1', 'sl', 'time']}
+        )
+
+
+def save_signal(key: str, ticker: str, signal_type: str,
+                asset_type: str = 'stock', price: float = None,
+                target_price: float = None, stop_loss: float = None,
+                score: float = None, quality: str = None,
+                reason: str = None, extra_data: dict = None):
+    """Convenience function to save a single signal."""
+    db.initialize()
+    db.save_signal(
+        key=key,
+        ticker=ticker,
+        signal_type=signal_type,
+        asset_type=asset_type,
+        price=price,
+        target_price=target_price,
+        stop_loss=stop_loss,
+        score=score,
+        quality=quality,
+        reason=reason,
+        extra_data=extra_data
+    )
 
 
 def get_user(user_id):

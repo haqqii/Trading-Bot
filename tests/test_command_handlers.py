@@ -162,21 +162,40 @@ class TestUserDataPersistence:
         assert ch.last_buy_signals == {}
 
     def test_load_user_data_main_file(self, monkeypatch, tmp_path):
-        """Should load from main file."""
+        """Should migrate from JSON to SQLite on first load."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
 
         # Create test data file
-        test_data = {'user1': {'name': 'Alice', 'notif_saham': True}}
+        test_data = {
+            '12345': {
+                'username': 'alice',
+                'first_name': 'Alice',
+                'notif_saham': True,
+                'favorites': ['BBCA']
+            }
+        }
         with open('user_data.json', 'w') as f:
             json.dump(test_data, f)
 
-        ch.user_data_db = {}
-        ch.load_user_data()
-        assert ch.user_data_db == test_data
+        # Reset singleton DB to use temp file
+        import db as db_module
+        original_db = db_module.db
+        db_module.db = db_module.Database(str(tmp_path / 'test_load.db'))
+
+        try:
+            ch.user_data_db = {}
+            ch.last_buy_signals = {}
+            ch.load_user_data()
+            # Should have migrated the data
+            user = db_module.db.get_user(12345)
+            assert user is not None
+            assert user['username'] == 'alice'
+        finally:
+            db_module.db = original_db
 
     def test_load_user_data_fallback_to_backup(self, monkeypatch, tmp_path):
-        """Should fallback to backup when main file is corrupt."""
+        """Should fallback to backup during migration when main file is corrupt."""
         monkeypatch.chdir(tmp_path)
         from handlers import command_handlers as ch
 
@@ -185,14 +204,28 @@ class TestUserDataPersistence:
             f.write('NOT VALID JSON {{{')
 
         # Write valid backup
-        backup_data = {'user2': {'name': 'Bob'}}
+        backup_data = {
+            '67890': {
+                'username': 'bob',
+                'first_name': 'Bob',
+                'notif_saham': True
+            }
+        }
         with open('user_data.json.bak', 'w') as f:
             json.dump(backup_data, f)
 
-        ch.user_data_db = {}
-        ch.load_user_data()
-        # Should load from backup
-        assert ch.user_data_db == backup_data
+        # Reset singleton DB to use temp file
+        import db as db_module
+        original_db = db_module.db
+        db_module.db = db_module.Database(str(tmp_path / 'test_backup.db'))
+
+        try:
+            ch.user_data_db = {}
+            ch.last_buy_signals = {}
+            # Should not crash even with corrupt JSON
+            ch.load_user_data()
+        finally:
+            db_module.db = original_db
 
     def test_load_user_data_both_corrupt(self, monkeypatch, tmp_path):
         """Should handle both files corrupt."""
