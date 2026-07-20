@@ -295,13 +295,13 @@ class NewsService:
             # Keep track of headlines for summary
             if abs(article_score) >= 2:
                 headlines_analyzed.append({
-                    'headline': article.get('headline', '')[:200],
+                    'headline': article.get('headline', ''),
                     'score': article_score
                 })
 
             # Always keep all headlines (for display)
             all_headlines_list.append({
-                'headline': article.get('headline', '')[:200],
+                'headline': article.get('headline', ''),
                 'score': article_score,
                 'source': article.get('source', '')
             })
