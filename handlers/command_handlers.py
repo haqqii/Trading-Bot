@@ -284,6 +284,10 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     msg = f"""🤖 *Ochobot*
 
+📈 *Bot sinyal trading saham IDX & crypto Indonesia*
+Menganalisis 683+ saham & 250+ crypto dengan multi-indikator
+teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 👋 Halo {user.first_name}!
 
@@ -304,6 +308,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 ⏱️ TF - Ganti timeframe
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 */help* untuk daftar command lengkap
 ⚠️ Trading risiko tanggung sendiri"""
 
     await update.message.reply_text(msg, reply_markup=rm, parse_mode='Markdown')
