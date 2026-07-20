@@ -1028,18 +1028,23 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Check if it's a crypto ticker - auto detect
         ticker_upper = ticker.upper()
 
-        # Check patterns that indicate crypto
-        is_crypto = (
-            ticker_upper in crypto_service.crypto_pairs or  # In CoinGecko list (e.g. BEAT-USD)
-            (ticker_upper + '-USD') in crypto_service.crypto_pairs or  # Symbol only (e.g. BEAT)
-            (ticker_upper + '-USDT') in crypto_service.crypto_pairs or  # Symbol only USDT variant
-            ticker_upper in crypto_service.coingecko_ids or  # In CoinGecko IDs
-            ticker.endswith('-USD') or  # Already has -USD suffix
-            ticker.endswith('-USDT') or  # USDT pair
-            ticker.endswith('-BTC') or  # BTC pair
-            ticker.endswith('-ETH') or  # ETH pair
-            ticker_upper in ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'WLD', 'SUI', 'APT', 'ARB', 'OP', 'MATIC', 'AVAX', 'LINK', 'DOT', 'UNI', 'ATOM', 'LTC', 'WORLDCOIN', 'PEPE', 'SHIB', 'FIL', 'NEAR', 'AAVE', 'GRT', 'VET', 'ALGO', 'ICP', 'EGLD', 'AXS', 'MANA', 'SAND', 'GALA', 'ENJ']  # Common crypto symbols
-        )
+        # IMPORTANT: If ticker is in IDX stocks database, ALWAYS treat as stock
+        # This prevents conflicts like COCO (both IDX stock and crypto exist)
+        if ticker_upper in ALL_STOCKS:
+            is_crypto = False
+        else:
+            # Check patterns that indicate crypto
+            is_crypto = (
+                ticker_upper in crypto_service.crypto_pairs or  # In CoinGecko list (e.g. BEAT-USD)
+                (ticker_upper + '-USD') in crypto_service.crypto_pairs or  # Symbol only (e.g. BEAT)
+                (ticker_upper + '-USDT') in crypto_service.crypto_pairs or  # Symbol only USDT variant
+                ticker_upper in crypto_service.coingecko_ids or  # In CoinGecko IDs
+                ticker.endswith('-USD') or  # Already has -USD suffix
+                ticker.endswith('-USDT') or  # USDT pair
+                ticker.endswith('-BTC') or  # BTC pair
+                ticker.endswith('-ETH') or  # ETH pair
+                ticker_upper in ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'WLD', 'SUI', 'APT', 'ARB', 'OP', 'MATIC', 'AVAX', 'LINK', 'DOT', 'UNI', 'ATOM', 'LTC', 'WORLDCOIN', 'PEPE', 'SHIB', 'FIL', 'NEAR', 'AAVE', 'GRT', 'VET', 'ALGO', 'ICP', 'EGLD', 'AXS', 'MANA', 'SAND', 'GALA', 'ENJ']  # Common crypto symbols
+            )
 
         # Fallback probe: if ticker unknown and not an IDX stock, ask Yahoo Finance
         # (covers coins outside CoinGecko top-1250 list, e.g. MYX Finance, BEAT, etc.)
