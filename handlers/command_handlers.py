@@ -336,7 +336,16 @@ teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
 💡 */help* untuk daftar command lengkap
 ⚠️ Trading risiko tanggung sendiri"""
 
-    await update.message.reply_text(msg, reply_markup=rm, parse_mode='Markdown')
+    try:
+        await update.message.reply_text(msg, reply_markup=rm, parse_mode='Markdown',
+                                         read_timeout=30, write_timeout=30, connect_timeout=30)
+    except Exception as start_err:
+        logger.warning(f"[START] Markdown reply failed: {start_err}, retrying plain text")
+        try:
+            await update.message.reply_text(_strip_markdown_chars(msg), reply_markup=rm,
+                                             read_timeout=30, write_timeout=30, connect_timeout=30)
+        except Exception as plain_err:
+            logger.error(f"[START] Plain text reply also failed: {plain_err}")
 
 
 # === HARGA ===
