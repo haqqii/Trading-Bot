@@ -1356,7 +1356,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             if not d:
                 if not ticker_known:
-                    await update.message.reply_text(
+                    await _send_with_retry(
+                        update.message,
                         f"❌ Saham `{ticker}` tidak ditemukan\n\n"
                         f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
                         f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
@@ -1365,7 +1366,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         parse_mode='Markdown'
                     )
                 else:
-                    await update.message.reply_text(
+                    await _send_with_retry(
+                        update.message,
                         f"❌ Gagal mengambil data untuk `{ticker}`\n\n"
                         f"Saham ada di database IDX, tapi Yahoo Finance & TradingView keduanya tidak merespon.\n"
                         f"Mungkin API sedang down atau kena rate limit. Coba lagi dalam 1-2 menit.",
@@ -1375,7 +1377,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             if d.get('candles', 0) < 50:
                 source = d.get('source', 'unknown')
-                await update.message.reply_text(
+                await _send_with_retry(
+                    update.message,
                     f"❌ Data saham `{ticker}` tidak cukup untuk dianalisis\n\n"
                     f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
                     f"Coba lagi saat jam pasar (09:00-15:00 WIB) atau saham baru listing.",
