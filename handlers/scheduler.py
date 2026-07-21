@@ -135,6 +135,11 @@ last_prices = {}
 last_crypto_prices = {}
 market_cache = {}
 
+# Yahoo rate-limit cooldown - skip stock scans when Yahoo is overloaded
+# This prevents wasting time on scans that will just timeout
+_yahoo_stock_cooldown = 0  # Number of scan cycles to skip
+_stock_timeout_count = [0]  # Timeout counter for this scan (list for mutability)
+
 
 def _get_user_db():
     """Get user database - reads directly from command_handlers to ensure fresh data"""
@@ -497,6 +502,8 @@ async def check_bsjp_signals(app):
 
 async def check_stock_signals(app):
     """Check stock signals during market hours and send BUY notifications to all users with notif_saham=ON"""
+    global _yahoo_stock_cooldown
+
     try:
         now = now_wib()
 
@@ -510,6 +517,12 @@ async def check_stock_signals(app):
 
         if not is_market_hours:
             logger.info(f"Outside market hours ({now.hour}:00 WIB) - skipping stock signals")
+            return
+
+        # Skip if Yahoo is in cooldown (rate-limited)
+        if _yahoo_stock_cooldown > 0:
+            _yahoo_stock_cooldown -= 1
+            logger.info(f"[STOCK] Yahoo cooldown active ({_yahoo_stock_cooldown} scans remaining) - skipping")
             return
 
         # Get fresh user data directly from command_handlers
@@ -590,11 +603,16 @@ async def check_stock_signals(app):
                         timeout=30.0  # 30 second timeout per stock
                     )
             except asyncio.TimeoutError:
+                _stock_timeout_count[0] += 1
                 logger.warning(f"[STOCK] Timeout for {ticker}")
                 return None
             except Exception as e:
+                _stock_timeout_count[0] += 1
                 logger.error(f"[STOCK] Error fetching {ticker}: {e}")
                 return None
+
+        # Track timeouts for cooldown logic
+        _stock_timeout_count[0] = 0
 
         tasks = [fetch_with_semaphore(t) for t in all_tickers]
         logger.info(f"[STOCK] Starting scan of {len(tasks)} stocks...")
@@ -790,6 +808,12 @@ async def check_stock_signals(app):
 
                 except Exception as e:
                     logger.error(f"Failed to send signals to user {uid}: {e}")
+
+        # If too many timeouts (>50% of scanned stocks), enable cooldown
+        timeout_pct = _stock_timeout_count[0] / len(all_tickers) * 100 if all_tickers else 0
+        if _stock_timeout_count[0] >= len(all_tickers) // 2:  # >= 50% timeout
+            _yahoo_stock_cooldown = 3  # Skip next 3 scans (~15 minutes)
+            logger.warning(f"[STOCK] High timeout rate ({_stock_timeout_count[0]}/{len(all_tickers)} = {timeout_pct:.0f}%) - enabling cooldown for 3 cycles")
 
         if signals_found > 0:
             logger.info(f"✅ Stock scan complete: {signals_found} BUY signals found")
