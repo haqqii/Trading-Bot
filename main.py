@@ -184,7 +184,7 @@ def main():
         # Check if webhook URL is set for webhook mode
         webhook_url = os.getenv('WEBHOOK_URL')
         webhook_path = os.getenv('WEBHOOK_PATH', '/webhook')
-        webhook_port = int(os.getenv('WEBHOOK_PORT', '8443')
+        webhook_port = int(os.getenv('WEBHOOK_PORT', '8443'))
 
         if webhook_url:
             # Webhook mode (Telegram pushes updates to bot)
@@ -242,7 +242,7 @@ def cleanup():
 def signal_handler(sig, frame):
     """Handle shutdown signals gracefully without interrupting ongoing operations."""
     sig_name = 'SIGTERM' if sig == signal.SIGTERM else 'SIGINT'
-    print(f"\n\n🛑 Bot dihentikan ({sig_name})!")
+    print(f"\n\n[SIGINT] Bot dihentikan!")
     cleanup()
     # Use os._exit to terminate without raising SystemExit exception
     # which would interrupt time.sleep() in rate limiter
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     try:
         main()
     except (KeyboardInterrupt, SystemExit):
-        print("\n\n🛑 Bot dihentikan!")
+        print("\n\n[SIGINT] Bot dihentikan!")
         cleanup()
     finally:
         cleanup()
