@@ -175,16 +175,44 @@ def main():
         register_handlers(app)
         register_jobs(app)
 
-        sys.stdout.write("STARTING_POLLING\n")
+        sys.stdout.write("STARTING_BOT\n")
         sys.stdout.flush()
 
         sys.stdout.write("BOT_RUNNING\n")
         sys.stdout.flush()
 
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None,
-            drop_pending_updates=False,
-        )
+        # Check if webhook URL is set for webhook mode
+        webhook_url = os.getenv('WEBHOOK_URL')
+        webhook_path = os.getenv('WEBHOOK_PATH', '/webhook')
+        webhook_port = int(os.getenv('WEBHOOK_PORT', '8443')
+
+        if webhook_url:
+            # Webhook mode (Telegram pushes updates to bot)
+            # URL should be like https://domain.com/bot/TOKEN
+            webhook_full_url = f"{webhook_url}{webhook_path}/{BOT_TOKEN}"
+            sys.stdout.write(f"WEBHOOK_URL:{webhook_url}\n")
+            sys.stdout.flush()
+            print(f"Starting webhook mode...")
+            print(f"Webhook URL: {webhook_url}")
+            print(f"Webhook path: {webhook_path}")
+            app.run_webhook(
+                listen="0.0.0.0",
+                port=webhook_port,
+                url_path=f"{webhook_path}/{BOT_TOKEN}",
+                webhook_url=webhook_url,
+                drop_pending_updates=True,
+            )
+        else:
+            # Polling mode (bot pulls Telegram for updates)
+            sys.stdout.write("MODE:POLLING\n")
+            sys.stdout.flush()
+            print("Starting polling mode...")
+            print("TIP: Set WEBHOOK_URL to enable webhook mode for faster responses")
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None,
+                drop_pending_updates=False,
+                poll_interval=1.0,
+            )
 
     except Exception as e:
         import traceback
