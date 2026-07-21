@@ -1147,16 +1147,22 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logger.info(f"[ANALISA] Replying immediately for {ticker}")
 
     # Reply immediately to user - send this FIRST before any processing
-    # Use short timeout so it doesn't block the analysis
-    try:
-        await update.message.reply_text(
-            f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
-            parse_mode='Markdown',
-            read_timeout=10,
-            write_timeout=10
-        )
-    except Exception as reply_err:
-        logger.debug(f"[ANALISA] Immediate reply failed: {reply_err}")
+    # Use asyncio.create_task to not block analysis while waiting for reply
+    async def send_immediate_reply():
+        try:
+            await asyncio.wait_for(
+                update.message.reply_text(
+                    f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
+                    parse_mode='Markdown'
+                ),
+                timeout=30
+            )
+            logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
+        except Exception as reply_err:
+            logger.warning(f"[ANALISA] Immediate reply failed: {reply_err}")
+
+    # Fire and forget - don't await
+    asyncio.create_task(send_immediate_reply())
 
     try:
         # Load crypto pairs if not loaded
