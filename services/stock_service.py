@@ -115,10 +115,14 @@ class StockService:
                 stock_info = stock.info or {}
                 stock_name = stock_info.get('longName') or stock_info.get('shortName') or ticker
 
+                # Use yesterday's close from yfinance for accurate daily change
+                prev_close = stock_info.get('regularMarketPreviousClose') or stock_info.get('previousClose') or df.iloc[-2]['Close']
+                daily_change_pct = ((latest['Close'] - prev_close) / prev_close) * 100
+
                 return {
                     'name': stock_name,
                     'price': latest['Close'],
-                    'change': ((latest['Close'] - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100,
+                    'change': daily_change_pct,
                     'ma_fast': latest['MA_FAST'],
                     'ma_slow': latest['MA_SLOW'],
                     'rsi': latest['RSI'],
@@ -335,12 +339,14 @@ class StockService:
             meta = result.get('meta', {})
             stock_name = meta.get('symbol', ticker)
 
-            prev_close = df.iloc[-2]['Close'] if len(df) > 1 else latest['Close']
+            # Use yesterday's close from meta for accurate daily change
+            prev_close = meta.get('chartPreviousClose') or meta.get('previousClose') or df.iloc[-2]['Close']
+            daily_change_pct = ((latest['Close'] - prev_close) / prev_close) * 100
 
             return {
                 'name': stock_name,
                 'price': latest['Close'],
-                'change': ((latest['Close'] - prev_close) / prev_close) * 100,
+                'change': daily_change_pct,
                 'ma_fast': latest['MA_FAST'],
                 'ma_slow': latest['MA_SLOW'],
                 'rsi': latest['RSI'],
