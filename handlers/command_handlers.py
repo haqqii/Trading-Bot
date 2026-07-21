@@ -40,6 +40,30 @@ def _strip_markdown_chars(text: str) -> str:
     return out
 
 
+async def _send_with_retry(message, text, retries=3, delay=2, **kwargs):
+    """Send message with retry on timeout. Returns True if successful."""
+    from telegram.error import TimedOut
+    for attempt in range(retries):
+        try:
+            await asyncio.wait_for(
+                message.reply_text(text, **kwargs),
+                timeout=60
+            )
+            return True
+        except TimedOut:
+            if attempt < retries - 1:
+                logger.warning(f"Send timeout, retrying in {delay}s ({attempt+1}/{retries})")
+                await asyncio.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"Send failed after {retries} attempts")
+                return False
+        except Exception as e:
+            logger.error(f"Send failed: {e}")
+            return False
+    return False
+
+
 # Global state
 ALL_STOCKS = ALL_IDX_STOCKS
 user_data_db = {}
@@ -1374,30 +1398,22 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
 
         logger.info(f"[ANALISA] Sending final result for {ticker}")
-        try:
-            await update.message.reply_text(msg, parse_mode='Markdown', read_timeout=120, write_timeout=120)
+        # Try markdown first, then plain text
+        sanitized = _strip_markdown_chars(msg)
+        sent = await _send_with_retry(
+            update.message, msg, parse_mode='Markdown'
+        )
+        if not sent:
+            # Try plain text
+            sent = await _send_with_retry(update.message, sanitized)
+        if sent:
             logger.info(f"[ANALISA] Done for {ticker}")
-        except Exception as send_err:
-            err_str = str(send_err)
-            logger.error(f"[ANALISA] Markdown send failed ({err_str[:80]}), retrying as plain text")
-            sanitized = _strip_markdown_chars(msg)
-            try:
-                await update.message.reply_text(sanitized, read_timeout=120, write_timeout=120)
-                logger.info(f"[ANALISA] Done for {ticker} (plain text fallback)")
-            except Exception as plain_err:
-                logger.error(f"[ANALISA] Plain text send also failed: {plain_err}")
-                try:
-                    if reply_msg:
-                        await reply_msg.edit_text((sanitized or msg)[:3500] + "\n\n⚠️ _Gagal kirim hasil_", parse_mode='Markdown')
-                except Exception as edit_err:
-                    logger.error(f"[ANALISA] edit_text fallback also failed: {edit_err}")
+        else:
+            logger.error(f"[ANALISA] Failed to send result for {ticker}")
 
     except Exception as e:
         logger.error(f"Analisa error: {e}", exc_info=True)
-        try:
-            await update.message.reply_text(f"❌ Error: {str(e)[:300]}", read_timeout=60, write_timeout=60)
-        except Exception as reply_err:
-            logger.error(f"[ANALISA] Error reply also failed: {reply_err}")
+        await _send_with_retry(update.message, f"❌ Error: {str(e)[:300]}")
 
 
 # === BUTTONS ===
