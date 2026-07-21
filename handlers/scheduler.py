@@ -485,14 +485,15 @@ async def check_bsjp_signals(app):
                 except Exception as e:
                     logger.error(f"Failed to send BSJP to user {uid}: {e}")
 
-            # Mark as sent today AFTER all users processed
-            _mark_sent_today(BSJP_SENT_FILE)
-            logger.info("[BSJP] Marked as sent for today")
+            # Mark as sent today AFTER all users processed (only if we actually sent something)
+            if bsjp_signals:
+                _mark_sent_today(BSJP_SENT_FILE)
+                logger.info("[BSJP] Marked as sent for today")
 
-        # Mark as sent even if no signals found (to prevent re-scanning)
+        # Only mark as sent if we genuinely found no signals (not due to errors)
+        # If bsjp_signals is empty because of errors, we'll retry in the next cycle
         if not bsjp_signals:
-            _mark_sent_today(BSJP_SENT_FILE)
-            logger.info("[BSJP] No signals found, marked as sent for today")
+            logger.info(f"[BSJP] Scan complete: 0 signals (will retry next cycle if within window)")
 
         logger.info(f"[BSJP] Scan complete: {len(bsjp_signals)} signals")
 
