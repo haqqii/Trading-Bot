@@ -1132,12 +1132,32 @@ async def check_morning_notification(app):
         morning_signals = []
         tickers = list(ALL_STOCKS.keys())[:100]
 
+        # Track if using stale data
+        using_stale_data = [False]
+
         def analyze_stock(ticker):
             """Blocking stock analysis - runs in thread pool"""
             try:
-                d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '3d')
+                d, is_stale = get_stock_data_with_fallback(ticker + ".JK", '1h', '3d')
+
+                # If no fresh data, try ANY cached data even if very stale
+                if not d:
+                    cache_key = f"{ticker}.JK:1h:3d"
+                    d = _price_cache.get(cache_key)
+                    if not d:
+                        cache_key2 = f"stock_{ticker}.JK_1h_3d"
+                        d = _price_cache.get(cache_key2)
+                    if not d:
+                        cache_key3 = f"{ticker}.JK:5m:3d"
+                        d = _price_cache.get(cache_key3)
+                    if d:
+                        using_stale_data[0] = True
+
                 if not d or d.get('candles', 0) < 10:
                     return None
+
+                if is_stale:
+                    using_stale_data[0] = True
 
                 price = d['price']
                 rsi = d.get('rsi', 50)
@@ -1219,12 +1239,14 @@ async def check_morning_notification(app):
                 except Exception as e:
                     logger.error(f"Failed to send morning to user {uid}: {e}")
 
-            # Mark as sent today AFTER all users processed
-            _mark_morning_sent()
-            logger.info("[MORNING] Marked as sent for today")
-        else:
-            logger.info("[MORNING] No signals found - marking as sent")
-            _mark_morning_sent()
+            # Mark as sent today AFTER all users processed (only if signals found)
+            if morning_signals:
+                _mark_morning_sent()
+                logger.info("[MORNING] Marked as sent for today")
+
+        # Only log if no signals found
+        if not morning_signals:
+            logger.info(f"[MORNING] Scan complete: 0 signals (will retry next cycle if within window)")
 
         logger.info(f"[MORNING] Scan complete: {len(morning_signals)} signals")
 
