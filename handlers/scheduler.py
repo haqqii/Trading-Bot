@@ -489,8 +489,6 @@ async def check_bsjp_signals(app):
                     msg = "🌙 *BSJP - Beli Sore Jual Pagi*\n"
                     msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     msg += f"🕐 {now.strftime('%d %b %H:%M')}\n"
-                    if using_stale_data[0]:
-                        msg += "⚠️ *Data mungkin tidak terbaru* (Yahoo timeout)\n"
                     msg += f"📊 {len(bsjp_signals)} sinyal ditemukan\n\n"
 
                     for s in bsjp_signals[:10]:
