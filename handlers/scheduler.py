@@ -371,11 +371,27 @@ async def check_bsjp_signals(app):
 
         logger.info(f"[BSJP] Scanning for {len(bsjp_users)} users...")
 
-        # Scan stocks for BSJP signals (parallel fetch)
-        bsjp_signals = []
-        # Scan more stocks for better coverage
-        tickers = list(ALL_STOCKS.keys())[:200]
+        # Build optimized stock universe for BSJP
+        # Prioritize favorites + limit to 30 for faster scan
+        scan_tickers = []
 
+        # Add user favorites first
+        for uid, u in user_db.items():
+            if u.get('notif_bsjp'):
+                favorites = u.get('favorites', [])
+                for fav in favorites:
+                    ticker = fav.upper().replace('.JK', '')
+                    if ticker and ticker not in scan_tickers and ticker in ALL_STOCKS:
+                        scan_tickers.append(ticker)
+
+        # Fill with default stocks
+        for ticker in list(ALL_STOCKS.keys())[:30]:
+            if ticker not in scan_tickers:
+                scan_tickers.append(ticker)
+
+        logger.info(f"[BSJP] Scanning {len(scan_tickers)} stocks")
+
+        bsjp_signals = []
         # Track if using stale data
         using_stale_data = [False]
 
@@ -471,12 +487,12 @@ async def check_bsjp_signals(app):
             return None
 
         # Increase semaphore for faster scanning
-        semaphore = asyncio.Semaphore(50)
+        semaphore = asyncio.Semaphore(20)
         async def fetch_with_semaphore(ticker):
             async with semaphore:
                 return await asyncio.to_thread(analyze_bsjp, ticker)
 
-        tasks = [fetch_with_semaphore(t) for t in tickers]
+        tasks = [fetch_with_semaphore(t) for t in scan_tickers]
         results = await asyncio.gather(*tasks)
         bsjp_signals = [r for r in results if r is not None]
 
@@ -561,12 +577,32 @@ async def check_stock_signals(app):
             logger.info("[STOCK] No users with notif_saham enabled")
             return
 
-        logger.info(f"[STOCK SIGNALS] Scanning stocks for {len(stock_users)} users...")
+        logger.info(f"[STOCK SIGNALS] Scanning stocks for {len(stock_users)}...")
 
-        # Limit scan to top 50 most liquid stocks for faster scanning
-        # This ensures scan completes within 5 minutes
-        all_tickers = list(ALL_STOCKS.keys())[:50]
-        logger.info(f"[STOCK] Scanning top {len(all_tickers)} stocks (limited from {len(ALL_STOCKS)})")
+        # Build optimized stock universe:
+        # 1. User's favorites first (highest priority)
+        # 2. Top volume stocks from cache
+        # 3. Limit to 20 total to reduce API calls
+        scan_tickers = []
+
+        # Add user's favorites first (deduplicated)
+        for uid, u in user_db.items():
+            if u.get('notif_saham'):
+                favorites = u.get('favorites', [])
+                for fav in favorites:
+                    ticker = fav.upper().replace('.JK', '')
+                    if ticker and ticker not in scan_tickers and ticker in ALL_STOCKS:
+                        scan_tickers.append(ticker)
+
+        # Fill remaining slots with default top stocks
+        default_stocks = list(ALL_STOCKS.keys())[:20]
+        for ticker in default_stocks:
+            if ticker not in scan_tickers:
+                scan_tickers.append(ticker)
+                if len(scan_tickers) >= 20:
+                    break
+
+        logger.info(f"[STOCK] Scanning {len(scan_tickers)} stocks ({len(scan_tickers)} favorites + defaults)")
 
         signals_found = 0
         buy_signals = []  # Collect all BUY signals first
@@ -637,7 +673,7 @@ async def check_stock_signals(app):
         # Track timeouts for cooldown logic
         _stock_timeout_count[0] = 0
 
-        tasks = [fetch_with_semaphore(t) for t in all_tickers]
+        tasks = [fetch_with_semaphore(t) for t in scan_tickers]
         logger.info(f"[STOCK] Starting scan of {len(tasks)} stocks...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"[STOCK] Scan complete, processing results...")
@@ -837,10 +873,10 @@ async def check_stock_signals(app):
                     logger.error(f"Failed to send signals to user {uid}: {e}")
 
         # If too many timeouts (>50% of scanned stocks), enable cooldown
-        timeout_pct = _stock_timeout_count[0] / len(all_tickers) * 100 if all_tickers else 0
-        if _stock_timeout_count[0] >= len(all_tickers) // 2:  # >= 50% timeout
+        timeout_pct = _stock_timeout_count[0] / len(scan_tickers) * 100 if scan_tickers else 0
+        if _stock_timeout_count[0] >= len(scan_tickers) // 2:  # >= 50% timeout
             _yahoo_stock_cooldown = 3  # Skip next 3 scans (~15 minutes)
-            logger.warning(f"[STOCK] High timeout rate ({_stock_timeout_count[0]}/{len(all_tickers)} = {timeout_pct:.0f}%) - enabling cooldown for 3 cycles")
+            logger.warning(f"[STOCK] High timeout rate ({_stock_timeout_count[0]}/{len(scan_tickers)} = {timeout_pct:.0f}%) - enabling cooldown for 3 cycles")
 
         if signals_found > 0:
             logger.info(f"✅ Stock scan complete: {signals_found} BUY signals found")
@@ -1128,14 +1164,32 @@ async def check_morning_notification(app):
 
         logger.info(f"[MORNING] Window open at {now.strftime('%H:%M')} - scanning for {len(morning_users)} users...")
 
-        # Scan stocks for morning signals (parallel fetch)
+        # Build optimized stock universe for morning
+        # Prioritize favorites + limit to 30 for faster scan
+        scan_tickers = []
+
+        # Add user favorites first
+        for uid, u in user_db.items():
+            if u.get('notif_morning'):
+                favorites = u.get('favorites', [])
+                for fav in favorites:
+                    ticker = fav.upper().replace('.JK', '')
+                    if ticker and ticker not in scan_tickers and ticker in ALL_STOCKS:
+                        scan_tickers.append(ticker)
+
+        # Fill with default stocks
+        for ticker in list(ALL_STOCKS.keys())[:30]:
+            if ticker not in scan_tickers:
+                scan_tickers.append(ticker)
+
+        logger.info(f"[MORNING] Scanning {len(scan_tickers)} stocks")
+
         morning_signals = []
-        tickers = list(ALL_STOCKS.keys())[:100]
 
         # Track if using stale data
         using_stale_data = [False]
 
-        def analyze_stock(ticker):
+        def analyze_morning_stock(ticker):
             """Blocking stock analysis - runs in thread pool"""
             try:
                 d, is_stale = get_stock_data_with_fallback(ticker + ".JK", '1h', '3d')
@@ -1205,9 +1259,9 @@ async def check_morning_notification(app):
         semaphore = asyncio.Semaphore(20)
         async def fetch_with_semaphore(ticker):
             async with semaphore:
-                return await asyncio.to_thread(analyze_stock, ticker)
+                return await asyncio.to_thread(analyze_morning_stock, ticker)
 
-        tasks = [fetch_with_semaphore(t) for t in tickers]
+        tasks = [fetch_with_semaphore(t) for t in scan_tickers]
         results = await asyncio.gather(*tasks)
         morning_signals = [r for r in results if r is not None]
 
