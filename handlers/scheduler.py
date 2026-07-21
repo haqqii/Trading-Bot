@@ -376,13 +376,35 @@ async def check_bsjp_signals(app):
         # Scan more stocks for better coverage
         tickers = list(ALL_STOCKS.keys())[:200]
 
+        # Track if using stale data
+        using_stale_data = [False]
+
         def analyze_bsjp(ticker):
             """Blocking BSJP analysis - runs in thread pool"""
             try:
                 # Try 1h interval first for intraday momentum
-                d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '5d')
+                d, is_stale = get_stock_data_with_fallback(ticker + ".JK", '1h', '5d')
+
+                # If no fresh data, try ANY cached data even if very stale
+                if not d:
+                    # Try to get from price cache directly, any format
+                    cache_key = f"{ticker}.JK:1h:5d"
+                    d = _price_cache.get(cache_key)
+                    if not d:
+                        cache_key2 = f"stock_{ticker}.JK_1h_5d"
+                        d = _price_cache.get(cache_key2)
+                    if not d:
+                        cache_key3 = f"{ticker}.JK:5m:3d"
+                        d = _price_cache.get(cache_key3)
+                    if d:
+                        logger.warning(f"[BSJP] Using very stale cache for {ticker}")
+                        using_stale_data[0] = True
+
                 if not d or d.get('candles', 0) < 10:
                     return None
+
+                if is_stale:
+                    using_stale_data[0] = True
 
                 price = d['price']
                 rsi = d.get('rsi', 50)
@@ -467,6 +489,8 @@ async def check_bsjp_signals(app):
                     msg = "🌙 *BSJP - Beli Sore Jual Pagi*\n"
                     msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     msg += f"🕐 {now.strftime('%d %b %H:%M')}\n"
+                    if using_stale_data[0]:
+                        msg += "⚠️ *Data mungkin tidak terbaru* (Yahoo timeout)\n"
                     msg += f"📊 {len(bsjp_signals)} sinyal ditemukan\n\n"
 
                     for s in bsjp_signals[:10]:
