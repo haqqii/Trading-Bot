@@ -6,6 +6,7 @@ import time
 import json
 import os
 import logging
+import concurrent.futures
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -1303,16 +1304,22 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return None
 
             # Execute stock fetch and news fetch in parallel
-            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 stock_future = executor.submit(fetch_stock_data)
                 news_coro = fetch_news_async()
 
-                # Wait for stock data first (needed for analysis)
-                d = stock_future.result()
+                # Wait for stock data first (needed for analysis) - with TIMEOUT
+                try:
+                    d = stock_future.result(timeout=15)  # 15 second timeout
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
+                    d = None
 
                 # Also wait for news (may be slower but doesn't block result)
-                sentiment = await news_coro
+                try:
+                    sentiment = await asyncio.wait_for(news_coro, timeout=10)
+                except (asyncio.TimeoutError, Exception):
+                    sentiment = None
 
             if not d:
                 if not ticker_known:
