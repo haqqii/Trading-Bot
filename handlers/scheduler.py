@@ -650,12 +650,16 @@ async def check_stock_signals(app):
                         # Fetch FRESHEST data for current price - try multiple methods to ensure we have the latest price
                         fresh_d = None
 
-                        # Method 1: Try with 1d period (most recent data)
-                        fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '5m', '1d')
+                        # Method 1: Try with 5d period (enough candles for indicators + recent data)
+                        fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '5m', '5d')
 
-                        # Method 2: If Method 1 failed, try with 1h period
+                        # Method 2: If Method 1 failed, try with 1d period
                         if not fresh_d:
-                            fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '1d')
+                            fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '5m', '1d')
+
+                        # Method 3: If still failed, try with 1h interval
+                        if not fresh_d:
+                            fresh_d, _ = get_stock_data_with_fallback(ticker + ".JK", '1h', '3d')
 
                         # Method 3: If still failed, try TradingView directly
                         if not fresh_d:
