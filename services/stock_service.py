@@ -239,10 +239,140 @@ class StockService:
 
         return None
 
+    def get_stock_data_v8(self, ticker: str, interval: str = '5m', period: str = '5d'):
+        """
+        Get stock data from Yahoo Finance v8 API.
+        This uses a different endpoint that may have different rate limits than yfinance library.
+        """
+        try:
+            # Map interval to v8 format
+            interval_map = {
+                '1m': '1m', '2m': '2m', '5m': '5m',
+                '15m': '15m', '30m': '30m', '1h': '1h',
+                '90m': '90m', '1d': '1d', '5d': '5d',
+                '1wk': '1wk', '1mo': '1mo'
+            }
+            v8_interval = interval_map.get(interval, '5m')
+
+            # Map period to v8 format
+            period_map = {
+                '1d': '1d', '5d': '5d', '7d': '7d',
+                '60d': '60d', '90d': '90d', '1mo': '1mo',
+                '3mo': '3mo', '6mo': '6mo', '1y': '1y',
+                '2y': '2y', '5y': '5y', '10y': '10y',
+                'ytd': 'ytd', 'max': 'max'
+            }
+            v8_period = period_map.get(period, '5d')
+
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={v8_interval}&range={v8_period}"
+
+            resp = _session.get(url, timeout=10)
+
+            if resp.status_code != 200:
+                logger.warning(f"Yahoo v8 API returned {resp.status_code} for {ticker}")
+                return None
+
+            data = resp.json()
+            result = data.get('chart', {}).get('result', [])
+
+            if not result:
+                return None
+
+            result = result[0]
+            timestamps = result.get('timestamp', [])
+            quote = result.get('indicators', {}).get('quote', [{}])[0]
+
+            if not timestamps or not quote.get('close'):
+                return None
+
+            closes = quote.get('close', [])
+            highs = quote.get('high', closes)
+            lows = quote.get('low', closes)
+            volumes = quote.get('volume', [0] * len(closes))
+
+            if len(closes) < 50:
+                logger.warning(f"Yahoo v8 returned only {len(closes)} candles for {ticker}, need at least 50")
+                return None
+
+            # Build DataFrame for indicator calculations
+            import pandas as pd
+            df = pd.DataFrame({
+                'Close': closes[-500:],  # Limit to last 500 candles
+                'High': highs[-500:],
+                'Low': lows[-500:],
+                'Volume': volumes[-500:]
+            }, index=pd.to_datetime(timestamps[-500:], unit='s'))
+
+            df['MA_FAST'] = df['Close'].rolling(8).mean()
+            df['MA_SLOW'] = df['Close'].rolling(21).mean()
+            df['RSI'] = calculate_rsi(df['Close'])
+
+            macd_data = calculate_macd(df['Close'])
+            df['MACD'] = macd_data['macd']
+            df['MACD_SIGNAL'] = macd_data['signal']
+            df['MACD_HIST'] = macd_data['histogram']
+
+            bb_data = calculate_bollinger_bands(df['Close'])
+            df['BB_UPPER'] = bb_data['upper']
+            df['BB_MIDDLE'] = bb_data['middle']
+            df['BB_LOWER'] = bb_data['lower']
+
+            volume_data = calculate_volume_metrics(df['Volume'])
+            df['VOLUME_MA'] = volume_data['ma']
+            df['VOLUME_RATIO'] = volume_data['ratio']
+
+            latest = df.iloc[-1]
+            atr_val = calculate_atr(df['High'], df['Low'], df['Close'], 14).iloc[-1]
+
+            # Calculate Support & Resistance levels
+            try:
+                sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
+            except Exception as e:
+                logger.debug(f"S/R calculation failed for {ticker}: {e}")
+                sr_data = {}
+
+            # Get stock name from meta
+            meta = result.get('meta', {})
+            stock_name = meta.get('symbol', ticker)
+
+            prev_close = df.iloc[-2]['Close'] if len(df) > 1 else latest['Close']
+
+            return {
+                'name': stock_name,
+                'price': latest['Close'],
+                'change': ((latest['Close'] - prev_close) / prev_close) * 100,
+                'ma_fast': latest['MA_FAST'],
+                'ma_slow': latest['MA_SLOW'],
+                'rsi': latest['RSI'],
+                'volume': latest['Volume'],
+                'atr': atr_val,
+                'candles': len(df),
+                'source': 'yahoo_v8',
+                'macd': latest['MACD'],
+                'macd_signal': latest['MACD_SIGNAL'],
+                'macd_hist': latest['MACD_HIST'],
+                'bb_upper': latest['BB_UPPER'],
+                'bb_middle': latest['BB_MIDDLE'],
+                'bb_lower': latest['BB_LOWER'],
+                'volume_ma': latest['VOLUME_MA'],
+                'volume_ratio': latest['VOLUME_RATIO'],
+                'raw_df': df,  # For pattern detection
+                'sr': sr_data or {},
+                'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
+                'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
+            }
+
+        except Exception as e:
+            logger.error(f"Yahoo v8 error for {ticker}: {e}")
+            return None
+
     def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d'):
-        """Get stock data - try Yahoo Finance first, then TradingView, then Finnhub"""
+        """Get stock data - try Yahoo Finance first, then v8 API, TradingView, then Finnhub"""
         base_ticker = ticker.replace('.JK', '')
         if base_ticker in YAHOO_BLACKLIST:
+            data = self.get_stock_data_v8(ticker, interval, period)
+            if data:
+                return data
             data = self.get_stock_data_tradingview(base_ticker)
             if data:
                 return data
@@ -252,6 +382,11 @@ class StockService:
             return None
 
         data = self.get_stock_data(ticker, interval, period)
+        if data:
+            return data
+
+        # Try Yahoo Finance v8 API as backup (different rate limits)
+        data = self.get_stock_data_v8(ticker, interval, period)
         if data:
             return data
 

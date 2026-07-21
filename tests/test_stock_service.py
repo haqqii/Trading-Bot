@@ -180,13 +180,17 @@ class TestGetStockDataCombined:
             yahoo_called.append(ticker)
             return None
 
+        def mock_v8(*args, **kwargs):
+            return None
+
+        service.get_stock_data_v8 = mock_v8
         service.get_stock_data_tradingview = mock_tv
         service.get_stock_data = mock_yahoo
         service.get_stock_data_finnhub = lambda x: None
 
         result = service.get_stock_data_combined('BBCA.JK', '5m', '1d')
 
-        # Both Yahoo and TV should be called
+        # Yahoo, v8, and TV should be called
         assert len(yahoo_called) == 1
         assert len(tv_called) == 1
         assert result['source'] == 'tradingview'
@@ -197,6 +201,7 @@ class TestGetStockDataCombined:
         service = StockService()
 
         service.get_stock_data = lambda *args, **kwargs: None
+        service.get_stock_data_v8 = lambda *args, **kwargs: None
         service.get_stock_data_tradingview = lambda x: None
         service.get_stock_data_finnhub = lambda x: None
 
