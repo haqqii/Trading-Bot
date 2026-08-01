@@ -73,7 +73,7 @@ class StockService:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
 
-                if hist.empty or len(hist) < 50:
+                if hist.empty or len(hist) < 30:
                     if attempt < retry - 1:
                         time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
                         continue
@@ -294,8 +294,8 @@ class StockService:
             lows = quote.get('low', closes)
             volumes = quote.get('volume', [0] * len(closes))
 
-            if len(closes) < 50:
-                logger.warning(f"Yahoo v8 returned only {len(closes)} candles for {ticker}, need at least 50")
+            if len(closes) < 30:
+                logger.warning(f"Yahoo v8 returned only {len(closes)} candles for {ticker}, need at least 30")
                 return None
 
             # Build DataFrame for indicator calculations
