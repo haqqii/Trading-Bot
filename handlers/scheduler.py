@@ -601,11 +601,11 @@ async def check_stock_signals(app):
                         should_send = True
                     else:
                         time_diff = (now - existing.get('time', now)).total_seconds()
-                        if time_diff > 21600:  # 6 hours
+                        if time_diff > 86400:  # 24 hours
                             last_entry = existing.get('entry', 0)
                             if last_entry > 0:
                                 price_change = abs(current_price - last_entry) / last_entry
-                                if price_change > 0.02:
+                                if price_change > 0.05:  # 5% price change
                                     should_send = True
 
                     if should_send:
@@ -1308,11 +1308,11 @@ async def check_crypto_signals(app):
                         should_send = True
                     else:
                         time_diff = (now - existing.get('time', now)).total_seconds()
-                        if time_diff > 21600:  # 6 hours
+                        if time_diff > 86400:  # 24 hours
                             last_entry = existing.get('entry', 0)
                             if last_entry > 0:
                                 price_change = abs(current_price - last_entry) / last_entry
-                                if price_change > 0.02:
+                                if price_change > 0.05:  # 5% price change
                                     should_send = True
 
                     if should_send:
