@@ -294,6 +294,14 @@ class StockService:
             lows = quote.get('low', closes)
             volumes = quote.get('volume', [0] * len(closes))
 
+            # Forward-fill NaN values first (Yahoo may have gaps)
+            import pandas as pd
+            if any(pd.isna(c) for c in closes):
+                closes = pd.Series(closes).ffill().tolist()
+                highs = pd.Series(highs).ffill().tolist()
+                lows = pd.Series(lows).ffill().tolist()
+                volumes = pd.Series(volumes).fillna(0).tolist()
+
             if len(closes) < 30:
                 logger.warning(f"Yahoo v8 returned only {len(closes)} candles for {ticker}, need at least 30")
                 return None
