@@ -882,22 +882,33 @@ def format_analisa_simple(
     nearest_support = (sr.get('nearest_support') or {}) if sr else {}
     nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
 
+    # Determine signal type for fallback selection
+    signal_type = signal.get('signal', '').upper() if isinstance(signal, dict) else ''
+    is_sell = signal_type == 'SELL'
+
     lines.append("")
     lines.append(f"*📐 Support & Resistance:*")
+    # Support should be BELOW price - for SELL use TP1 (below), for BUY use SL (below)
     if nearest_support:
         sup_level = nearest_support.get('level', 0) or 0
         lines.append(f"  • Support: {fp(sup_level)}")
     else:
-        sl = signal.get('sl') or 0
-        if sl > 0:
-            lines.append(f"  • Support: {fp(sl)} (dari SL)")
+        # For SELL: TP1 is below (take profit target)
+        # For BUY: SL is below (stop loss)
+        fallback_price = signal.get('tp1') if is_sell else signal.get('sl')
+        if fallback_price and fallback_price > 0:
+            lines.append(f"  • Support: {fp(fallback_price)} (dari TP1)" if is_sell else f"  • Support: {fp(fallback_price)} (dari SL)")
+
+    # Resistance should be ABOVE price - for SELL use SL (above), for BUY use TP1 (above)
     if nearest_resistance:
         res_level = nearest_resistance.get('level', 0) or 0
         lines.append(f"  • Resistance: {fp(res_level)}")
     else:
-        tp1 = signal.get('tp1') or 0
-        if tp1 > 0:
-            lines.append(f"  • Resistance: {fp(tp1)} (dari TP1)")
+        # For SELL: SL is above (stop loss)
+        # For BUY: TP1 is above (take profit target)
+        fallback_price = signal.get('sl') if is_sell else signal.get('tp1')
+        if fallback_price and fallback_price > 0:
+            lines.append(f"  • Resistance: {fp(fallback_price)} (dari SL)" if is_sell else f"  • Resistance: {fp(fallback_price)} (dari TP1)")
 
     # === ENTRY, TP, SL ===
     entry = signal.get('entry', price) or price
