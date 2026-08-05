@@ -16,7 +16,7 @@ from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from services.chart_service import chart_service
 from services.news_service import news_service
-from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg, format_analisa_simple
+from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg, format_analisa_simple, format_analisa_pemula
 from utils.rate_limiter import get_all_api_stats
 from utils.cache import _price_cache, _signal_cache
 from data.idx_stocks import ALL_IDX_STOCKS
@@ -1396,13 +1396,13 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if s is None:
                 s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
             logger.info(f"[ANALISA] Signal generated: {s.get('signal')}")
-            msg = format_analisa_simple(
+            msg = format_analisa_pemula(
                 ticker=ticker,
                 name=name,
                 data=d,
                 signal=s,
                 sentiment=sentiment,
-                is_crypto=False
+                timeframe='5 Menit',
             )
 
         logger.info(f"[ANALISA] Sending final result for {ticker}")

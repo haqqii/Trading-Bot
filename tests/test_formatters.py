@@ -15,6 +15,7 @@ from utils.formatters import (
     format_bsjp_msg,
     format_morning_msg,
     format_analisa_simple,
+    format_analisa_pemula,
     format_price_dual,
     format_signal_msg,
     format_crypto_msg,
@@ -525,3 +526,263 @@ class TestIntegration:
         assert 'SELL' in result
         assert 'Overbought' in result
         assert 'Death Cross' in result
+
+
+# === BEGINNER-FRIENDLY FORMATTER TESTS ===
+
+class TestFormatAnalisaPemula:
+    """Tests for format_analisa_pemula — beginner-friendly formatter."""
+
+    def _base_data(self, **overrides):
+        d = {
+            'price': 100,
+            'rsi': 50,
+            'change': 1.0,
+            'ma_fast': 100,
+            'ma_slow': 99,
+            'macd_hist': 0.5,
+            'volume_ratio': 1.0,
+            'candles': 50,
+        }
+        d.update(overrides)
+        return d
+
+    def _base_signal(self, **overrides):
+        s = {
+            'signal': 'BUY',
+            'entry': 100,
+            'tp1': 102,
+            'tp2': 104,
+            'tp3': 106,
+            'sl': 98,
+            'rsi': 50,
+            'atr': 1.5,
+            'quality': 'MODERATE',
+            'buy_score': 50,
+            'sell_score': 20,
+        }
+        s.update(overrides)
+        return s
+
+    def test_basic_structure(self):
+        """Basic analysis has all key sections."""
+        result = format_analisa_pemula(
+            'BBCA', 'Bank Central Asia',
+            self._base_data(),
+            self._base_signal(),
+        )
+        assert 'BBCA' in result
+        assert 'Bank Central Asia' in result
+        assert 'BUY' in result
+        assert 'Rp 100' in result
+        assert 'Kesimpulan' in result
+        assert 'Kondisi Saat Ini' in result
+        assert 'Target Harga' in result
+        assert 'Area Penting' in result
+        assert 'Intinya' in result
+
+    def test_no_jargon(self):
+        """Output must not contain banned jargon without explanation."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=25, ma_fast=102, ma_slow=100, macd_hist=0.5),
+            self._base_signal(),
+        )
+        # Banned jargon must NOT appear as standalone labels
+        for jargon in ['Death Cross', 'Golden Cross', 'Divergence',
+                       'Oversold', 'Overbought', 'Breakout', 'Breakdown']:
+            assert jargon not in result, f"Output contains banned jargon: {jargon}"
+
+    def test_rsi_low_uses_bahasa_sederhana(self):
+        """RSI < 30 must be explained in simple Indonesian."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=25),
+            self._base_signal(),
+        )
+        # Should contain explanation about selling pressure / potential rebound
+        assert 'Tekanan jual' in result
+        assert 'mantul' in result or 'naik lagi' in result
+
+    def test_rsi_high_uses_bahasa_sederhana(self):
+        """RSI > 70 must be explained in simple Indonesian."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=75),
+            self._base_signal(signal='SELL', buy_score=10, sell_score=60),
+        )
+        # Should explain koreksi risk in plain language
+        assert 'koreksi' in result or 'rentan' in result or 'turun' in result
+
+    def test_volume_high_uses_bahasa_sederhana(self):
+        """High volume should be explained in plain language."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(volume_ratio=2.5),
+            self._base_signal(),
+        )
+        assert 'meyakinkan' in result or 'tinggi' in result
+
+    def test_volume_low_uses_bahasa_sederhana(self):
+        """Low volume should be explained in plain language."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(volume_ratio=0.3),
+            self._base_signal(),
+        )
+        assert 'rendah' in result
+
+    def test_with_sentiment(self):
+        """Sentiment section should be included when provided."""
+        sentiment = {
+            'overall': 'positive',
+            'emoji': '🟢',
+            'summary': 'Berita positif',
+            'headline_count': 5,
+            'positive_count': 3,
+            'negative_count': 1,
+            'all_headlines': [
+                {'headline': 'Headline 1', 'score': 2, 'source': 'Test'},
+                {'headline': 'Headline 2', 'score': 1, 'source': 'Test'},
+                {'headline': 'Headline 3', 'score': 1, 'source': 'Test'},
+            ],
+        }
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+            sentiment=sentiment,
+        )
+        assert 'Sentimen Berita' in result
+        assert 'Positif' in result
+        assert 'Headline 1' in result
+        assert '3 berita positif' in result
+
+    def test_with_negative_sentiment(self):
+        """Negative sentiment should display correctly."""
+        sentiment = {
+            'overall': 'negative',
+            'emoji': '🔴',
+            'summary': 'Berita negatif',
+            'headline_count': 3,
+            'positive_count': 0,
+            'negative_count': 2,
+            'all_headlines': [{'headline': 'Bad news', 'score': -2, 'source': 'Test'}],
+        }
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+            sentiment=sentiment,
+        )
+        assert 'Negatif' in result
+        assert '2 berita negatif' in result
+
+    def test_no_sentiment_shows_netral(self):
+        """Without sentiment, should still show neutral news section."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+            sentiment=None,
+        )
+        assert 'Sentimen Berita' in result
+        assert 'Netral' in result
+
+    def test_signal_sell(self):
+        """SELL signal displays correctly."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=75, change=-2.0, ma_fast=98, ma_slow=100, macd_hist=-0.5),
+            self._base_signal(signal='SELL', entry=100, tp1=98, tp2=96, tp3=94, sl=102,
+                              buy_score=10, sell_score=60),
+        )
+        assert 'SELL' in result
+
+    def test_signal_hold(self):
+        """HOLD signal displays correctly."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=50, change=0, ma_fast=100, ma_slow=100, macd_hist=0),
+            self._base_signal(signal='HOLD', tp1=None, tp2=None, tp3=None, sl=None,
+                              buy_score=20, sell_score=20, quality='WEAK'),
+        )
+        assert 'HOLD' in result
+
+    def test_kesimpulan_has_3_lines(self):
+        """Kesimpulan section has 3 bullet points (sudah punya, belum punya, risiko)."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+        )
+        kesimpulan_idx = result.find('💡 Kesimpulan')
+        kondisi_idx = result.find('📈 Kondisi Saat Ini')
+        kesimpulan_block = result[kesimpulan_idx:kondisi_idx]
+        bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('•')]
+        assert len(bullets) >= 3, f"Kesimpulan harus punya minimal 3 poin, dapat {len(bullets)}"
+
+    def test_target_harga_includes_entry_tp_sl(self):
+        """Target harga section includes Entry, TP1/2/3, Stop Loss."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+        )
+        for label in ['Entry:', 'TP1:', 'TP2:', 'TP3:', 'Stop Loss:']:
+            assert label in result, f"Target Harga harus memuat '{label}'"
+
+    def test_alasan_max_4_points(self):
+        """Alasan rekomendasi section has at most 4 bullets."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(rsi=25, ma_fast=102, ma_slow=100, macd_hist=0.5, volume_ratio=2.5),
+            self._base_signal(buy_score=80, sell_score=10),
+        )
+        kenapa_idx = result.find('🤖 Kenapa rekomendasinya')
+        sentimen_idx = result.find('📰 Sentimen Berita')
+        kenapa_block = result[kenapa_idx:sentimen_idx]
+        bullets = [l for l in kenapa_block.split('\n') if l.strip().startswith('•')]
+        assert len(bullets) <= 4, f"Alasan maksimal 4 poin, dapat {len(bullets)}"
+
+    def test_footer_present(self):
+        """Output has footer with timestamp and Ochobot signature."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+        )
+        assert 'Ochobot' in result
+        assert 'IDX Saham' in result
+
+    def test_none_data(self):
+        """None data should not crash."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            None,
+            self._base_signal(),
+        )
+        assert 'BBCA' in result
+
+    def test_timeframe_custom(self):
+        """Custom timeframe should appear in output."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+            timeframe='15 Menit',
+        )
+        assert '15 Menit' in result
+
+    def test_support_resistance_in_section(self):
+        """Support and resistance appear with explanatory labels."""
+        result = format_analisa_pemula(
+            'BBCA', 'BBCA',
+            self._base_data(),
+            self._base_signal(),
+        )
+        # Section header
+        assert 'Area Penting' in result
+        # Explanatory captions per spec
+        assert 'menahan penurunan' in result
+        assert 'menahan kenaikan' in result

@@ -1061,3 +1061,398 @@ def format_analisa_simple(
 
     return '\n'.join(lines)
 
+
+# === BEGINNER-FRIENDLY FORMATTER ===
+
+def _rsi_pemula(rsi: float) -> str:
+    """
+    Keterangan RSI dalam bahasa awam.
+    Tanpa istilah 'overbought' / 'oversold' — diganti penjelasan kontekstual.
+    """
+    if rsi < 30:
+        return (f"{rsi:.0f} — Tekanan jual sudah sangat kuat. "
+                f"Harga berpotensi mantul (naik lagi) jika tidak ada berita buruk.")
+    if rsi < 40:
+        return (f"{rsi:.0f} — Jual masih dominan, tapi tekanan mulai berkurang.")
+    if rsi > 70:
+        return (f"{rsi:.0f} — Harga sudah naik cepat, potensi koreksi (turun) makin besar.")
+    if rsi > 60:
+        return (f"{rsi:.0f} — Minat beli cukup kuat, momentum kenaikan masih ada.")
+    if rsi > 50:
+        return f"{rsi:.0f} — Sedikit lebih banyak pembeli daripada penjual."
+    if rsi > 40:
+        return f"{rsi:.0f} — Sedikit lebih banyak penjual, tapi belum kuat."
+    return f"{rsi:.0f} — Tekanan jual dominan, momentum masih lemah."
+
+
+def _ma_pemula(price: float, ma_fast: float, ma_slow: float) -> str:
+    """
+    Penjelasan MA dalam bahasa awam. Tidak pakai istilah 'Golden Cross' / 'Death Cross'.
+    """
+    if ma_fast > ma_slow and price > ma_fast:
+        return ("Rata-rata jangka pendek di atas rata-rata jangka panjang, "
+                "tren masih cenderung naik.")
+    if ma_fast > ma_slow:
+        return ("Rata-rata jangka pendek mulai lebih tinggi dari jangka panjang, "
+                "ada potensi tren naik.")
+    if ma_fast < ma_slow and price < ma_fast:
+        return ("Rata-rata jangka pendek di bawah rata-rata jangka panjang, "
+                "tren masih cenderung turun.")
+    if ma_fast < ma_slow:
+        return ("Rata-rata jangka pendek di bawah rata-rata jangka panjang, "
+                "hati-hati tren masih lemah.")
+    return "Rata-rata harga jangka pendek dan panjang hampir sejajar, pasar belum punya arah jelas."
+
+
+def _volume_pemula(volume_ratio: float) -> str:
+    """Penjelasan volume dalam bahasa awam."""
+    if volume_ratio > 2.0:
+        return (f"{volume_ratio:.1f}x rata-rata — Volume sangat tinggi, "
+                f"banyak yang sedang transaksi, pergerakan harga lebih meyakinkan.")
+    if volume_ratio > 1.5:
+        return (f"{volume_ratio:.1f}x rata-rata — Volume tinggi, "
+                f"antusiasme pasar cukup besar.")
+    if volume_ratio > 1.0:
+        return f"{volume_ratio:.1f}x rata-rata — Volume normal, tidak ada tanda khusus."
+    if volume_ratio > 0.5:
+        return (f"{volume_ratio:.1f}x rata-rata — Volume di bawah rata-rata, "
+                f"pergerakan harga kurang meyakinkan.")
+    return (f"{volume_ratio:.1f}x rata-rata — Volume sangat rendah, "
+            f"pergerakan harga bisa kurang valid.")
+
+
+def _trend_pemula(price: float, ma_fast: float, ma_slow: float, macd_hist: float) -> str:
+    """Tren dalam bahasa sederhana."""
+    if price > ma_fast > ma_slow and macd_hist > 0:
+        return "Naik 📈"
+    if price < ma_fast < ma_slow and macd_hist < 0:
+        return "Turun 📉"
+    if price > ma_fast:
+        return "Naik terbatas 📊"
+    if price < ma_fast:
+        return "Turun terbatas 📊"
+    return "Sideways (datar) ➡️"
+
+
+def _risiko_pemula(quality: str, signal_type: str) -> str:
+    """Kategori risiko untuk investor pemula."""
+    if signal_type == 'HOLD':
+        return "Sedang"
+    if quality == 'STRONG':
+        return "Rendah (sinyal kuat, tapi bukan tanpa risiko)"
+    if quality == 'MODERATE':
+        return "Sedang"
+    return "Tinggi (sinyal lemah, perlu kehati-hatian)"
+
+
+def _kesimpulan_pemula(signal_type: str, entry: float, sl: float, tp1: float) -> list:
+    """
+    Kesimpulan 'sudah punya' dan 'belum punya' dalam bahasa awam.
+    Returns: [sudah_punya, belum_punya]
+    """
+    if signal_type == 'BUY':
+        sudah = (f"Tahan posisi Anda. Tetap tenang dan jangan buru-buru jual. "
+                 f"Batas kerugian ada di sekitar Rp {sl:,.0f}.")
+        if entry and tp1:
+            belum = (f"Bisa pertimbangkan beli bertahap di sekitar Rp {entry:,.0f}, "
+                     f"target awal di Rp {tp1:,.0f}.")
+        else:
+            belum = "Tunggu harga turun ke area support sebelum beli."
+    elif signal_type == 'SELL':
+        sudah = (f"Pertimbangkan untuk lepas/jual posisi Anda. "
+                 f"Jika ragu, bisa jual sebagian dulu.")
+        if entry and sl:
+            belum = (f"Jangan buru-buru beli sekarang. "
+                     f"Tunggu sampai ada konfirmasi harga naik kembali di atas Rp {sl:,.0f}.")
+        else:
+            belum = "Tunda dulu pembelian sampai tren berubah jadi naik."
+    else:  # HOLD
+        sudah = "Tahan posisi, tidak ada alasan kuat untuk jual saat ini."
+        belum = "Belum ada sinyal jelas. Lebih baik tunggu konfirmasi dulu sebelum beli."
+    return [sudah, belum]
+
+
+def _alasan_pemula(data: Dict, signal: Dict) -> list:
+    """
+    Poin-poin alasan rekomendasi dalam bahasa awam.
+    Maksimal 4 poin.
+    """
+    reasons = []
+    signal_type = signal.get('signal', 'HOLD')
+    rsi = data.get('rsi', 50)
+    ma_fast = data.get('ma_fast', 0)
+    ma_slow = data.get('ma_slow', 0)
+    price = data.get('price', 0)
+    macd_hist = data.get('macd_hist', 0)
+    volume_ratio = data.get('volume_ratio', 1)
+    change = data.get('change', 0)
+    buy_score = signal.get('buy_score', 0)
+    sell_score = signal.get('sell_score', 0)
+
+    # Kekuatan beli vs jual
+    if signal_type == 'BUY':
+        if buy_score > sell_score:
+            reasons.append("Sinyal beli lebih kuat daripada sinyal jual.")
+        elif volume_ratio > 1.2:
+            reasons.append("Volume transaksi cukup tinggi, ada minat beli yang nyata.")
+        elif rsi < 50:
+            reasons.append("Tekanan jual sudah berkurang, ada peluang harga naik lagi.")
+    elif signal_type == 'SELL':
+        if sell_score > buy_score:
+            reasons.append("Sinyal jual lebih kuat daripada sinyal beli.")
+        elif volume_ratio > 1.2 and change < 0:
+            reasons.append("Penjualan sedang marak, tekanan jual cukup besar.")
+        elif rsi > 50:
+            reasons.append("Harga sudah terlalu tinggi relatif terhadap kondisi normalnya.")
+    else:  # HOLD
+        reasons.append("Sinyal beli dan jual seimbang, tidak ada yang dominan.")
+        if abs(change) < 1:
+            reasons.append("Perubahan harga hari ini kecil, pasar belum bergerak kuat.")
+
+    # Tren
+    if ma_fast > ma_slow and signal_type == 'BUY':
+        reasons.append("Tren kenaikan harga masih terlihat.")
+    elif ma_fast < ma_slow and signal_type == 'SELL':
+        reasons.append("Tren penurunan harga masih dominan.")
+    elif ma_fast > ma_slow and signal_type == 'HOLD':
+        reasons.append("Tren jangka pendek masih naik, tapi sinyal belum cukup kuat.")
+
+    # Volume
+    if volume_ratio > 1.5:
+        reasons.append(f"Volume tinggi ({volume_ratio:.1f}x) — pergerakan lebih meyakinkan.")
+    elif volume_ratio < 0.7:
+        reasons.append(f"Volume rendah ({volume_ratio:.1f}x) — kenaikan/penurunan kurang meyakinkan.")
+
+    # RSI context
+    if rsi < 30 and signal_type == 'BUY':
+        reasons.append("RSI rendah, harga berpotensi naik setelah tekanan jual mereda.")
+    elif rsi > 70 and signal_type == 'SELL':
+        reasons.append("RSI tinggi, harga sudah panas dan rentan koreksi.")
+
+    # Limit to 4
+    return reasons[:4]
+
+
+def _intinya_pemula(signal_type: str, data: Dict, sentiment: Dict) -> str:
+    """
+    Ringkasan 2 kalimat untuk investor awam.
+    """
+    rsi = data.get('rsi', 50)
+    change = data.get('change', 0)
+
+    if signal_type == 'BUY':
+        base = "Sinyal menunjukkan peluang beli yang cukup menarik."
+        if sentiment and sentiment.get('overall') == 'positive':
+            base = ("Walaupun ada beberapa berita positif, "
+                    "indikator teknikal masih menunjukkan peluang beli yang menarik. "
+                    "Tetap gunakan batas kerugian yang sudah ditentukan.")
+        elif rsi < 35:
+            base = ("Tekanan jual sudah berlebihan sehingga ada peluang harga naik lagi. "
+                    "Tetap disiplin dengan target harga dan batas kerugian.")
+        else:
+            base = ("Sinyal beli cukup kuat dan didukung data teknikal. "
+                    "Selalu gunakan batas kerugian agar modal Anda tetap aman.")
+    elif signal_type == 'SELL':
+        if rsi > 65:
+            base = ("Harga sudah terlalu tinggi dan rentan koreksi. "
+                    "Sebaiknya lepas posisi atau jangan menambah pembelian dulu.")
+        else:
+            base = ("Tekanan jual masih lebih kuat dari pembeli. "
+                    "Lebih baik menunggu sampai tren berubah jadi naik lagi.")
+    else:
+        if sentiment and sentiment.get('overall') == 'positive':
+            base = ("Ada sentimen positif dari berita, tapi indikator teknikal belum konfirmasi. "
+                    "Lebih baik tunggu sampai sinyal jelas muncul.")
+        elif abs(change) < 1:
+            base = ("Pasar sedang tenang dan belum ada pergerakan berarti. "
+                    "Pantau perkembangannya sebelum ambil keputusan.")
+        else:
+            base = ("Belum ada sinyal yang cukup kuat untuk beli atau jual. "
+                    "Tunggu konfirmasi dari pergerakan harga berikutnya.")
+    return base
+
+
+def format_analisa_pemula(
+    ticker: str,
+    name: str,
+    data: Dict,
+    signal: Dict,
+    sentiment: Dict = None,
+    timeframe: str = '5 Menit',
+) -> str:
+    """
+    Format analisa saham untuk investor pemula.
+    Bahasa sederhana, jelaskan indikator, hindari jargon teknikal.
+
+    Args:
+        ticker: kode saham (mis. 'BBCA')
+        name: nama perusahaan (mis. 'Bank Central Asia')
+        data: dict indikator teknikal (price, rsi, ma_fast, ma_slow, macd_hist, volume_ratio, change, sr, dst.)
+        signal: dict sinyal (signal, entry, tp1, tp2, tp3, sl, quality, buy_score, sell_score, dst.)
+        sentiment: dict sentimen berita (overall, emoji, summary, positive_count, negative_count, all_headlines)
+        timeframe: label timeframe untuk ditampilkan
+
+    Returns:
+        String berformat Telegram yang siap dikirim.
+    """
+    # Defensive defaults
+    if data is None:
+        data = {}
+    if signal is None:
+        signal = {'signal': 'HOLD', 'entry': 0, 'tp1': 0, 'tp2': 0, 'tp3': 0, 'sl': 0,
+                  'buy_score': 0, 'sell_score': 0, 'quality': 'WEAK'}
+
+    price = data.get('price') or 0
+    rsi = data.get('rsi') or 50
+    change = data.get('change') or 0
+    ma_fast = data.get('ma_fast') or price
+    ma_slow = data.get('ma_slow') or price
+    macd_hist = data.get('macd_hist') or 0
+    volume_ratio = data.get('volume_ratio') or 1.0
+
+    signal_type = signal.get('signal', 'HOLD')
+    quality = signal.get('quality', 'WEAK')
+    entry = signal.get('entry') or price
+    tp1 = signal.get('tp1') or 0
+    tp2 = signal.get('tp2') or 0
+    tp3 = signal.get('tp3') or 0
+    sl = signal.get('sl') or 0
+
+    # Header emoji
+    if signal_type == 'BUY':
+        header_emoji = "🟢"
+    elif signal_type == 'SELL':
+        header_emoji = "🔴"
+    else:
+        header_emoji = "🟡"
+
+    lines = []
+    # === HEADER ===
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 Analisa {escape_md(ticker)} ({escape_md(name)})")
+    lines.append("")
+    lines.append(f"{header_emoji} {signal_type}")
+    lines.append(f"💰 Harga: Rp {price:,.0f} ({change:+.2f}%)")
+    lines.append(f"⏱️ Timeframe: {timeframe}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # === KESIMPULAN ===
+    sudah, belum = _kesimpulan_pemula(signal_type, entry, sl, tp1)
+    risiko = _risiko_pemula(quality, signal_type)
+    lines.append("")
+    lines.append("💡 Kesimpulan")
+    lines.append(f"• Sudah punya → {sudah}")
+    lines.append(f"• Belum punya → {belum}")
+    lines.append(f"• Risiko → {risiko}")
+
+    # === KONDISI SAAT INI ===
+    trend = _trend_pemula(price, ma_fast, ma_slow, macd_hist)
+    lines.append("")
+    lines.append("📈 Kondisi Saat Ini")
+    lines.append(f"• Trend: {trend}")
+    lines.append(f"• RSI: {_rsi_pemula(rsi)}")
+    lines.append(f"• MA: {_ma_pemula(price, ma_fast, ma_slow)}")
+    lines.append(f"• Volume: {_volume_pemula(volume_ratio)}")
+
+    # === TARGET HARGA ===
+    lines.append("")
+    lines.append("💰 Target Harga")
+    lines.append(f"• Entry: Rp {entry:,.0f}" if entry else "• Entry: -")
+    lines.append(f"• TP1: Rp {tp1:,.0f}" if tp1 else "• TP1: -")
+    lines.append(f"• TP2: Rp {tp2:,.0f}" if tp2 else "• TP2: -")
+    lines.append(f"• TP3: Rp {tp3:,.0f}" if tp3 else "• TP3: -")
+    lines.append(f"• Stop Loss: Rp {sl:,.0f}" if sl else "• Stop Loss: -")
+
+    # === AREA PENTING (Support / Resistance) ===
+    sr = data.get('sr') or {}
+    nearest_support = (sr.get('nearest_support') or {}) if sr else {}
+    nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
+    is_sell = signal_type == 'SELL'
+
+    sup_level = nearest_support.get('level') or 0
+    res_level = nearest_resistance.get('level') or 0
+
+    # Fallback: untuk SELL support = TP1, resistance = SL; untuk BUY support = SL, resistance = TP1
+    if not sup_level:
+        sup_level = signal.get('tp1') if is_sell else signal.get('sl')
+    if not res_level:
+        res_level = signal.get('sl') if is_sell else signal.get('tp1')
+
+    lines.append("")
+    lines.append("📍 Area Penting")
+    if sup_level:
+        lines.append(f"• Support: Rp {sup_level:,.0f}")
+        lines.append("  (Area yang berpotensi menahan penurunan)")
+    else:
+        lines.append("• Support: -")
+    if res_level:
+        lines.append(f"• Resistance: Rp {res_level:,.0f}")
+        lines.append("  (Area yang berpotensi menahan kenaikan)")
+    else:
+        lines.append("• Resistance: -")
+
+    # === KENAPA REKOMENDASINYA ... ===
+    reasons = _alasan_pemula(data, signal)
+    lines.append("")
+    lines.append(f"🤖 Kenapa rekomendasinya {signal_type}?")
+    if reasons:
+        for r in reasons:
+            lines.append(f"• {r}")
+    else:
+        lines.append("• Belum ada indikator yang cukup kuat untuk satu arah.")
+
+    # === SENTIMEN BERITA ===
+    if sentiment and isinstance(sentiment, dict) and sentiment.get('headline_count', 0) > 0:
+        overall = (sentiment.get('overall') or 'netral').lower()
+        if overall == 'positive':
+            sent_emoji = "🟢 Positif"
+        elif overall == 'negative':
+            sent_emoji = "🔴 Negatif"
+        else:
+            sent_emoji = "🟡 Netral"
+
+        pos = sentiment.get('positive_count') or 0
+        neg = sentiment.get('negative_count') or 0
+        total = sentiment.get('headline_count') or 0
+        neutral = max(0, total - pos - neg)
+
+        lines.append("")
+        lines.append("📰 Sentimen Berita")
+        lines.append(sent_emoji)
+        lines.append("")
+        lines.append("Ringkasan:")
+        lines.append(f"• {pos} berita positif")
+        lines.append(f"• {neg} berita negatif")
+        lines.append(f"• {neutral} berita netral")
+
+        all_hl = sentiment.get('all_headlines') or sentiment.get('top_headlines') or []
+        if all_hl:
+            lines.append("")
+            lines.append("Headline:")
+            for hl in all_hl[:3]:
+                if hl and isinstance(hl, dict):
+                    text = hl.get('headline') or ''
+                    if text:
+                        lines.append(f"• {escape_md(text)}")
+    else:
+        lines.append("")
+        lines.append("📰 Sentimen Berita")
+        lines.append("🟡 Netral")
+        lines.append("")
+        lines.append("Ringkasan:")
+        lines.append("• Belum ada berita yang signifikan.")
+
+    # === INTINYA ===
+    lines.append("")
+    lines.append("💬 Intinya")
+    lines.append(_intinya_pemula(signal_type, data, sentiment))
+
+    # === FOOTER ===
+    ts = datetime.now().strftime('%d %b %Y %H:%M')
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"⏰ {ts}")
+    lines.append("📊 IDX Saham - Ochobot")
+
+    return '\n'.join(lines)
+
