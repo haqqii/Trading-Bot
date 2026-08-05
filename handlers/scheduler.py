@@ -64,6 +64,30 @@ async def reset_stock_circuit_breaker(app):
         logger.error(f"[MARKET OPEN] Circuit breaker reset failed: {e}")
 
 
+async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 3, delay: int = 2, **kwargs):
+    """Send message via bot with retry on timeout. Returns True if successful."""
+    from telegram.error import TimedOut
+    for attempt in range(retries):
+        try:
+            await asyncio.wait_for(
+                bot.send_message(chat_id=chat_id, text=text, **kwargs),
+                timeout=60
+            )
+            return True
+        except TimedOut:
+            if attempt < retries - 1:
+                logger.warning(f"Send timeout (attempt {attempt+1}/{retries}), retrying in {delay}s")
+                await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"Send failed after {retries} attempts")
+                return False
+        except Exception as e:
+            logger.error(f"Send error: {e}")
+            return False
+    return False
+
+
 def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str = '3d'):
     """
     Get stock data with stale cache fallback.
@@ -501,14 +525,19 @@ async def check_bsjp_signals(app):
                     msg += "💡 Beli jam 14-16, jual besok pagi\n"
                     msg += "⚠️ Trading risiko tanggung sendiri"
 
-                    await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                    logger.info(f"[BSJP] Sent {len(bsjp_signals)} signals to user {uid}")
+                    # Use retry helper for reliable delivery
+                    sent = await _send_bot_with_retry(app.bot, int(uid), msg, parse_mode='Markdown')
+                    if sent:
+                        logger.info(f"[BSJP] Sent {len(bsjp_signals)} signals to user {uid}")
+                    else:
+                        logger.error(f"[BSJP] Failed to send to user {uid} after retries")
 
                 except Exception as e:
                     logger.error(f"Failed to send BSJP to user {uid}: {e}")
 
-            # Mark as sent today AFTER all users processed (only if we actually sent something)
-            if bsjp_signals:
+            # Mark as sent today ONLY if signals were found AND we have users to send to
+            # (Don't mark if all sends failed - will retry next cycle)
+            if bsjp_signals and bsjp_users:
                 _mark_sent_today(BSJP_SENT_FILE)
                 logger.info("[BSJP] Marked as sent for today")
 
