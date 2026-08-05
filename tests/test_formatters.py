@@ -576,7 +576,7 @@ class TestFormatAnalisaPemula:
         assert 'BUY' in result
         assert 'Rp 100' in result
         assert 'Kesimpulan' in result
-        assert 'Kondisi Saat Ini' in result
+        assert 'Kondisi Pasar' in result
         assert 'Target Harga' in result
         assert 'Area Penting' in result
         assert 'Intinya' in result
@@ -717,9 +717,9 @@ class TestFormatAnalisaPemula:
             self._base_signal(),
         )
         kesimpulan_idx = result.find('💡 Kesimpulan')
-        kondisi_idx = result.find('� Kondisi Saat Ini')
+        kondisi_idx = result.find('� Kondisi Pasar')
         kesimpulan_block = result[kesimpulan_idx:kondisi_idx]
-        bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('└')]
+        bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('•')]
         assert len(bullets) >= 3, f"Kesimpulan harus punya minimal 3 poin, dapat {len(bullets)}"
 
     def test_target_harga_includes_entry_tp_sl(self):
@@ -742,7 +742,7 @@ class TestFormatAnalisaPemula:
         kenapa_idx = result.find('🤖 Kenapa rekomendasinya')
         sentimen_idx = result.find('📰 Sentimen Berita')
         kenapa_block = result[kenapa_idx:sentimen_idx]
-        bullets = [l for l in kenapa_block.split('\n') if l.strip().startswith('└')]
+        bullets = [l for l in kenapa_block.split('\n') if l.strip().startswith('•')]
         assert len(bullets) <= 4, f"Alasan maksimal 4 poin, dapat {len(bullets)}"
 
     def test_footer_present(self):

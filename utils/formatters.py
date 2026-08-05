@@ -1370,27 +1370,27 @@ def format_analisa_pemula(
     risiko = _risiko_pemula(quality, signal_type)
     lines.append("")
     lines.append("💡 Kesimpulan")
-    lines.append(f"└ Sudah punya → {sudah}")
-    lines.append(f"└ Belum punya → {belum}")
-    lines.append(f"└ Risiko → {risiko}")
+    lines.append(f"• Sudah punya → {sudah}")
+    lines.append(f"• Belum punya → {belum}")
+    lines.append(f"• Risiko → {risiko}")
 
     # === KONDISI SAAT INI ===
     trend = _trend_pemula(price, ma_fast, ma_slow, macd_hist)
     lines.append("")
-    lines.append("� Kondisi Saat Ini")
-    lines.append(f"└ Trend: {trend}")
-    lines.append(f"└ RSI: {_rsi_pemula(rsi)}")
-    lines.append(f"└ MA: {_ma_pemula(price, ma_fast, ma_slow)}")
-    lines.append(f"└ Volume: {_volume_pemula(volume_ratio)}")
+    lines.append("📊 Kondisi Pasar")
+    lines.append(f"• Trend: {trend}")
+    lines.append(f"• RSI: {_rsi_pemula(rsi)}")
+    lines.append(f"• MA: {_ma_pemula(price, ma_fast, ma_slow)}")
+    lines.append(f"• Volume: {_volume_pemula(volume_ratio)}")
 
     # === TARGET HARGA ===
     lines.append("")
     lines.append("💰 Target Harga")
-    lines.append(f"└ Entry: Rp {entry:,.0f}" if entry else "└ Entry: -")
-    lines.append(f"└ TP1: Rp {tp1:,.0f}" if tp1 else "└ TP1: -")
-    lines.append(f"└ TP2: Rp {tp2:,.0f}" if tp2 else "└ TP2: -")
-    lines.append(f"└ TP3: Rp {tp3:,.0f}" if tp3 else "└ TP3: -")
-    lines.append(f"└ Stop Loss: Rp {sl:,.0f}" if sl else "└ Stop Loss: -")
+    lines.append(f"• Entry: Rp {entry:,.0f}" if entry else "• Entry: -")
+    lines.append(f"• TP1: Rp {tp1:,.0f}" if tp1 else "• TP1: -")
+    lines.append(f"• TP2: Rp {tp2:,.0f}" if tp2 else "• TP2: -")
+    lines.append(f"• TP3: Rp {tp3:,.0f}" if tp3 else "• TP3: -")
+    lines.append(f"• Stop Loss: Rp {sl:,.0f}" if sl else "• Stop Loss: -")
 
     # === AREA PENTING (Support / Resistance) ===
     sr = data.get('sr') or {}
@@ -1408,17 +1408,17 @@ def format_analisa_pemula(
         res_level = signal.get('sl') if is_sell else signal.get('tp1')
 
     lines.append("")
-    lines.append("� Area Penting")
+    lines.append("📍 Area Penting")
     if sup_level:
-        lines.append(f"└ Support: Rp {sup_level:,.0f}")
+        lines.append(f"• Support: Rp {sup_level:,.0f}")
         lines.append("  (Area yang berpotensi menahan penurunan)")
     else:
-        lines.append("└ Support: -")
+        lines.append("• Support: -")
     if res_level:
-        lines.append(f"└ Resistance: Rp {res_level:,.0f}")
+        lines.append(f"• Resistance: Rp {res_level:,.0f}")
         lines.append("  (Area yang berpotensi menahan kenaikan)")
     else:
-        lines.append("└ Resistance: -")
+        lines.append("• Resistance: -")
 
     # === KENAPA REKOMENDASINYA ... ===
     reasons = _alasan_pemula(data, signal)
@@ -1426,9 +1426,9 @@ def format_analisa_pemula(
     lines.append(f"🤖 Kenapa rekomendasinya {signal_type}?")
     if reasons:
         for r in reasons:
-            lines.append(f"└ {r}")
+            lines.append(f"• {r}")
     else:
-        lines.append("└ Belum ada indikator yang cukup kuat untuk satu arah.")
+        lines.append("• Belum ada indikator yang cukup kuat untuk satu arah.")
 
     # === SENTIMEN BERITA ===
     if sentiment and isinstance(sentiment, dict) and sentiment.get('headline_count', 0) > 0:
@@ -1450,9 +1450,9 @@ def format_analisa_pemula(
         lines.append(sent_emoji)
         lines.append("")
         lines.append("Ringkasan:")
-        lines.append(f"└ {pos} berita positif")
-        lines.append(f"└ {neg} berita negatif")
-        lines.append(f"└ {neutral} berita netral")
+        lines.append(f"• {pos} berita positif")
+        lines.append(f"• {neg} berita negatif")
+        lines.append(f"• {neutral} berita netral")
 
         all_hl = sentiment.get('all_headlines') or sentiment.get('top_headlines') or []
         if all_hl:
@@ -1462,14 +1462,14 @@ def format_analisa_pemula(
                 if hl and isinstance(hl, dict):
                     text = hl.get('headline') or ''
                     if text:
-                        lines.append(f"└ {escape_md(text)}")
+                        lines.append(f"• {escape_md(text)}")
     else:
         lines.append("")
         lines.append("📰 Sentimen Berita")
         lines.append("🟡 Netral")
         lines.append("")
         lines.append("Ringkasan:")
-        lines.append("└ Belum ada berita yang signifikan.")
+        lines.append("• Belum ada berita yang signifikan.")
 
     # === INTINYA ===
     lines.append("")
