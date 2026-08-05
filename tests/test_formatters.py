@@ -719,7 +719,7 @@ class TestFormatAnalisaPemula:
         kesimpulan_idx = result.find('💡 Kesimpulan')
         kondisi_idx = result.find('� Kondisi Pasar')
         kesimpulan_block = result[kesimpulan_idx:kondisi_idx]
-        bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('•')]
+        bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('└')]
         assert len(bullets) >= 3, f"Kesimpulan harus punya minimal 3 poin, dapat {len(bullets)}"
 
     def test_target_harga_includes_entry_tp_sl(self):
@@ -742,7 +742,7 @@ class TestFormatAnalisaPemula:
         kenapa_idx = result.find('🤖 Kenapa rekomendasinya')
         sentimen_idx = result.find('📰 Sentimen Berita')
         kenapa_block = result[kenapa_idx:sentimen_idx]
-        bullets = [l for l in kenapa_block.split('\n') if l.strip().startswith('•')]
+        bullets = [l for l in kenapa_block.split('\n') if l.strip().startswith('└')]
         assert len(bullets) <= 4, f"Alasan maksimal 4 poin, dapat {len(bullets)}"
 
     def test_footer_present(self):
