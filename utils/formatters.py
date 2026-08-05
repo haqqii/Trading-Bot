@@ -1089,19 +1089,31 @@ def _rsi_pemula(rsi: float) -> str:
 
 def _ma_pemula(price: float, ma_fast: float, ma_slow: float) -> str:
     """
-    Penjelasan MA dalam bahasa awam + nilai numerik. Tidak pakai istilah 'Golden Cross' / 'Death Cross'.
+    Penjelasan MA dalam bahasa awam dengan format operator.
+    Tidak pakai istilah 'Golden Cross' / 'Death Cross'.
+    Format: 'Rp{fast} <operator> Rp{slow}' + penjelasan konsisten.
     """
-    fp = fmt_price_dual if False else lambda v: f"Rp {v:,.0f}"
-    values = f"MA Pendek: {fp(ma_fast)} | MA Panjang: {fp(ma_slow)} - "
-    if ma_fast > ma_slow and price > ma_fast:
-        return (values + "MA pendek di atas MA panjang, tren naik.")
-    if ma_fast > ma_slow:
-        return (values + "MA pendek mulai di atas MA panjang, ada potensi tren naik.")
-    if ma_fast < ma_slow and price < ma_fast:
-        return (values + "MA pendek di bawah MA panjang, tren turun.")
-    if ma_fast < ma_slow:
-        return (values + "MA pendek di bawah MA panjang, tren masih lemah.")
-    return "Rata-rata harga jangka pendek dan panjang hampir sejajar, pasar belum punya arah jelas."
+    fp = lambda v: f"Rp{v:,.0f}"
+    fast_str = fp(ma_fast)
+    slow_str = fp(ma_slow)
+
+    # Tentukan operator berdasarkan selisih
+    diff = abs(ma_fast - ma_slow)
+    threshold = ma_slow * 0.001  # 0.1% dari MA slow sebagai ambang "≈"
+
+    if diff <= threshold:
+        operator = "≈"
+        explanation = "Pergerakan harga masih relatif datar sehingga belum menunjukkan arah tren yang jelas."
+    elif ma_fast > ma_slow:
+        operator = ">"
+        explanation = ("Harga dalam beberapa waktu terakhir mulai lebih tinggi dibanding tren sebelumnya, "
+                       "sehingga peluang kenaikan mulai terlihat.")
+    else:  # ma_fast < ma_slow
+        operator = "<"
+        explanation = ("Harga dalam beberapa waktu terakhir masih lebih rendah dibanding tren sebelumnya, "
+                       "sehingga tren masih cenderung turun.")
+
+    return f"Rp{fast_str} {operator} Rp{slow_str}\n  {explanation}"
 
 
 def _volume_pemula(volume_ratio: float) -> str:
