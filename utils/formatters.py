@@ -1235,40 +1235,50 @@ def _alasan_pemula(data: Dict, signal: Dict) -> list:
 
 def _intinya_pemula(signal_type: str, data: Dict, sentiment: Dict) -> str:
     """
-    Ringkasan 2 kalimat untuk investor awam.
+    Ringkasan actionable untuk investor awam - saran konkret yang bisa langsung diambil.
     """
     rsi = data.get('rsi', 50)
     change = data.get('change', 0)
 
     if signal_type == 'BUY':
-        base = "Sinyal menunjukkan peluang beli yang cukup menarik."
-        if sentiment and sentiment.get('overall') == 'positive':
-            base = ("Walaupun ada beberapa berita positif, "
-                    "indikator teknikal masih menunjukkan peluang beli yang menarik. "
-                    "Tetap gunakan batas kerugian yang sudah ditentukan.")
-        elif rsi < 35:
-            base = ("Tekanan jual sudah berlebihan sehingga ada peluang harga naik lagi. "
-                    "Tetap disiplin dengan target harga dan batas kerugian.")
+        if rsi < 30:
+            base = ("Harga sudah sangat jenuh jual dan berpotensi反弹. "
+                    "Jika tertarik, pertimbangkan beli bertahap dengan target profit "
+                    "yang jelas dan stop loss untuk membatasi risiko.")
+        elif sentiment and sentiment.get('overall') == 'positive':
+            base = ("Ada sinyal beli yang didukung sentimen positif. "
+                    "Pertimbangkan masuk bertahap, tetapkan batas kerugian, "
+                    "dan jangan all-in satu posisi sekaligus.")
+        elif rsi < 50:
+            base = ("Tren mulai menunjukkan tanda pembalikan naik. "
+                    "Jika belum memiliki saham ini, bisa pertimbangkan beli sebagian "
+                    "dengan target profit dan stop loss yang jelas.")
         else:
-            base = ("Sinyal beli cukup kuat dan didukung data teknikal. "
-                    "Selalu gunakan batas kerugian agar modal Anda tetap aman.")
+            base = ("Sinyal beli cukup menarik dengan momentum yang mulai positif. "
+                    "Cocok untuk beli bertahap sesuai toleransi risiko Anda. "
+                    "Selalu gunakan stop loss untuk melindungi modal.")
     elif signal_type == 'SELL':
-        if rsi > 65:
-            base = ("Harga sudah terlalu tinggi dan rentan koreksi. "
-                    "Sebaiknya lepas posisi atau jangan menambah pembelian dulu.")
+        if rsi > 70:
+            base = ("Harga sudah sangat tinggi dan rentan koreksi tajam. "
+                    "Jika memiliki saham ini, pertimbangkan lepas posisi atau "
+                    "ketatkan stop loss untuk mengunci keuntungan.")
         else:
-            base = ("Tekanan jual masih lebih kuat dari pembeli. "
-                    "Lebih baik menunggu sampai tren berubah jadi naik lagi.")
+            base = ("Harga masih berada dalam tren turun dan belum ada tanda pembalikan "
+                    "yang kuat. Jika belum memiliki saham ini, lebih baik menunggu "
+                    "konfirmasi sebelum membeli. Jika sudah punya, pertimbangkan lepas posisi.")
     else:
         if sentiment and sentiment.get('overall') == 'positive':
             base = ("Ada sentimen positif dari berita, tapi indikator teknikal belum konfirmasi. "
-                    "Lebih baik tunggu sampai sinyal jelas muncul.")
+                    "Pantau perkembangan, tunggu sinyal teknis yang lebih jelas, "
+                    "jangan terburu-buru beli hanya karena berita positif saja.")
         elif abs(change) < 1:
-            base = ("Pasar sedang tenang dan belum ada pergerakan berarti. "
-                    "Pantau perkembangannya sebelum ambil keputusan.")
+            base = ("Pasar sedang sideways dan belum ada arah yang jelas. "
+                    "Lebih baik menunggu breakout atau konfirmasi momentum "
+                    "sebelum ambil posisi.")
         else:
             base = ("Belum ada sinyal yang cukup kuat untuk beli atau jual. "
-                    "Tunggu konfirmasi dari pergerakan harga berikutnya.")
+                    "Tetap pantau dan tunggu konfirmasi dari pergerakan harga "
+                    "berikutnya sebelum ambil keputusan.")
     return base
 
 
