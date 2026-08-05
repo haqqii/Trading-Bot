@@ -1383,14 +1383,43 @@ def format_analisa_pemula(
     lines.append(f"• MA: {_ma_pemula(price, ma_fast, ma_slow)}")
     lines.append(f"• Volume: {_volume_pemula(volume_ratio)}")
 
-    # === TARGET HARGA ===
+    # Pre-compute S/R for Rencana Trading section
+    sr = data.get('sr') or {}
+    nearest_support = (sr.get('nearest_support') or {}) if sr else {}
+    nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
+    is_sell = signal_type == 'SELL'
+
+    # === RENCANA TRADING (conditional based on signal type) ===
     lines.append("")
-    lines.append("💰 Target Harga")
-    lines.append(f"• Entry: Rp {entry:,.0f}" if entry else "• Entry: -")
-    lines.append(f"• TP1: Rp {tp1:,.0f}" if tp1 else "• TP1: -")
-    lines.append(f"• TP2: Rp {tp2:,.0f}" if tp2 else "• TP2: -")
-    lines.append(f"• TP3: Rp {tp3:,.0f}" if tp3 else "• TP3: -")
-    lines.append(f"• Stop Loss: Rp {sl:,.0f}" if sl else "• Stop Loss: -")
+    lines.append("💰 Rencana Trading")
+    if signal_type == 'BUY':
+        lines.append("• Area Buy")
+        lines.append(f"  Rp {entry:,.0f}" if entry else "  -")
+        lines.append("• Target Profit (TP)")
+        lines.append(f"  TP1: Rp {tp1:,.0f}" if tp1 else "  TP1: -")
+        lines.append(f"  TP2: Rp {tp2:,.0f}" if tp2 else "  TP2: -")
+        lines.append(f"  TP3: Rp {tp3:,.0f}" if tp3 else "  TP3: -")
+        lines.append("• Batas Rugi")
+        lines.append(f"  Stop Loss: Rp {sl:,.0f}" if sl else "  Stop Loss: -")
+    elif signal_type == 'SELL':
+        lines.append(f"• Harga Saat Ini: Rp {entry or price:,.0f}")
+        lines.append("• Area Buy Kembali")
+        resistance_floor = nearest_resistance.get('level') or price * 1.05
+        lines.append(f"  Di atas Rp {resistance_floor:,.0f} (setelah ada konfirmasi)")
+        lines.append("• Target Profit (TP)")
+        lines.append(f"  TP1: Rp {tp1:,.0f}" if tp1 else "  TP1: -")
+        lines.append(f"  TP2: Rp {tp2:,.0f}" if tp2 else "  TP2: -")
+        lines.append(f"  TP3: Rp {tp3:,.0f}" if tp3 else "  TP3: -")
+        lines.append("• Batas Rugi")
+        lines.append(f"  Stop Loss: Rp {sl:,.0f}" if sl else "  Stop Loss: -")
+    else:  # HOLD
+        lines.append(f"• Harga Saat Ini: Rp {price:,.0f}")
+        lines.append("• Area Tambah Posisi")
+        lines.append(f"  Di bawah Rp {entry:,.0f}" if entry else "  -")
+        lines.append("• Target Profit (TP)")
+        lines.append(f"  TP: Rp {tp1:,.0f}" if tp1 else "  TP: -")
+        lines.append("• Batas Rugi")
+        lines.append(f"  Stop Loss: Rp {sl:,.0f}" if sl else "  Stop Loss: -")
 
     # === AREA PENTING (Support / Resistance) ===
     sr = data.get('sr') or {}

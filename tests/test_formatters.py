@@ -577,7 +577,7 @@ class TestFormatAnalisaPemula:
         assert 'Rp 100' in result
         assert 'Kesimpulan' in result
         assert 'Kondisi Saat Ini' in result
-        assert 'Target Harga' in result
+        assert 'Rencana Trading' in result
         assert 'Area Penting' in result
         assert 'Intinya' in result
 
@@ -722,15 +722,27 @@ class TestFormatAnalisaPemula:
         bullets = [l for l in kesimpulan_block.split('\n') if l.strip().startswith('•')]
         assert len(bullets) >= 3, f"Kesimpulan harus punya minimal 3 poin, dapat {len(bullets)}"
 
-    def test_target_harga_includes_entry_tp_sl(self):
-        """Target harga section includes Entry, TP1/2/3, Stop Loss."""
+    def test_rencana_trading_buy_includes_area_tp_sl(self):
+        """Rencana Trading for BUY includes Area Buy, TP, Stop Loss."""
         result = format_analisa_pemula(
             'BBCA', 'BBCA',
             self._base_data(),
             self._base_signal(),
         )
-        for label in ['Entry:', 'TP1:', 'TP2:', 'TP3:', 'Stop Loss:']:
-            assert label in result, f"Target Harga harus memuat '{label}'"
+        for label in ['Area Buy', 'TP1:', 'TP2:', 'TP3:', 'Stop Loss:']:
+            assert label in result, f"Buy harus memuat '{label}'"
+
+    def test_rencana_trading_sell_shows_tp_only(self):
+        """Rencana Trading for SELL shows TP not Entry."""
+        result = format_analisa_pemula(
+            'SLIS', 'SLIS',
+            self._base_data(),
+            self._base_signal(signal='SELL', sell_score=80, buy_score=10),
+        )
+        assert 'Entry:' not in result, "SELL tidak boleh menampilkan Entry"
+        assert 'Area Buy Kembali' in result
+        assert 'TP1:' in result
+        assert 'Stop Loss:' in result
 
     def test_alasan_max_4_points(self):
         """Alasan rekomendasi section has at most 4 bullets."""
