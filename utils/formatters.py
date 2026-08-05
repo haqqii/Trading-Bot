@@ -1010,11 +1010,19 @@ def format_analisa_simple(
     # Get resistance for confirmation levels
     sr = data.get('sr') or {}
     nearest_resistance = (sr.get('nearest_resistance') or {}) if sr else {}
-    resistance_level = nearest_resistance.get('level') or (tp1 if tp1 and tp1 > 0 else price * 1.05)
+    # For SL we always need price ABOVE current (resistance). Use 5% above as fallback
+    resistance_level = nearest_resistance.get('level') or price * 1.05
+    # Make sure resistance is above current price
+    if resistance_level <= price:
+        resistance_level = price * 1.05
 
-    # Get support for SL
+    # Get support for TP
     nearest_support = (sr.get('nearest_support') or {}) if sr else {}
-    support_level = nearest_support.get('level') or (sl if sl and sl > 0 else price * 0.95)
+    # For TP we always need price BELOW current (support). Use 5% below as fallback
+    support_level = nearest_support.get('level') or price * 0.95
+    # Make sure support is below current price
+    if support_level >= price:
+        support_level = price * 0.95
 
     if signal_type == 'BUY':
         lines.append(f"  • Sudah punya posisi: Hold, dengan Stop Loss di bawah {fp(support_level)}")
