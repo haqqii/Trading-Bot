@@ -581,6 +581,7 @@ def format_unified_crypto_notification(
     # Final line
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
+    lines.append("")
     lines.append(f"⏰ {ts}")
     lines.append("₿ Crypto - Ochobot")
 
@@ -1055,6 +1056,7 @@ def format_analisa_simple(
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
+    lines.append("")
     lines.append(f"⏰ {ts}")
     if is_crypto:
         lines.append("₿ Crypto - Ochobot")
@@ -1481,6 +1483,7 @@ def format_analisa_pemula(
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
+    lines.append("")
     lines.append(f"⏰ {ts}")
     lines.append("📊 IDX Saham - Ochobot")
 
