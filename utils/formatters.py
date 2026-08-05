@@ -1113,7 +1113,7 @@ def _ma_pemula(price: float, ma_fast: float, ma_slow: float) -> str:
         explanation = ("Harga dalam beberapa waktu terakhir masih lebih rendah dibanding tren sebelumnya, "
                        "sehingga tren masih cenderung turun.")
 
-    return f"Rp{fast_str} {operator} Rp{slow_str}\n  {explanation}"
+    return f"{fast_str} {operator} {slow_str}\n  {explanation}"
 
 
 def _volume_pemula(volume_ratio: float) -> str:
