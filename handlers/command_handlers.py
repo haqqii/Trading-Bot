@@ -40,14 +40,14 @@ def _strip_markdown_chars(text: str) -> str:
     return out
 
 
-async def _send_with_retry(message, text, retries=3, delay=2, **kwargs):
+async def _send_with_retry(message, text, retries=5, delay=3, **kwargs):
     """Send message with retry on timeout. Returns True if successful."""
     from telegram.error import TimedOut
     for attempt in range(retries):
         try:
             await asyncio.wait_for(
                 message.reply_text(text, **kwargs),
-                timeout=60
+                timeout=180
             )
             return True
         except TimedOut:
@@ -1153,10 +1153,10 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             update.message.reply_text(
                 f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
                 parse_mode='Markdown',
-                read_timeout=30,
-                write_timeout=30
+                read_timeout=120,
+                write_timeout=120
             ),
-            timeout=30
+            timeout=120
         )
         logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
     except Exception as reply_err:

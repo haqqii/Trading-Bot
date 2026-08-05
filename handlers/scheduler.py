@@ -64,14 +64,14 @@ async def reset_stock_circuit_breaker(app):
         logger.error(f"[MARKET OPEN] Circuit breaker reset failed: {e}")
 
 
-async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 3, delay: int = 2, **kwargs):
+async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, delay: int = 3, **kwargs):
     """Send message via bot with retry on timeout. Returns True if successful."""
     from telegram.error import TimedOut
     for attempt in range(retries):
         try:
             await asyncio.wait_for(
                 bot.send_message(chat_id=chat_id, text=text, **kwargs),
-                timeout=60
+                timeout=180
             )
             return True
         except TimedOut:

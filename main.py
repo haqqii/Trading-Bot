@@ -163,9 +163,9 @@ def main():
         app = (
             Application.builder()
             .token(BOT_TOKEN)
-            .read_timeout(60)
-            .write_timeout(60)
-            .connect_timeout(30)
+            .read_timeout(120)
+            .write_timeout(120)
+            .connect_timeout(60)
             .build()
         )
 
