@@ -1319,7 +1319,6 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # Stock analysis - use combined method for fallback support
             full_ticker = ticker + ".JK"
             ticker_known = ticker in ALL_STOCKS
-            name = ALL_STOCKS.get(ticker, ticker)
 
             # Run stock data fetch and news fetch in PARALLEL to speed up response
             d, sentiment = None, None
@@ -1334,7 +1333,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             async def fetch_news_async():
                 try:
-                    result = await asyncio.to_thread(news_service.get_stock_news, ticker, name)
+                    # stock_name is optional for news search (primary key is ticker)
+                    result = await asyncio.to_thread(news_service.get_stock_news, ticker, None)
                     if result and len(result) >= 2:
                         return result[1]
                 except Exception as e:
@@ -1352,6 +1352,13 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 except concurrent.futures.TimeoutError:
                     logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
                     d = None
+
+                # Get company name: from Yahoo (longName) > ALL_STOCKS (PT name) > ticker
+                name = None
+                if d:
+                    name = d.get('name') or ALL_STOCKS.get(ticker, ticker)
+                else:
+                    name = ALL_STOCKS.get(ticker, ticker)
 
                 # Also wait for news (may be slower but doesn't block result)
                 try:
