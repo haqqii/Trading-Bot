@@ -1328,10 +1328,17 @@ def format_analisa_pemula(
 
     lines = []
     # === HEADER ===
+    # Use full company name; if name == ticker or name empty, just show ticker
+    display_name = name if (name and name != ticker) else None
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"📊 Analisa {escape_md(ticker)} ({escape_md(name)})")
+    if display_name:
+        lines.append(f"📊 Analisa {escape_md(ticker)} ({escape_md(display_name)})")
+    else:
+        lines.append(f"📊 Analisa {escape_md(ticker)}")
     lines.append("")
-    lines.append(f"{header_emoji} {signal_type}")
+    # Signal with colored emoji and label
+    signal_label = signal_type if isinstance(signal_type, str) else 'HOLD'
+    lines.append(f"{header_emoji} Signal: {signal_label}")
     lines.append(f"💰 Harga: Rp {price:,.0f} ({change:+.2f}%)")
     lines.append(f"⏱️ Timeframe: {timeframe}")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
