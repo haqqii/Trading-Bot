@@ -580,9 +580,9 @@ def format_unified_crypto_notification(
 
     # Final line
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
     lines.append(f"⏰ {ts}")
     lines.append("₿ Crypto - Ochobot")
-    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
 
     return '\n'.join(lines)
 
@@ -1054,12 +1054,12 @@ def format_analisa_simple(
     ts = datetime.now().strftime('%d %b %Y %H:%M')
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
     lines.append(f"⏰ {ts}")
     if is_crypto:
         lines.append("₿ Crypto - Ochobot")
     else:
         lines.append("📊 IDX Saham - Ochobot")
-    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
 
     return '\n'.join(lines)
 
@@ -1451,9 +1451,9 @@ def format_analisa_pemula(
     ts = datetime.now().strftime('%d %b %Y %H:%M')
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
     lines.append(f"⏰ {ts}")
     lines.append("📊 IDX Saham - Ochobot")
-    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
 
     return '\n'.join(lines)
 
