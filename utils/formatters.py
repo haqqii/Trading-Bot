@@ -1471,7 +1471,7 @@ def format_analisa_pemula(
         lines.append("🟡 Netral")
         lines.append("")
         lines.append("Ringkasan:")
-        lines.append("• Belum ada berita yang signifikan.")
+        lines.append("└ Belum ada berita yang signifikan.")
 
     # === INTINYA ===
     lines.append("")
