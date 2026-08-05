@@ -1087,20 +1087,18 @@ def _rsi_pemula(rsi: float) -> str:
 
 def _ma_pemula(price: float, ma_fast: float, ma_slow: float) -> str:
     """
-    Penjelasan MA dalam bahasa awam. Tidak pakai istilah 'Golden Cross' / 'Death Cross'.
+    Penjelasan MA dalam bahasa awam + nilai numerik. Tidak pakai istilah 'Golden Cross' / 'Death Cross'.
     """
+    fp = fmt_price_dual if False else lambda v: f"Rp {v:,.0f}"
+    values = f"MA Pendek: {fp(ma_fast)} | MA Panjang: {fp(ma_slow)} - "
     if ma_fast > ma_slow and price > ma_fast:
-        return ("Rata-rata jangka pendek di atas rata-rata jangka panjang, "
-                "tren masih cenderung naik.")
+        return (values + "MA pendek di atas MA panjang, tren naik.")
     if ma_fast > ma_slow:
-        return ("Rata-rata jangka pendek mulai lebih tinggi dari jangka panjang, "
-                "ada potensi tren naik.")
+        return (values + "MA pendek mulai di atas MA panjang, ada potensi tren naik.")
     if ma_fast < ma_slow and price < ma_fast:
-        return ("Rata-rata jangka pendek di bawah rata-rata jangka panjang, "
-                "tren masih cenderung turun.")
+        return (values + "MA pendek di bawah MA panjang, tren turun.")
     if ma_fast < ma_slow:
-        return ("Rata-rata jangka pendek di bawah rata-rata jangka panjang, "
-                "hati-hati tren masih lemah.")
+        return (values + "MA pendek di bawah MA panjang, tren masih lemah.")
     return "Rata-rata harga jangka pendek dan panjang hampir sejajar, pasar belum punya arah jelas."
 
 
