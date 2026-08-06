@@ -1283,11 +1283,11 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Check if data has enough candles
-            if d.get('candles', 0) < 50:
+            if d.get('candles', 0) < 30:
                 source = d.get('source', 'unknown')
                 await update.message.reply_text(
                     f"❌ Data `{ticker}` tidak cukup untuk dianalisis\n\n"
-                    f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
+                    f"Hanya tersedia {d.get('candles', 0)} candle (minimum 30) dari sumber `{source}`.\n"
                     f"Crypto ini mungkin baru listing atau volume sangat rendah.",
                     parse_mode='Markdown'
                 )
