@@ -265,7 +265,11 @@ def calculate_volume_profile(high, low, close, volume, lookback=50):
 
         # Create price bins (divide into 20 zones)
         num_bins = 20
-        bin_size = price_range / num_bins
+        # Avoid divide by zero when all prices are the same
+        if price_range <= 0:
+            bin_size = 1.0
+        else:
+            bin_size = price_range / num_bins
 
         # Calculate volume at each price level
         bins = np.linspace(price_min, price_max, num_bins + 1)
