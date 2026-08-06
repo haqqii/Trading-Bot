@@ -1146,22 +1146,27 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ticker = args[0].upper()
     logger.info(f"[ANALISA] Replying immediately for {ticker}")
 
-    # Step 1: Send "Menganalisis..." message FIRST and wait for delivery
-    # This ensures proper message ordering for the user
-    try:
-        immediate_msg = await asyncio.wait_for(
-            update.message.reply_text(
-                f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
-                parse_mode='Markdown',
-                read_timeout=120,
-                write_timeout=120
-            ),
-            timeout=120
-        )
-        logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
-    except Exception as reply_err:
-        logger.warning(f"[ANALISA] Immediate reply failed: {reply_err}")
-        immediate_msg = None
+    # Step 1: Send "Menganalisis..." message FIRST (fire and forget)
+    # We don't block on this - if Telegram is slow, analysis can still proceed.
+    # Analysis result will include "Sedang diproses..." text so user knows.
+    async def send_immediate_reply():
+        try:
+            await asyncio.wait_for(
+                update.message.reply_text(
+                    f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
+                    parse_mode='Markdown',
+                    read_timeout=15,
+                    write_timeout=15
+                ),
+                timeout=15
+            )
+            logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
+        except Exception as reply_err:
+            logger.warning(f"[ANALISA] Immediate reply failed (non-blocking): {reply_err}")
+
+    # Fire immediate reply in background - don't block
+    asyncio.create_task(send_immediate_reply())
+    immediate_msg = None
 
     try:
         # Load crypto pairs if not loaded
