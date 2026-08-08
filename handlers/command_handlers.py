@@ -319,7 +319,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ["📊 Harga", "🎯 Sinyal"],
         ["⭐ Favorit", "🌙 BSJP"],
         ["💼 Portfolio", "🔔 Notifikasi"],
-        ["⏱️ TF", "₿ Crypto"]
+        ["⏱️ Timeframe", "₿ Crypto"]
     ]
     rm = ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False)
 
@@ -355,7 +355,7 @@ teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
 💼 Portfolio - Portfolio Anda
 🔔 Notifikasi - Setting notifikasi
 ₿ Crypto - Sinyal crypto
-⏱️ TF - Ganti timeframe
+⏱️ Timeframe - Ganti timeframe
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 */help* untuk daftar command lengkap
@@ -1476,7 +1476,7 @@ async def buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "📊 Harga": harga,
         "🎯 Sinyal": morning_watchlist,
         "⭐ Favorit": favorit,
-        "⏱️ TF": tf,
+        "⏱️ Timeframe": tf,
         "🌙 BSJP": bsjp,
         "💼 Portfolio": portfolio,
         "🔔 Notifikasi": notifikasi,
