@@ -422,6 +422,41 @@ TIMEFRAME_DESCRIPTIONS = {
     '1440': ('1 Hari',   'Position trading. Hold 1-4 minggu, analisa jangka panjang.'),
 }
 
+TF_CATEGORIES = {
+    'scalping': {
+        'name': 'Scalping',
+        'desc': 'Trading sangat cepat. Hold 1-5 menit. Untuk trader berpengalaman.',
+        'emoji': '⚡',
+        'timeframes': ['1', '5'],
+    },
+    'daytrade': {
+        'name': 'Daytrade',
+        'desc': 'Trading harian. Hold 15 menit - 1 hari. Cocok untuk pemula.',
+        'emoji': '🎯',
+        'timeframes': ['15', '30'],
+    },
+    'swing': {
+        'name': 'Swing',
+        'desc': 'Swing trading. Hold 1-3 hari. Sinyal lebih akurat.',
+        'emoji': '📈',
+        'timeframes': ['60', '240'],
+    },
+    'long_trade': {
+        'name': 'Long Trade',
+        'desc': 'Position trading. Hold 1-4 minggu. Untuk analisa jangka panjang.',
+        'emoji': '🏔️',
+        'timeframes': ['1440'],
+    },
+}
+
+
+def _get_category_for_key(tf_key: str) -> str:
+    """Get the category name for a given timeframe key."""
+    for cat_key, cat in TF_CATEGORIES.items():
+        if tf_key in cat['timeframes']:
+            return cat_key
+    return 'daytrade'
+
 
 async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
@@ -452,26 +487,89 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Build menu from TIMEFRAMES (sorted by numeric key)
-    kb = []
-    for k in sorted(TIMEFRAMES.keys(), key=lambda x: int(x)):
-        v = TIMEFRAMES[k]
-        _, desc = TIMEFRAME_DESCRIPTIONS.get(k, (v['name'], ''))
-        kb.append([InlineKeyboardButton(
-            f"{'✅ ' if k == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
-            callback_data=f"tf_{k}"
-        )])
+    # Show category menu
+    curr_cat = _get_category_for_key(curr)
+    curr_cat_name = TF_CATEGORIES[curr_cat]['name']
 
-    msg = "⏱️ *PILIH TIMEFRAME*\n\n"
-    msg += "_Timeframe = interval candle yang dianalisis_\n\n"
-    msg += "_Atau ketik: /tf 30m, /tf 4h, /tf 1d_\n\n"
-    for k in sorted(TIMEFRAMES.keys(), key=lambda x: int(x)):
-        v = TIMEFRAMES[k]
-        name, desc = TIMEFRAME_DESCRIPTIONS.get(k, (v['name'], ''))
-        marker = '✅' if k == curr else '⚪'
-        msg += f"{marker} *{name}* - {desc}\n"
+    kb = []
+    for cat_key, cat in TF_CATEGORIES.items():
+        marker = '✅ ' if cat_key == curr_cat else '⚪ '
+        kb.append([InlineKeyboardButton(
+            f"{marker}{cat['emoji']} {cat['name']}",
+            callback_data=f"tfcat_{cat_key}"
+        )])
+    kb.append([InlineKeyboardButton("↩️ Kembali", callback_data="tfcat_back")])
+
+    msg = f"⏱️ *PILIH KATEGORI TIMEFRAME*\n\n"
+    msg += f"_Timeframe saat ini: *{TIMEFRAMES[curr]['name']}* ({curr_cat_name})_\n\n"
+    msg += "_Pilih gaya trading-mu:_\n\n"
+    for cat_key, cat in TF_CATEGORIES.items():
+        marker = '✅' if cat_key == curr_cat else '⚪'
+        msg += f"{marker} {cat['emoji']} *{cat['name']}* - {cat['desc']}\n"
+
+    msg += "\n_Atau ketik: /tf 30m, /tf 4h, /tf 1d_"
 
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+
+async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show timeframe options within a category."""
+    query = update.callback_query
+    await query.answer()
+    cat_key = query.data.replace('tfcat_', '')
+    uid = str(query.from_user.id)
+    u = get_user(uid)
+    curr = u.get('timeframe', '5')
+
+    if cat_key == 'back':
+        # Re-trigger tf menu by editing message
+        curr_cat = _get_category_for_key(curr)
+        curr_cat_name = TF_CATEGORIES[curr_cat]['name']
+
+        kb = []
+        for ck, cat in TF_CATEGORIES.items():
+            marker = '✅ ' if ck == curr_cat else '⚪ '
+            kb.append([InlineKeyboardButton(
+                f"{marker}{cat['emoji']} {cat['name']}",
+                callback_data=f"tfcat_{ck}"
+            )])
+        kb.append([InlineKeyboardButton("↩️ Kembali", callback_data="tfcat_back")])
+
+        msg = f"⏱️ *PILIH KATEGORI TIMEFRAME*\n\n"
+        msg += f"_Timeframe saat ini: *{TIMEFRAMES[curr]['name']}* ({curr_cat_name})_\n\n"
+        for ck, cat in TF_CATEGORIES.items():
+            marker = '✅' if ck == curr_cat else '⚪'
+            msg += f"{marker} {cat['emoji']} *{cat['name']}* - {cat['desc']}\n"
+        msg += "\n_Atau ketik: /tf 30m, /tf 4h, /tf 1d_"
+
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        return
+
+    cat = TF_CATEGORIES.get(cat_key)
+    if not cat:
+        await query.edit_message_text("⚠️ Kategori tidak dikenali.")
+        return
+
+    kb = []
+    for tf_key in cat['timeframes']:
+        v = TIMEFRAMES[tf_key]
+        _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
+        kb.append([InlineKeyboardButton(
+            f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
+            callback_data=f"tf_{tf_key}"
+        )])
+    kb.append([InlineKeyboardButton("↩️ Kembali ke Kategori", callback_data="tfcat_back")])
+
+    msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"
+    msg += f"_{cat['desc']}_\n\n"
+    msg += "_Pilih timeframe untuk analisa:_\n\n"
+    for tf_key in cat['timeframes']:
+        v = TIMEFRAMES[tf_key]
+        name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
+        marker = '✅' if tf_key == curr else '⚪'
+        msg += f"{marker} *{name}* - {desc}\n"
+
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 
 async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -481,9 +579,13 @@ async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(query.from_user.id)
     get_user(uid)['timeframe'] = tf_key
     save_user_data()
-    _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
+    name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
+    cat_key = _get_category_for_key(tf_key)
+    cat_name = TF_CATEGORIES[cat_key]['name']
     await query.edit_message_text(
-        f"✅ Timeframe diubah ke: *{TIMEFRAMES[tf_key]['name']}*\n\n_{desc}_",
+        f"✅ Timeframe diubah ke: *{name}*\n\n"
+        f"📂 Kategori: {cat_name}\n\n"
+        f"_{desc}_",
         parse_mode='Markdown'
     )
 
@@ -1513,6 +1615,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler(["analisa", "analisis", "analysis"], analisa_cmd))
 
     # Callbacks
+    app.add_handler(CallbackQueryHandler(tf_cat_cb, pattern=r"tfcat_"))
     app.add_handler(CallbackQueryHandler(tf_cb, pattern=r"tf_"))
     app.add_handler(CallbackQueryHandler(notifikasi_cb, pattern=r"notif_"))
 
