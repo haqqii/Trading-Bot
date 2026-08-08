@@ -17,6 +17,7 @@ from services.signal_service import signal_service
 from services.chart_service import chart_service
 from services.news_service import news_service
 from utils.formatters import TIMEFRAMES, format_signal_msg, format_crypto_msg, format_bsjp_msg, format_morning_msg, format_analisa_simple, format_analisa_pemula
+from config.settings import INTERVAL_TO_KEY, VALID_INTERVALS
 from utils.rate_limiter import get_all_api_stats
 from utils.cache import _price_cache, _signal_cache
 from data.idx_stocks import ALL_IDX_STOCKS
@@ -412,10 +413,13 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # === TIMEFRAME ===
 TIMEFRAME_DESCRIPTIONS = {
-    '1':  ('1 Menit',  'Scalping - trading sangat cepat (hold 1-5 menit). Untuk trader berpengalaman.'),
-    '5':  ('5 Menit',  'Default. Cocok untuk pemula & trader harian (hold 15-60 menit).'),
-    '15': ('15 Menit', 'Intraday swing. Hold 1-4 jam, tren lebih jelas terlihat.'),
-    '60': ('1 Jam',    'Swing trading. Hold bisa 1-3 hari, sinyal lebih akurat tapi lebih jarang.'),
+    '1':    ('1 Menit',  'Scalping - trading sangat cepat (hold 1-5 menit). Untuk trader berpengalaman.'),
+    '5':    ('5 Menit',  'Default. Cocok untuk pemula & trader harian (hold 15-60 menit).'),
+    '15':   ('15 Menit', 'Intraday swing. Hold 1-4 jam, tren lebih jelas terlihat.'),
+    '30':   ('30 Menit', 'Swing pendek. Hold 1-2 jam, noise lebih sedikit.'),
+    '60':   ('1 Jam',    'Swing trading. Hold 1-3 hari, sinyal lebih akurat.'),
+    '240':  ('4 Jam',    'Swing jangka panjang. Hold beberapa hari, tren utama.'),
+    '1440': ('1 Hari',   'Position trading. Hold 1-4 minggu, analisa jangka panjang.'),
 }
 
 
@@ -424,17 +428,46 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = get_user(uid)
     curr = u.get('timeframe', '5')
 
+    # Handle custom input: /tf 30m or /tf 1h
+    if ctx.args:
+        raw = ctx.args[0].lower().strip()
+        tf_key = INTERVAL_TO_KEY.get(raw)
+        if tf_key:
+            u['timeframe'] = tf_key
+            save_user_data()
+            name = TIMEFRAMES[tf_key]['name']
+            _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (name, ''))
+            await update.message.reply_text(
+                f"✅ Timeframe diubah ke: *{name}*\n\n_{desc}_",
+                parse_mode='Markdown'
+            )
+            return
+        else:
+            valid = ', '.join(sorted(VALID_INTERVALS))
+            await update.message.reply_text(
+                f"⚠️ Interval *{raw}* tidak dikenali.\n\n"
+                f"Valid: `{valid}`\n\n"
+                "Contoh: `/tf 30m` atau `/tf 4h`",
+                parse_mode='Markdown'
+            )
+            return
+
+    # Build menu from TIMEFRAMES (sorted by numeric key)
     kb = []
-    for k, v in TIMEFRAMES.items():
+    for k in sorted(TIMEFRAMES.keys(), key=lambda x: int(x)):
+        v = TIMEFRAMES[k]
         _, desc = TIMEFRAME_DESCRIPTIONS.get(k, (v['name'], ''))
         kb.append([InlineKeyboardButton(
-            f"{'✅ ' if k==curr else ''}{v['name']} - {desc[:40]}{'...' if len(desc) > 40 else ''}",
+            f"{'✅ ' if k == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
             callback_data=f"tf_{k}"
         )])
 
     msg = "⏱️ *PILIH TIMEFRAME*\n\n"
     msg += "_Timeframe = interval candle yang dianalisis_\n\n"
-    for k, (name, desc) in TIMEFRAME_DESCRIPTIONS.items():
+    msg += "_Atau ketik: /tf 30m, /tf 4h, /tf 1d_\n\n"
+    for k in sorted(TIMEFRAMES.keys(), key=lambda x: int(x)):
+        v = TIMEFRAMES[k]
+        name, desc = TIMEFRAME_DESCRIPTIONS.get(k, (v['name'], ''))
         marker = '✅' if k == curr else '⚪'
         msg += f"{marker} *{name}* - {desc}\n"
 
@@ -447,6 +480,7 @@ async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tf_key = query.data.replace('tf_', '')
     uid = str(query.from_user.id)
     get_user(uid)['timeframe'] = tf_key
+    save_user_data()
     _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
     await query.edit_message_text(
         f"✅ Timeframe diubah ke: *{TIMEFRAMES[tf_key]['name']}*\n\n_{desc}_",

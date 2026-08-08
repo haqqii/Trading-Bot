@@ -8,11 +8,25 @@ logger = logging.getLogger(__name__)
 
 # Timeframes
 TIMEFRAMES = {
-    '1': {'name': '1 Menit', 'interval': '1m', 'period': '1d'},
-    '5': {'name': '5 Menit', 'interval': '5m', 'period': '5d'},
-    '15': {'name': '15 Menit', 'interval': '15m', 'period': '5d'},
-    '60': {'name': '1 Jam', 'interval': '1h', 'period': '1mo'},
+    '1':   {'name': '1 Menit',  'interval': '1m',  'period': '1d'},
+    '5':   {'name': '5 Menit',  'interval': '5m',  'period': '5d'},
+    '15':  {'name': '15 Menit', 'interval': '15m', 'period': '5d'},
+    '30':  {'name': '30 Menit', 'interval': '30m', 'period': '5d'},
+    '60':  {'name': '1 Jam',    'interval': '1h',  'period': '1mo'},
+    '240': {'name': '4 Jam',    'interval': '4h',  'period': '1mo'},
+    '1440': {'name': '1 Hari',  'interval': '1d',  'period': '3mo'},
 }
+
+# Valid intervals for custom input (maps Yahoo Finance interval -> TIMEFRAMES key)
+INTERVAL_TO_KEY = {
+    '1m': '1', '2m': '1', '5m': '5', '15m': '15',
+    '30m': '30', '60m': '60', '90m': '60',
+    '1h': '60', '4h': '240',
+    '1d': '1440', '5d': '1440', '1wk': '1440', '1mo': '1440',
+}
+
+# Yahoo Finance supported intervals for validation
+VALID_INTERVALS = set(INTERVAL_TO_KEY.keys())
 
 # Separators
 SEP = "═" * 35
