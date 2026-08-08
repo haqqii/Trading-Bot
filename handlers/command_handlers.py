@@ -65,6 +65,29 @@ async def _send_with_retry(message, text, retries=5, delay=3, **kwargs):
     return False
 
 
+async def _safe_query_answer(query, retries=2, delay=0.5):
+    """Acknowledge callback query with soft timeout handling.
+
+    query.answer() tells Telegram to remove the loading spinner. If the
+    request to Telegram times out, we don't want to crash the whole
+    handler — the user just sees the spinner a bit longer. Log and move on.
+    """
+    from telegram.error import TimedOut
+    for attempt in range(retries):
+        try:
+            await asyncio.wait_for(query.answer(), timeout=5)
+            return True
+        except (TimedOut, asyncio.TimeoutError):
+            if attempt < retries - 1:
+                await asyncio.sleep(delay)
+            else:
+                logger.warning(f"query.answer() timed out after {retries} attempts")
+        except Exception as e:
+            logger.warning(f"query.answer() failed: {e}")
+            return False
+    return False
+
+
 # Global state
 ALL_STOCKS = ALL_IDX_STOCKS
 user_data_db = {}
@@ -515,7 +538,7 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show timeframe options within a category."""
     query = update.callback_query
-    await query.answer()
+    await _safe_query_answer(query)
     cat_key = query.data.replace('tfcat_', '')
     uid = str(query.from_user.id)
     u = get_user(uid)
@@ -574,7 +597,7 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await _safe_query_answer(query)
     tf_key = query.data.replace('tf_', '')
     uid = str(query.from_user.id)
     get_user(uid)['timeframe'] = tf_key
@@ -763,7 +786,7 @@ Klik untuk toggle ON/OFF:"""
 async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Toggle notification settings via callback"""
     query = update.callback_query
-    await query.answer()
+    await _safe_query_answer(query)
     uid = str(query.from_user.id)
     u = get_user(uid)
 
