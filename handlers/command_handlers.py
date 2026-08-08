@@ -521,7 +521,7 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"{marker}{cat['emoji']} {cat['name']}",
             callback_data=f"tfcat_{cat_key}"
         )])
-    kb.append([InlineKeyboardButton("↩️ Kembali", callback_data="tfcat_back")])
+
 
     msg = f"⏱️ *PILIH KATEGORI TIMEFRAME*\n\n"
     msg += f"_Timeframe saat ini: *{TIMEFRAMES[curr]['name']}* ({curr_cat_name})_\n\n"
@@ -545,27 +545,7 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     curr = u.get('timeframe', '5')
 
     if cat_key == 'back':
-        # Re-trigger tf menu by editing message
-        curr_cat = _get_category_for_key(curr)
-        curr_cat_name = TF_CATEGORIES[curr_cat]['name']
-
-        kb = []
-        for ck, cat in TF_CATEGORIES.items():
-            marker = '✅ ' if ck == curr_cat else '⚪ '
-            kb.append([InlineKeyboardButton(
-                f"{marker}{cat['emoji']} {cat['name']}",
-                callback_data=f"tfcat_{ck}"
-            )])
-        kb.append([InlineKeyboardButton("↩️ Kembali", callback_data="tfcat_back")])
-
-        msg = f"⏱️ *PILIH KATEGORI TIMEFRAME*\n\n"
-        msg += f"_Timeframe saat ini: *{TIMEFRAMES[curr]['name']}* ({curr_cat_name})_\n\n"
-        for ck, cat in TF_CATEGORIES.items():
-            marker = '✅' if ck == curr_cat else '⚪'
-            msg += f"{marker} {cat['emoji']} *{cat['name']}* - {cat['desc']}\n"
-        msg += "\n_Atau ketik: /tf 30m, /tf 4h, /tf 1d_"
-
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text("⚠️ Sudah dihapus.")
         return
 
     cat = TF_CATEGORIES.get(cat_key)
@@ -581,7 +561,7 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
             callback_data=f"tf_{tf_key}"
         )])
-    kb.append([InlineKeyboardButton("↩️ Kembali ke Kategori", callback_data="tfcat_back")])
+
 
     msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"
     msg += f"_{cat['desc']}_\n\n"
