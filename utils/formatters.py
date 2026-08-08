@@ -583,8 +583,9 @@ def format_unified_crypto_notification(
 
     # Final line
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
-    lines.append("")
+    if notif_type == 'BUY':
+        lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
+        lines.append("")
     lines.append(f"⏰ {ts}")
     lines.append("₿ Crypto - Ochobot")
 
