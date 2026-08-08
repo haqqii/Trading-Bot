@@ -22,6 +22,7 @@ Panduan lengkap dari nol untuk pemula — deploy bot Telegram 24/7 di Oracle Clo
 12. [Verifikasi Akhir](#12-verifikasi-akhir)
 13. [Perintah Sehari-hari](#13-perintah-sehari-hari)
 14. [Troubleshooting](#14-troubleshooting)
+15. [Health Check (opsional)](#15-health-check-opsional)
 
 ---
 
@@ -432,6 +433,50 @@ icacls $HOME\.ssh\bot_saham_key /grant:r "$($env:USERNAME):(R)"
 | Total | **GRATIS** |
 
 > Selalu pakai resource **Always Free**. Jangan add paid services.
+
+---
+
+## 15. Health Check (opsional)
+
+Bot Ochobot sudah auto-restart via systemd (`Restart=on-failure`), tapi kamu **gak akan tahu** kalau bot mati total sampai user komplain. Health-check systemd timer mengecek bot setiap 5 menit dan kirim alert Telegram kalau down.
+
+**Setup sekali saja** (di Oracle VM):
+
+```bash
+# 1. Pastikan ADMIN_CHAT_ID sudah ada di .env
+grep ADMIN_CHAT_ID ~/bot-saham/.env
+
+# 2. Copy service & timer file
+sudo cp ~/bot-saham/deploy/bot-health.{service,timer} /etc/systemd/system/
+
+# 3. Reload & enable
+sudo systemctl daemon-reload
+sudo systemctl enable --now bot-health.timer
+
+# 4. Verifikasi
+systemctl list-timers bot-health
+# Should show: NEXT ~ within 5 min, LAST ~, PASSED, UNIT bot-health.timer
+```
+
+**Cek log health check:**
+
+```bash
+journalctl -u bot-health -n 30
+# atau file log: cat ~/bot-saham/logs/health.log
+```
+
+**Cara kerja:**
+- Cek `getMe` ke Telegram API tiap 5 menit (skip di luar market hours)
+- Kalau gagal 1x → alert pertama langsung kamu terima
+- Kalau terus gagal → reminder tiap 1 jam (anti spam)
+- Kalau bot hidup lagi → counter reset, log "recovered"
+- Alert format: `🔴 Bot Ochobot DOWN!` + info service status
+
+**Disable** (kalau gak mau):
+
+```bash
+sudo systemctl disable --now bot-health.timer
+```
 
 ---
 

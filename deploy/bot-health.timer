@@ -1,0 +1,13 @@
+[Unit]
+Description=Ochobot Health Check — runs every 5 minutes during market hours
+
+[Timer]
+# 5 minutes after start, then every 5 minutes (with 30s jitter)
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=bot-health.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

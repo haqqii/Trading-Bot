@@ -1,0 +1,12 @@
+[Unit]
+Description=Ochobot Health Check
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/bot-saham
+EnvironmentFile=/home/ubuntu/bot-saham/.env
+ExecStart=/usr/bin/python3 /home/ubuntu/bot-saham/scripts/health_check.py
+StandardOutput=journal
+StandardError=journal
