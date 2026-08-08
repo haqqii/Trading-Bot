@@ -491,7 +491,7 @@ async def check_bsjp_signals(app):
                         'sl': price * 0.985
                     }
             except Exception as e:
-                logger.debug(f"bsjp scheduler analyze inner failure: {e}")
+                logger.error(f"[BSJP] analyze inner failure for {ticker}: {e}", exc_info=True)
             return None
 
         # Increase semaphore for faster scanning
@@ -644,6 +644,7 @@ async def check_stock_signals(app):
 
                 return None
             except Exception as e:
+                logger.error(f"[STOCK_SIGNAL] analyze failure for {ticker}: {e}", exc_info=True)
                 return None
 
         semaphore = asyncio.Semaphore(25)  # Max 25 concurrent
@@ -1228,7 +1229,7 @@ async def check_morning_notification(app):
                         'sl': price * 0.98
                     }
             except Exception as e:
-                logger.debug(f"morning scheduler analyze inner failure: {e}")
+                logger.error(f"[MORNING] analyze inner failure for {ticker}: {e}", exc_info=True)
             return None
 
         semaphore = asyncio.Semaphore(20)
@@ -1350,6 +1351,7 @@ async def check_crypto_signals(app):
                 return None
 
             except Exception as e:
+                logger.error(f"[CRYPTO_SIGNAL] analyze failure for {ticker}: {e}", exc_info=True)
                 return None
 
         # Parallel crypto scanning with thread pool

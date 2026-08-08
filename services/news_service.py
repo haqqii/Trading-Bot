@@ -225,8 +225,8 @@ class NewsService:
                             pub_dt = parsedate_to_datetime(pub_date.text)
                             if (datetime.now().astimezone() - pub_dt).days > 7:
                                 continue
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Failed to parse pub date: {e}")
 
                     seen_titles.add(title_text)
 

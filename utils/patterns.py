@@ -2,8 +2,11 @@
 Chart Pattern Detection Module.
 Detects Triangle, Channel, Wedge, and Harmonic patterns.
 """
+import logging
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Tuple
 
 

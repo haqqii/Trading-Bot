@@ -27,14 +27,14 @@ if os.path.exists(LOCK_FILE):
             pid = int(f.read().strip())
         import psutil
         if psutil.pid_exists(pid):
-            print(f"ERROR: Bot sudah jalan (PID: {pid})")
-            print("Stop instance lama dulu atau kill proses python.")
+            logger.critical(f"Bot sudah jalan (PID: {pid})")
+            logger.critical("Stop instance lama dulu atau kill proses python.")
             sys.exit(1)
         else:
-            print(f"Stale lock file found (PID {pid}), removing...")
+            logger.warning(f"Stale lock file found (PID {pid}), removing...")
             os.remove(LOCK_FILE)
     except Exception as e:
-        print(f"Warning: stale lock probe failed: {e}")
+        logger.warning(f"Stale lock probe failed: {e}")
 
 # Write our PID to lock file
 with open(LOCK_FILE, 'w') as f:
@@ -87,13 +87,27 @@ file_handler = SafeRotatingFileHandler(
 )
 file_handler.setLevel(logging.INFO)
 
+error_handler = SafeRotatingFileHandler(
+    os.path.join(logs_dir, 'error.log'),
+    maxBytes=5 * 1024 * 1024,  # 5MB
+    backupCount=5,
+    encoding='utf-8',
+    delay=True
+)
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s\n'
+    '  File: %(filename)s:%(lineno)d\n'
+    '  Function: %(funcName)s'
+))
+
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    handlers=[file_handler, console_handler]
+    handlers=[file_handler, error_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -117,8 +131,8 @@ def main():
         if BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE':
             sys.stdout.write("NO_TOKEN\n")
             sys.stdout.flush()
-            print("ERROR: Telegram bot token not found!")
-            print("Please set TELEGRAM_BOT_TOKEN in .env file or environment variable.")
+            logger.critical("Telegram bot token not found!")
+            logger.critical("Please set TELEGRAM_BOT_TOKEN in .env file or environment variable.")
             return
 
         # Load stocks
@@ -175,6 +189,17 @@ def main():
         register_handlers(app)
         register_jobs(app)
 
+        # Setup Telegram admin alert handler
+        admin_chat_id = os.getenv('ADMIN_CHAT_ID')
+        if admin_chat_id:
+            try:
+                from utils.telegram_alert import TelegramLogHandler
+                alert_handler = TelegramLogHandler(app, int(admin_chat_id))
+                logging.getLogger().addHandler(alert_handler)
+                logger.info(f"Admin alerts enabled for chat_id={admin_chat_id}")
+            except Exception:
+                logger.warning("Failed to setup admin alert handler", exc_info=True)
+
         sys.stdout.write("STARTING_BOT\n")
         sys.stdout.flush()
 
@@ -192,9 +217,9 @@ def main():
             webhook_full_url = f"{webhook_url}{webhook_path}/{BOT_TOKEN}"
             sys.stdout.write(f"WEBHOOK_URL:{webhook_url}\n")
             sys.stdout.flush()
-            print(f"Starting webhook mode...")
-            print(f"Webhook URL: {webhook_url}")
-            print(f"Webhook path: {webhook_path}")
+            logger.info(f"Starting webhook mode...")
+            logger.info(f"Webhook URL: {webhook_url}")
+            logger.info(f"Webhook path: {webhook_path}")
             app.run_webhook(
                 listen="0.0.0.0",
                 port=webhook_port,
@@ -206,8 +231,8 @@ def main():
             # Polling mode (bot pulls Telegram for updates)
             sys.stdout.write("MODE:POLLING\n")
             sys.stdout.flush()
-            print("Starting polling mode...")
-            print("TIP: Set WEBHOOK_URL to enable webhook mode for faster responses")
+            logger.info("Starting polling mode...")
+            logger.info("TIP: Set WEBHOOK_URL to enable webhook mode for faster responses")
             app.run_polling(
                 allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None,
                 drop_pending_updates=False,
@@ -235,14 +260,14 @@ def cleanup():
     if os.path.exists(LOCK_FILE):
         try:
             os.remove(LOCK_FILE)
-            print("Lock file removed")
+            logger.info("Lock file removed")
         except Exception as e:
-            print(f"Warning: failed to remove lock file: {e}")
+            logger.warning(f"Failed to remove lock file: {e}")
 
 def signal_handler(sig, frame):
     """Handle shutdown signals gracefully without interrupting ongoing operations."""
     sig_name = 'SIGTERM' if sig == signal.SIGTERM else 'SIGINT'
-    print(f"\n\n[SIGINT] Bot dihentikan!")
+    logger.info("Bot dihentikan!")
     cleanup()
     # Use os._exit to terminate without raising SystemExit exception
     # which would interrupt time.sleep() in rate limiter
@@ -256,7 +281,7 @@ if __name__ == "__main__":
     try:
         main()
     except (KeyboardInterrupt, SystemExit):
-        print("\n\n[SIGINT] Bot dihentikan!")
+        logger.info("Bot dihentikan via KeyboardInterrupt!")
         cleanup()
     finally:
         cleanup()

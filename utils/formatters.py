@@ -1,7 +1,10 @@
 """
 Message formatters for Telegram bot.
 """
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from typing import Dict, List, Any, Tuple
 
 

@@ -1,7 +1,10 @@
 """
 Configuration settings for the bot.
 """
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 # Timeframes
 TIMEFRAMES = {
@@ -34,7 +37,7 @@ def load_token():
                                 token = line.split('=', 1)[1].strip()
                                 break
                 except Exception as e:
-                    print(f"Warning: failed to read {env_file}: {e}")
+                    logger.warning(f"Failed to read {env_file}: {e}")
     return token if token else 'YOUR_BOT_TOKEN_HERE'
 
 
