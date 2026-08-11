@@ -3,6 +3,7 @@ Command handlers for Telegram bot.
 """
 import asyncio
 import time
+from datetime import datetime, timezone, timedelta
 import json
 import os
 import logging
@@ -155,13 +156,21 @@ def load_user_data():
     try:
         last_buy_signals.clear()
         signals_data = db.get_all_signals()
+        # Use timezone-aware datetime to match scheduler.py's now_wib()
+        # (created_at is stored as naive ISO text by SQLite CURRENT_TIMESTAMP)
+        _WIB = timezone(timedelta(hours=7))
         for key, signal in signals_data.items():
             # Convert created_at string back to datetime
             if 'created_at' in signal and isinstance(signal['created_at'], str):
                 try:
-                    signal['time'] = datetime.fromisoformat(signal['created_at'])
+                    parsed = datetime.fromisoformat(signal['created_at'])
+                    # Treat SQLite CURRENT_TIMESTAMP as WIB (server local time)
+                    if parsed.tzinfo is None:
+                        signal['time'] = parsed.replace(tzinfo=_WIB)
+                    else:
+                        signal['time'] = parsed
                 except (ValueError, TypeError):
-                    signal['time'] = datetime.now()
+                    signal['time'] = datetime.now(timezone.utc).astimezone(_WIB)
             last_buy_signals[key] = signal
         logger.info(f"[LOAD_USER] Loaded {len(last_buy_signals)} signals from DB")
     except Exception as e:
