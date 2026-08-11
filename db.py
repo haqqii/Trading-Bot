@@ -67,6 +67,28 @@ class Database:
             self._initialized = True
             self._create_tables()
 
+    def _migrate_signals_table(self):
+        """Add outcome tracking columns to signals table (safe for existing data)."""
+        new_columns = [
+            ('outcome', 'TEXT'),
+            ('tp1_hit_at', 'TEXT'),
+            ('tp2_hit_at', 'TEXT'),
+            ('tp3_hit_at', 'TEXT'),
+            ('sl_hit_at', 'TEXT'),
+            ('closed_at', 'TEXT'),
+            ('closed_price', 'REAL'),
+        ]
+        with self._get_conn() as conn:
+            for col_name, col_type in new_columns:
+                try:
+                    conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"[DB] Added column signals.{col_name}")
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column name' in str(e).lower():
+                        pass  # Already exists (new installs)
+                    else:
+                        raise  # Real error
+
     def _create_tables(self):
         """Create all required tables."""
         with self._get_conn() as conn:
@@ -124,6 +146,13 @@ class Database:
                     quality TEXT,
                     reason TEXT,
                     extra_data TEXT,
+                    outcome TEXT,
+                    tp1_hit_at TEXT,
+                    tp2_hit_at TEXT,
+                    tp3_hit_at TEXT,
+                    sl_hit_at TEXT,
+                    closed_at TEXT,
+                    closed_price REAL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -144,6 +173,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id);
                 CREATE INDEX IF NOT EXISTS idx_alerts_ticker ON price_alerts(ticker);
             """)
+            # Migration: add outcome columns to existing signals table
+            self._migrate_signals_table()
 
     # === USER OPERATIONS ===
 
@@ -379,6 +410,96 @@ class Database:
                 "DELETE FROM signals WHERE key = ?", (key,)
             )
             return cursor.rowcount > 0
+
+    def save_signal_outcome(self, key: str, outcome: str,
+                            hit_at: str = None,
+                            closed_price: float = None) -> bool:
+        """Update signal outcome when TP/SL is hit.
+
+        Args:
+            key: Signal key (e.g. 'STOCK_BBCA')
+            outcome: 'open', 'tp1', 'tp2', 'tp3', or 'sl'
+            hit_at: ISO datetime string when the outcome occurred
+            closed_price: Price when signal was closed (TP3 or SL)
+        """
+        self.initialize()
+        if not hit_at:
+            from datetime import datetime, timezone, timedelta
+            WIB = timezone(timedelta(hours=7))
+            hit_at = datetime.now(WIB).isoformat()
+
+        with self._get_conn() as conn:
+            # Build dynamic UPDATE based on outcome
+            col_map = {
+                'tp1': 'tp1_hit_at',
+                'tp2': 'tp2_hit_at',
+                'tp3': 'tp3_hit_at',
+                'sl': 'sl_hit_at',
+            }
+            col = col_map.get(outcome)
+            closed_at = hit_at if outcome in ('tp3', 'sl') else None
+
+            if col:
+                conn.execute(
+                    f"UPDATE signals SET outcome = ?, {col} = ? "
+                    f"WHERE key = ?",
+                    (outcome, hit_at, key)
+                )
+            else:
+                conn.execute(
+                    "UPDATE signals SET outcome = ? WHERE key = ?",
+                    (outcome, key)
+                )
+
+            if closed_at and closed_price is not None:
+                conn.execute(
+                    "UPDATE signals SET closed_at = ?, closed_price = ? WHERE key = ?",
+                    (closed_at, closed_price, key)
+                )
+            return True
+
+    def get_signal_stats(self, asset_type: str = None) -> Dict:
+        """Get aggregate win-rate stats for signals.
+
+        Returns:
+            dict with total, open, closed, tp1_count, tp2_count, tp3_count,
+            sl_count, tp_rate, sl_rate, avg_tp_hit
+        """
+        self.initialize()
+        base = {
+            'total': 0, 'open': 0, 'closed': 0,
+            'tp1_count': 0, 'tp2_count': 0, 'tp3_count': 0, 'sl_count': 0,
+            'tp_rate': 0.0, 'sl_rate': 0.0, 'avg_tp_hit': 0.0,
+        }
+        with self._get_conn() as conn:
+            where = f"WHERE asset_type = '{asset_type}'" if asset_type else ""
+            try:
+                rows = conn.execute(
+                    f"SELECT outcome FROM signals {where}").fetchall()
+            except Exception:
+                return base
+            base['total'] = len(rows)
+            for row in rows:
+                o = row['outcome']
+                if not o or o == 'open':
+                    base['open'] += 1
+                elif o == 'tp1':
+                    base['tp1_count'] += 1
+                elif o == 'tp2':
+                    base['tp2_count'] += 1
+                elif o == 'tp3':
+                    base['tp3_count'] += 1
+                elif o == 'sl':
+                    base['sl_count'] += 1
+            base['closed'] = (base['tp1_count'] + base['tp2_count'] +
+                              base['tp3_count'] + base['sl_count'])
+            if base['closed'] > 0:
+                wins = base['tp1_count'] + base['tp2_count'] + base['tp3_count']
+                base['tp_rate'] = round(wins / base['closed'] * 100, 1)
+                base['sl_rate'] = round(base['sl_count'] / base['closed'] * 100, 1)
+                tp_total = base['tp1_count'] + base['tp2_count'] * 2 + base['tp3_count'] * 3
+                base['avg_tp_hit'] = round(tp_total / wins, 2) if wins > 0 else 0
+            return base
 
     def cleanup_old_signals(self, max_age_days: int = 7,
                             max_per_type: int = 50) -> int:

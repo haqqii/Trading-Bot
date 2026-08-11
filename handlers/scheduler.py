@@ -9,6 +9,7 @@ from services.stock_service import stock_service, FINNHUB_API_KEY
 from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from utils.formatters import format_unified_crypto_notification, format_unified_stock_notification
+from db import db
 
 # NOTE: Import save_user_data inside functions to avoid module caching issues
 
@@ -950,6 +951,8 @@ async def check_stock_tp_sl(app):
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         logger.info(f"SL hit: {ticker} at {current_price} - Position closed")
 
+                        db.save_signal_outcome(key, 'sl', closed_price=current_price)
+
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
                         continue  # Skip TP checks for this signal
@@ -959,6 +962,7 @@ async def check_stock_tp_sl(app):
                     if not tp_hit.get('tp1') and current_price >= tp1 > 0:
                         tp_hit['tp1'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp1')
                         profit_pct = ((tp1 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
@@ -981,6 +985,7 @@ async def check_stock_tp_sl(app):
                     if not tp_hit.get('tp2') and current_price >= tp2 > 0:
                         tp_hit['tp2'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp2')
                         profit_pct = ((tp2 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
@@ -1003,6 +1008,7 @@ async def check_stock_tp_sl(app):
                     if not tp_hit.get('tp3') and current_price >= tp3 > 0:
                         tp_hit['tp3'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp3', closed_price=current_price)
                         profit_pct = ((tp3 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
@@ -1580,6 +1586,8 @@ async def check_crypto_tp_sl(app):
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         logger.info(f"SL hit: {ticker} at {current_price} - Position closed")
 
+                        db.save_signal_outcome(key, 'sl', closed_price=current_price)
+
                         # Remove from tracking
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
@@ -1590,6 +1598,7 @@ async def check_crypto_tp_sl(app):
                     if not tp_hit.get('tp1') and current_price >= tp1 > 0:
                         tp_hit['tp1'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp1')
                         profit_pct = ((tp1 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
@@ -1613,6 +1622,7 @@ async def check_crypto_tp_sl(app):
                     if not tp_hit.get('tp2') and current_price >= tp2 > 0:
                         tp_hit['tp2'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp2')
                         profit_pct = ((tp2 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
@@ -1636,6 +1646,7 @@ async def check_crypto_tp_sl(app):
                     if not tp_hit.get('tp3') and current_price >= tp3 > 0:
                         tp_hit['tp3'] = True
                         signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp3', closed_price=current_price)
                         profit_pct = ((tp3 - entry) / entry) * 100
 
                         name = signal_data.get('name', ticker)
