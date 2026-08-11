@@ -277,7 +277,10 @@ def save_user_data():
     for key, val in last_buy_signals.items():
         ticker = val.get('ticker', 'UNKNOWN')
         signal_type = val.get('signal_type', val.get('signal', 'BUY'))
-        asset_type = val.get('asset_type', 'stock')
+        # Bug fix: signal dict uses 'type' not 'asset_type'. Fall back to key prefix.
+        asset_type = val.get('asset_type') or val.get('type')
+        if not asset_type:
+            asset_type = 'crypto' if key.startswith('CRYPTO_') else 'stock'
         db.save_signal(
             key=key,
             ticker=ticker,

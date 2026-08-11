@@ -89,6 +89,20 @@ class Database:
                     else:
                         raise  # Real error
 
+    def _fix_signals_asset_type(self):
+        """Fix asset_type for existing signals. Bug: save_user_data() used val.get('asset_type')
+        but signal dict has 'type' key, not 'asset_type'. All signals were stored as 'stock'
+        regardless of whether they're stock or crypto. Fix based on key prefix.
+        """
+        with self._get_conn() as conn:
+            for prefix, target_type in [('CRYPTO_', 'crypto'), ('STOCK_', 'stock')]:
+                cursor = conn.execute(
+                    f"UPDATE signals SET asset_type = ? WHERE key LIKE ? AND asset_type != ?",
+                    (target_type, f'{prefix}%', target_type)
+                )
+                if cursor.rowcount > 0:
+                    logger.info(f"[DB] Fixed {cursor.rowcount} {target_type} signals (asset_type was wrong)")
+
     def _create_tables(self):
         """Create all required tables."""
         with self._get_conn() as conn:
@@ -175,6 +189,8 @@ class Database:
             """)
             # Migration: add outcome columns to existing signals table
             self._migrate_signals_table()
+            # Migration: fix asset_type from old bug where all signals were 'stock'
+            self._fix_signals_asset_type()
 
     # === USER OPERATIONS ===
 
