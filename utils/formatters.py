@@ -3,6 +3,7 @@ Message formatters for Telegram bot.
 """
 import logging
 from datetime import datetime
+from config.settings import TIMEFRAMES
 
 logger = logging.getLogger(__name__)
 from typing import Dict, List, Any, Tuple
@@ -30,13 +31,8 @@ def escape_md(text) -> str:
 SEP = "═" * 35
 SEP40 = "═" * 40
 
-# Timeframes
-TIMEFRAMES = {
-    '1': {'name': '1 Menit', 'interval': '1m', 'period': '1d'},
-    '5': {'name': '5 Menit', 'interval': '5m', 'period': '5d'},
-    '15': {'name': '15 Menit', 'interval': '15m', 'period': '5d'},
-    '60': {'name': '1 Jam', 'interval': '1h', 'period': '1mo'},
-}
+# Timeframes - imported from config.settings.py (single source of truth)
+# Re-exported here for backward compatibility
 
 
 def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:

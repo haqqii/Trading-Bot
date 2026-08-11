@@ -46,7 +46,9 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Toggle notification settings via callback"""
     query = update.callback_query
     await _safe_query_answer(query)
-    notif_key = query.data.replace('notif_', '')
+    # Use count=1 to only remove the FIRST 'notif_' prefix
+    # (callback_data is 'notif_notif_saham', so without count=1 we get 'saham')
+    notif_key = query.data.replace('notif_', '', 1)
     uid = str(query.from_user.id)
     u = get_user(uid)
 
