@@ -75,7 +75,9 @@ def calculate_stochastic(high, low, close, k_period=14, d_period=3):
     """Calculate Stochastic Oscillator (%K and %D)"""
     lowest_low = low.rolling(k_period).min()
     highest_high = high.rolling(k_period).max()
-    k = 100 * ((close - lowest_low) / (highest_high - lowest_low))
+    # Avoid divide-by-zero when high == low (all prices equal in window)
+    range_hl = (highest_high - lowest_low).replace(0, 1)
+    k = 100 * ((close - lowest_low) / range_hl)
     d = k.rolling(d_period).mean()
     current_k = k.iloc[-1] if not k.empty else 50
     current_d = d.iloc[-1] if not d.empty else 50
@@ -104,7 +106,9 @@ def calculate_adx(high, low, close, period=14):
     plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
     minus_di = 100 * (minus_dm.rolling(period).mean() / atr)
 
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    # Avoid divide-by-zero when both +DI and -DI are 0 (no directional movement)
+    di_sum = (plus_di + minus_di).replace(0, 1)
+    dx = 100 * abs(plus_di - minus_di) / di_sum
     adx = dx.rolling(period).mean()
 
     current_adx = adx.iloc[-1] if not adx.empty else 25
