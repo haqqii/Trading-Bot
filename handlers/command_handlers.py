@@ -334,805 +334,23 @@ def get_user(user_id):
 
 # === START ===
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    uid = str(user.id)
-    u = get_user(uid)
-
-    kb = [
-        ["📊 Harga", "🎯 Sinyal"],
-        ["⭐ Favorit", "🌙 BSJP"],
-        ["💼 Portfolio", "🔔 Notifikasi"],
-        ["⏱️ Timeframe", "₿ Crypto"]
-    ]
-    rm = ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False)
-
-    tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
-    notif_status = "🔔 AKTIF" if u.get('notifications') else "🔕 NONAKTIF"
-
-    msg = f"""🤖 *Ochobot*
-
-📈 *Bot sinyal trading saham IDX & crypto Indonesia*
-Menganalisis 683+ saham & 250+ crypto dengan multi-indikator
-teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-👋 Halo {user.first_name}!
-
-📊 Saham: *{len(ALL_STOCKS)}*
-⏱️ Timeframe: *{tf_name}*
-
-💡 _Timeframe = interval candle yg dianalisis_
-• 1m/5m → Scalping (trading cepat, 5-15 menit)
-• 15m/1h → Intraday (trading harian)
-• Default: 5 Menit (cocok untuk pemula)
-
-🔔 Notifikasi: {notif_status}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-📱 *MENU*
-
-🎯 Sinyal - Sinyal BUY saham
-📊 Harga - Daftar harga
-⭐ Favorit - Saham favorit + alert
-🌙 BSJP - Beli sore jual pagi
-💼 Portfolio - Portfolio Anda
-🔔 Notifikasi - Setting notifikasi
-₿ Crypto - Sinyal crypto
-⏱️ Timeframe - Ganti timeframe
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-💡 */help* untuk daftar command lengkap
-⚠️ Trading risiko tanggung sendiri"""
-
-    try:
-        await update.message.reply_text(msg, reply_markup=rm, parse_mode='Markdown',
-                                         read_timeout=30, write_timeout=30, connect_timeout=30)
-    except Exception as start_err:
-        logger.warning(f"[START] Markdown reply failed: {start_err}, retrying plain text")
-        try:
-            await update.message.reply_text(_strip_markdown_chars(msg), reply_markup=rm,
-                                             read_timeout=30, write_timeout=30, connect_timeout=30)
-        except Exception as plain_err:
-            logger.error(f"[START] Plain text reply also failed: {plain_err}")
+    """Start command. See handlers/commands/start.py"""
+    from handlers.commands.start import start as _start
+    return await _start(update, ctx)
 
 
-# === HARGA ===
 async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-    tf = TIMEFRAMES[u.get('timeframe', '5')]
+    """Harga command. See handlers/commands/start.py"""
+    from handlers.commands.start import harga as _harga
+    return await _harga(update, ctx)
 
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text("⏳ Mengambil data harga...")
 
-    stocks = list(ALL_STOCKS.items())[:30]
-
-    async def fetch_stock(ticker, name):
-        d = stock_service.get_stock_data_combined(ticker + ".JK", tf['interval'], tf['period'])
-        if d:
-            return (ticker, name, d)
-        return None
-
-    tasks = [fetch_stock(t, n) for t, n in stocks]
-    fetched = await asyncio.gather(*tasks)
-    results = [r for r in fetched if r is not None]
-
-    msg = f"📊 *DAFTAR HARGA SAHAM*\n"
-    msg += f"⏱️ Timeframe: {tf['name']}\n"
-    msg += "═" * 40 + "\n\n"
-
-    for t, n, d in results:
-        emoji = "🟢" if d['change'] >= 0 else "🔴"
-        sign = "+" if d['change'] >= 0 else ""
-        msg += f"{emoji} *{t}* - {n}\n"
-        msg += f"   💵 Rp {d['price']:,.0f}\n"
-        msg += f"   📈 {sign}{d['change']:.2f}%\n\n"
-
-    msg += "═" * 40 + "\n"
-    msg += f"📅 {datetime.now().strftime('%d %b %Y %H:%M')}"
-
-    await update.message.reply_text(msg, parse_mode='Markdown')
-
-
-# === TIMEFRAME ===
-TIMEFRAME_DESCRIPTIONS = {
-    '1':    ('1 Menit',  'Scalping - trading sangat cepat (hold 1-5 menit). Untuk trader berpengalaman.'),
-    '5':    ('5 Menit',  'Default. Cocok untuk pemula & trader harian (hold 15-60 menit).'),
-    '15':   ('15 Menit', 'Intraday swing. Hold 1-4 jam, tren lebih jelas terlihat.'),
-    '30':   ('30 Menit', 'Swing pendek. Hold 1-2 jam, noise lebih sedikit.'),
-    '60':   ('1 Jam',    'Swing trading. Hold 1-3 hari, sinyal lebih akurat.'),
-    '240':  ('4 Jam',    'Swing jangka panjang. Hold beberapa hari, tren utama.'),
-    '1440': ('1 Hari',   'Position trading. Hold 1-4 minggu, analisa jangka panjang.'),
-}
-
-TF_CATEGORIES = {
-    'scalping': {
-        'name': 'Scalping',
-        'desc': 'Trading sangat cepat. Hold 1-5 menit. Untuk trader berpengalaman.',
-        'emoji': '⚡',
-        'timeframes': ['1', '5'],
-    },
-    'daytrade': {
-        'name': 'Daytrade',
-        'desc': 'Trading harian. Hold 15 menit - 1 hari. Cocok untuk pemula.',
-        'emoji': '🎯',
-        'timeframes': ['15', '30'],
-    },
-    'swing': {
-        'name': 'Swing',
-        'desc': 'Swing trading. Hold 1-3 hari. Sinyal lebih akurat.',
-        'emoji': '📈',
-        'timeframes': ['60', '240'],
-    },
-    'long_trade': {
-        'name': 'Long Trade',
-        'desc': 'Position trading. Hold 1-4 minggu. Untuk analisa jangka panjang.',
-        'emoji': '🏔️',
-        'timeframes': ['1440'],
-    },
-}
-
-
-def _get_category_for_key(tf_key: str) -> str:
-    """Get the category name for a given timeframe key."""
-    for cat_key, cat in TF_CATEGORIES.items():
-        if tf_key in cat['timeframes']:
-            return cat_key
-    return 'daytrade'
-
-
-async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-    curr = u.get('timeframe', '5')
-
-    # Handle custom input: /tf 30m or /tf 1h
-    if ctx.args:
-        raw = ctx.args[0].lower().strip()
-        tf_key = INTERVAL_TO_KEY.get(raw)
-        if tf_key:
-            u['timeframe'] = tf_key
-            save_user_data()
-            name = TIMEFRAMES[tf_key]['name']
-            _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (name, ''))
-            await update.message.reply_text(
-                f"✅ Timeframe diubah ke: *{name}*\n\n_{desc}_",
-                parse_mode='Markdown'
-            )
-            return
-        else:
-            valid = ', '.join(sorted(VALID_INTERVALS))
-            await update.message.reply_text(
-                f"⚠️ Interval *{raw}* tidak dikenali.\n\n"
-                f"Valid: `{valid}`\n\n"
-                "Contoh: `/tf 30m` atau `/tf 4h`",
-                parse_mode='Markdown'
-            )
-            return
-
-    # Show category menu
-    curr_cat = _get_category_for_key(curr)
-    curr_cat_name = TF_CATEGORIES[curr_cat]['name']
-
-    kb = []
-    for cat_key, cat in TF_CATEGORIES.items():
-        marker = '✅ ' if cat_key == curr_cat else '⚪ '
-        kb.append([InlineKeyboardButton(
-            f"{marker}{cat['emoji']} {cat['name']}",
-            callback_data=f"tfcat_{cat_key}"
-        )])
-
-
-    msg = f"⏱️ *PILIH KATEGORI TIMEFRAME*\n\n"
-    msg += f"_Timeframe saat ini: *{TIMEFRAMES[curr]['name']}* ({curr_cat_name})_\n\n"
-    msg += "_Pilih gaya trading-mu:_\n\n"
-    for cat_key, cat in TF_CATEGORIES.items():
-        marker = '✅' if cat_key == curr_cat else '⚪'
-        msg += f"{marker} {cat['emoji']} *{cat['name']}* - {cat['desc']}\n"
-
-    msg += "\n_Atau ketik: /tf 30m, /tf 4h, /tf 1d_"
-
-    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-
-async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Show timeframe options within a category."""
-    query = update.callback_query
-    await _safe_query_answer(query)
-    cat_key = query.data.replace('tfcat_', '')
-    uid = str(query.from_user.id)
-    u = get_user(uid)
-    curr = u.get('timeframe', '5')
-
-    if cat_key == 'back':
-        await query.edit_message_text("⚠️ Sudah dihapus.")
-        return
-
-    cat = TF_CATEGORIES.get(cat_key)
-    if not cat:
-        await query.edit_message_text("⚠️ Kategori tidak dikenali.")
-        return
-
-    kb = []
-    for tf_key in cat['timeframes']:
-        v = TIMEFRAMES[tf_key]
-        _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
-        kb.append([InlineKeyboardButton(
-            f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
-            callback_data=f"tf_{tf_key}"
-        )])
-
-
-    msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"
-    msg += f"_{cat['desc']}_\n\n"
-    msg += "_Pilih timeframe untuk analisa:_\n\n"
-    for tf_key in cat['timeframes']:
-        v = TIMEFRAMES[tf_key]
-        name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
-        marker = '✅' if tf_key == curr else '⚪'
-        msg += f"{marker} *{name}* - {desc}\n"
-
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-
-async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await _safe_query_answer(query)
-    tf_key = query.data.replace('tf_', '')
-    uid = str(query.from_user.id)
-    get_user(uid)['timeframe'] = tf_key
-    save_user_data()
-    name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
-    cat_key = _get_category_for_key(tf_key)
-    cat_name = TF_CATEGORIES[cat_key]['name']
-    await query.edit_message_text(
-        f"✅ Timeframe diubah ke: *{name}*\n\n"
-        f"📂 Kategori: {cat_name}\n\n"
-        f"_{desc}_",
-        parse_mode='Markdown'
-    )
-
-
-# === FAVORIT ===
-async def favorit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Show favorit list (stocks and crypto)"""
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-    favorit = u.get('favorit', {})
-    crypto_favorit = u.get('crypto_favorit', {})
-
-    if not favorit and not crypto_favorit:
-        await update.message.reply_text(
-            "⭐ *FAVORIT KOSONG*\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📝 Cara menambahkan:\n"
-            "`/add BBCA 5000` - BBCA target Rp 5000\n"
-            "`/add BTC-USD 70000` - BTC target $70000\n"
-            "`/add BBCA` - Tanpa target\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            parse_mode='Markdown'
-        )
-        return
-
-    msg = "⭐ *FAVORIT*\n"
-    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-
-    if favorit:
-        msg += "\n📈 *Saham:*\n"
-        for ticker, target in favorit.items():
-            target_str = f"Rp {target:,.0f}" if target else "Tanpa target"
-            msg += f"• *{ticker}* - Target: {target_str}\n"
-
-    if crypto_favorit:
-        msg += "\n₿ *Crypto:*\n"
-        for ticker, target in crypto_favorit.items():
-            target_str = f"${target:,.2f}" if target else "Tanpa target"
-            msg += f"• *{ticker}* - Target: {target_str}\n"
-
-    msg += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += "/add [KODE] [HARGA] - Tambah\n"
-    msg += "/remove [KODE] - Hapus"
-
-    await update.message.reply_text(msg, parse_mode='Markdown')
-
-
-async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Add stock or crypto to favorit/alert"""
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-
-    if not ctx.args:
-        await update.message.reply_text("❌ /add BBCA 5000\n❌ /add BTC-USD 70000")
-        return
-
-    ticker = ctx.args[0].upper()
-    target_price = None
-
-    if len(ctx.args) > 1:
-        try:
-            target_price = float(ctx.args[1])
-        except (ValueError, TypeError, IndexError):
-            await update.message.reply_text("❌ Harga harus angka!")
-            return
-
-    # Check if it's a crypto ticker
-    is_crypto = ticker.endswith('-USD') or ticker in crypto_service.crypto_pairs
-
-    if is_crypto:
-        # Crypto alert
-        if 'crypto_favorit' not in u:
-            u['crypto_favorit'] = {}
-
-        u['crypto_favorit'][ticker] = target_price
-        save_user_data()
-
-        if target_price:
-            await update.message.reply_text(f"✅ *{ticker}* ditambahkan ke alert\nTarget: ${target_price:,.2f}", parse_mode='Markdown')
-        else:
-            await update.message.reply_text(f"✅ *{ticker}* ditambahkan ke alert\n(Tanpa target)", parse_mode='Markdown')
-    else:
-        # Stock favorit
-        if 'favorit' not in u:
-            u['favorit'] = {}
-
-        u['favorit'][ticker] = target_price
-        save_user_data()
-
-        if target_price:
-            await update.message.reply_text(f"✅ *{ticker}* ditambahkan\nTarget: Rp {target_price:,.0f}", parse_mode='Markdown')
-        else:
-            await update.message.reply_text(f"✅ *{ticker}* ditambahkan\n(Tanpa target)", parse_mode='Markdown')
-
-
-async def remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Remove stock or crypto from favorit/alert"""
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-
-    if not ctx.args:
-        await update.message.reply_text("❌ /remove BBCA\n❌ /remove BTC-USD")
-        return
-
-    ticker = ctx.args[0].upper()
-
-    # Check if it's a crypto ticker
-    is_crypto = ticker.endswith('-USD') or ticker in crypto_service.crypto_pairs
-
-    if is_crypto:
-        # Remove from crypto alerts
-        crypto_favorit = u.get('crypto_favorit', {})
-
-        if ticker in crypto_favorit:
-            del crypto_favorit[ticker]
-            save_user_data()
-            await update.message.reply_text(f"✅ *{ticker}* dihapus dari alert crypto", parse_mode='Markdown')
-        else:
-            await update.message.reply_text(f"ℹ️ *{ticker}* tidak ada di alert crypto", parse_mode='Markdown')
-    else:
-        # Remove from stock favorit
-        favorit = u.get('favorit', {})
-
-        if ticker in favorit:
-            del favorit[ticker]
-            save_user_data()
-            await update.message.reply_text(f"✅ *{ticker}* dihapus dari favorit", parse_mode='Markdown')
-        else:
-            await update.message.reply_text(f"ℹ️ *{ticker}* tidak ada di favorit", parse_mode='Markdown')
-
-
-# === NOTIFIKASI ===
-NOTIFICATION_DESCRIPTIONS = {
-    'saham': ('Sinyal Saham', 'Sinyal BUY/SELL saham IDX otomatis', 'Saat ada sinyal kuat'),
-    'crypto': ('Sinyal Crypto', 'Sinyal BUY crypto 24/7 (250+ pair)', 'Saat ada sinyal kuat'),
-    'bsjp': ('BSJP', 'Beli Sore Jual Pagi - saham potensial', '14:00-16:00 WIB (sebelum market close)'),
-    'morning': ('Sinyal Pagi', 'Rekomendasi saham potensial untuk hari ini', '07:15-08:00 WIB (sebelum market open)'),
-    'alert_favorit': ('Alert Favorit', 'Notifikasi saat saham favorit bergerak signifikan', 'Real-time saat harga berubah'),
-}
-
-
-async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Show and manage notification settings"""
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-    tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
-
-    def status_emoji(val):
-        return "✅" if val else "❌"
-
-    keyboard = [
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_saham'))} Sinyal Saham", callback_data="notif_saham")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_crypto'))} Sinyal Crypto", callback_data="notif_crypto")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_bsjp'))} BSJP", callback_data="notif_bsjp")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_morning'))} Sinyal Pagi", callback_data="notif_morning")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    msg = f"""🔔 *PENGATURAN NOTIFIKASI*
-
-⏱️ Timeframe aktif: *{tf_name}*
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-Klik untuk toggle ON/OFF:"""
-
-    for key, (name, desc, schedule) in NOTIFICATION_DESCRIPTIONS.items():
-        marker = status_emoji(u.get(f'notif_{key}'))
-        msg += f"\n{marker} *{name}*\n   _{desc}_\n   📅 _{schedule}_"
-
-    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Gunakan /tf untuk ganti timeframe"
-
-    await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
-
-
-async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Toggle notification settings via callback"""
-    query = update.callback_query
-    await _safe_query_answer(query)
-    uid = str(query.from_user.id)
-    u = get_user(uid)
-
-    notif_key = query.data.replace('notif_', '')
-    if notif_key in ('saham', 'crypto', 'bsjp', 'morning', 'alert_favorit'):
-        u[f'notif_{notif_key}'] = not u.get(f'notif_{notif_key}', False)
-        save_user_data()
-
-    def status_emoji(val):
-        return "✅" if val else "❌"
-
-    tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
-
-    keyboard = [
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_saham'))} Sinyal Saham", callback_data="notif_saham")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_crypto'))} Sinyal Crypto", callback_data="notif_crypto")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_bsjp'))} BSJP", callback_data="notif_bsjp")],
-        [InlineKeyboardButton(f"{status_emoji(u.get('notif_morning'))} Sinyal Pagi", callback_data="notif_morning")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    msg = f"""🔔 *PENGATURAN NOTIFIKASI*
-
-⏱️ Timeframe aktif: *{tf_name}*
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-Klik untuk toggle ON/OFF:"""
-
-    for key, (name, desc, schedule) in NOTIFICATION_DESCRIPTIONS.items():
-        marker = status_emoji(u.get(f'notif_{key}'))
-        msg += f"\n{marker} *{name}*\n   _{desc}_\n   📅 _{schedule}_"
-
-    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Gunakan /tf untuk ganti timeframe"
-
-    await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
-
-
-# === PORTFOLIO ===
-async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-    pf = u.get('portfolio', [])
-
-    if not pf:
-        await update.message.reply_text("💼 Portfolio kosong\n\n/buy BBCA 8500 10")
-        return
-
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text("💼 Mengambil data portfolio...")
-
-    msg = "💼 PORTFOLIO\n" + "="*30 + "\n\n"
-    for p in pf:
-        d = stock_service.get_stock_data_combined(p['ticker'] + ".JK")
-        if d:
-            pnl = (d['price'] - p['buy_price']) * p['lot'] * 100
-            emoji = "🟢" if pnl >= 0 else "🔴"
-            msg += f"{emoji} {p['ticker']}\n"
-            msg += f"   Buy: {p['buy_price']} | Current: {d['price']:,.0f}\n"
-            msg += f"   Lot: {p['lot']} | P/L: {pnl:,.0f}\n\n"
-
-    await update.message.reply_text(msg, parse_mode='Markdown')
-
-
-async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-
-    if len(ctx.args) < 3:
-        await update.message.reply_text("❌ /buy BBCA 8500 10")
-        return
-
-    try:
-        t = ctx.args[0].upper()
-        price = float(ctx.args[1])
-        lot = int(ctx.args[2])
-        u.setdefault('portfolio', []).append({'ticker': t, 'buy_price': price, 'lot': lot})
-        await update.message.reply_text(f"✅ Buy {t} @ {price:,} | Lot {lot}")
-    except (ValueError, TypeError, IndexError, KeyError):
-        await update.message.reply_text("❌ Format salah!")
-
-
-async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    u = get_user(uid)
-
-    if len(ctx.args) < 2:
-        await update.message.reply_text("❌ /sell BBCA 5")
-        return
-
-    try:
-        t = ctx.args[0].upper()
-        lot = int(ctx.args[1])
-        pf = u.get('portfolio', [])
-
-        await update.message.chat.send_action('typing')
-        await update.message.reply_text(f"💰 Mengambil harga {t}...")
-
-        for i, p in enumerate(pf):
-            if p['ticker'] == t:
-                d = stock_service.get_stock_data_combined(t + ".JK")
-                current = d['price'] if d else p['buy_price']
-                pnl = (current - p['buy_price']) * lot * 100
-
-                if p['lot'] <= lot:
-                    pf.pop(i)
-                else:
-                    pf[i]['lot'] -= lot
-
-                await update.message.reply_text(f"✅ Sell {t} {lot} lot @ {current:,.0f}\nP/L: {pnl:,.0f}")
-                return
-
-        await update.message.reply_text(f"ℹ️ Tidak ada posisi {t}")
-    except (ValueError, TypeError, IndexError, KeyError):
-        await update.message.reply_text("❌ Format salah!")
-
-
-# === CRYPTO ===
-async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """View crypto signals - PARALLEL FETCHING"""
-    start_time = time.time()
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text("₿ Mengambil data crypto...")
-
-    tickers = list(crypto_service.crypto_pairs.keys())
-    total = len(tickers)
-
-    async def fetch_crypto(ticker):
-        try:
-            d = crypto_service.get_crypto_data_combined(ticker)
-            if d:
-                s = signal_service.generate_crypto_signal(d)
-                if s.get('entry') and s['entry'] > 0:
-                    return (ticker, crypto_service.crypto_pairs.get(ticker, ticker), s, ticker)
-        except Exception as e:
-            logger.error(f"Error fetching {ticker}: {e}")
-        return None
-
-    semaphore = asyncio.Semaphore(20)
-
-    async def fetch_with_semaphore(ticker):
-        async with semaphore:
-            return await fetch_crypto(ticker)
-
-    tasks = [fetch_with_semaphore(t) for t in tickers]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    signals = [r for r in results if r and not isinstance(r, Exception)]
-
-    elapsed = time.time() - start_time
-    logger.info(f"Crypto fetch completed: {len(signals)}/{total} signals in {elapsed:.1f}s")
-
-    await update.message.reply_text(format_crypto_msg(signals), parse_mode='Markdown')
-
-
-# === BSJP ===
-async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """BSJP - Beli Sore Jual Pagi signals"""
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text("🌙 Menganalisis sinyal BSJP...")
-
-    tickers = list(ALL_STOCKS.keys())[:150]
-
-    async def analyze_stock(ticker):
-        try:
-            d1h = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
-            if not d1h or d1h.get('candles', 0) < 10:
-                return None
-
-            rsi = d1h.get('rsi', 50)
-            price = d1h['price']
-            ma_fast = d1h.get('ma_fast', price)
-            ma_slow = d1h.get('ma_slow', price)
-            above_ma = price > ma_fast > ma_slow
-            rsi_ok = rsi < 65 and rsi > 30
-            change = d1h.get('change', 0)
-
-            score = 0
-            reasons = []
-            if above_ma:
-                score += 2
-                reasons.append("Above MA")
-            if rsi_ok:
-                score += 1
-                reasons.append(f"RSI {rsi:.0f} OK")
-            if change > 0:
-                score += 1
-                reasons.append(f"+{change:.1f}%")
-
-            if score >= 2:
-                return {
-                    'ticker': ticker,
-                    'name': ALL_STOCKS.get(ticker, ticker),
-                    'price': price,
-                    'rsi': rsi,
-                    'change': change,
-                    'score': score,
-                    'reasons': ', '.join(reasons),
-                    'tp': price * 1.02,
-                    'sl': price * 0.985
-                }
-        except Exception as e:
-            logger.debug(f"bsjp analyze inner failure: {e}")
-        return None
-
-    semaphore = asyncio.Semaphore(30)
-    async def fetch_with_semaphore(ticker):
-        async with semaphore:
-            return await analyze_stock(ticker)
-
-    tasks = [fetch_with_semaphore(t) for t in tickers]
-    results = await asyncio.gather(*tasks)
-
-    signals = [r for r in results if r is not None]
-    signals.sort(key=lambda x: x['score'], reverse=True)
-
-    await update.message.reply_text(format_bsjp_msg(signals[:10]), parse_mode='Markdown')
-
-
-# === MORNING ===
-async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Morning watchlist - stocks likely to go up during the day"""
-    await update.message.chat.send_action('typing')
-    await update.message.reply_text("☀️ Menganalisis rekomendasi pagi...")
-
-    tickers = list(ALL_STOCKS.keys())[:100]
-
-    async def analyze_stock(ticker):
-        try:
-            d = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
-            if not d or d.get('candles', 0) < 10:
-                return None
-
-            rsi = d.get('rsi', 50)
-            price = d['price']
-            ma_fast = d.get('ma_fast', price)
-            ma_slow = d.get('ma_slow', price)
-            change = d.get('change', 0)
-
-            score = 0
-            reasons = []
-
-            if rsi < 35:
-                score += 2
-                reasons.append(f"RSI {rsi:.0f} oversold")
-            elif rsi < 45:
-                score += 1
-
-            if price > ma_fast > ma_slow:
-                score += 2
-                reasons.append("Above MA")
-            elif price > ma_fast:
-                score += 1
-
-            if change > 1:
-                score += 1
-                reasons.append(f"+{change:.1f}%")
-
-            if score >= 2:
-                return {
-                    'ticker': ticker,
-                    'name': ALL_STOCKS.get(ticker, ticker),
-                    'price': price,
-                    'rsi': rsi,
-                    'change': change,
-                    'score': score,
-                    'reasons': ', '.join(reasons),
-                    'tp': price * 1.03,
-                    'sl': price * 0.98
-                }
-        except Exception as e:
-            logger.debug(f"morning analyze inner failure: {e}")
-        return None
-
-    semaphore = asyncio.Semaphore(25)
-    async def fetch_with_semaphore(ticker):
-        async with semaphore:
-            return await analyze_stock(ticker)
-
-    tasks = [fetch_with_semaphore(t) for t in tickers]
-    results = await asyncio.gather(*tasks)
-
-    signals = [r for r in results if r is not None]
-    signals.sort(key=lambda x: x['score'], reverse=True)
-
-    await update.message.reply_text(format_morning_msg(signals[:10]), parse_mode='Markdown')
-
-
-# === HEALTH CHECK ===
-async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Check API health status. See handlers/commands/health.py"""
-    from handlers.commands.health import health_cmd as _health_cmd
-    return await _health_cmd(update, ctx)
-
-
-async def scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Manually trigger stock scan. See handlers/commands/health.py"""
-    from handlers.commands.health import scan_cmd as _scan_cmd
-    return await _scan_cmd(update, ctx)
-
-
-async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Reset circuit breakers and clear stale caches. See handlers/commands/health.py"""
-    from handlers.commands.health import reset_cmd as _reset_cmd
-    return await _reset_cmd(update, ctx)
-
-
-async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """List all available commands. See handlers/commands/help.py"""
-    from handlers.commands.help import help_cmd as _help_cmd
-    return await _help_cmd(update, ctx)
-
-
-
-
-# === HELP ===
-async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = """╔══════════════════════════════════════╗
-║        📖 DAFTAR COMMAND           ║
-╠══════════════════════════════════════╣
-║  /start    - Mulai bot             ║
-║  /harga    - Daftar harga          ║
-║  /bsjp     - Beli Sore Jual Pagi  ║
-║  /crypto   - Sinyal crypto         ║
-║  /tf       - Pilih timeframe       ║
-║  /sinyal   - Sinyal saham         ║
-║  /analisa  - Analisis saham/crypto ║
-║  /portfolio - Lihat portfolio      ║
-║  /buy      - Catat buy             ║
-║  /sell     - Catat sell            ║
-║  /health   - Cek status            ║
-╚══════════════════════════════════════╝
-
-⚠️ Disclaimer: Trading risiko
-tanggung sendiri"""
-    await update.message.reply_text(msg)
-
-
-# === CHART ===
-async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Generate chart for stock/crypto. See handlers/commands/chart.py"""
-    from handlers.commands.chart import chart_cmd as _chart_cmd
-    return await _chart_cmd(update, ctx)
-
-
-# === ANALISA COMMAND ===
-async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Analisis saham atau crypto dengan format lengkap. See handlers/commands/analisa.py"""
-    from handlers.commands.analisa import analisa_cmd as _analisa_cmd
-    return await _analisa_cmd(update, ctx)
-
-
-# === BUTTONS ===
 async def buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    handlers = {
-        "📊 Harga": harga,
-        "📈 Stats": stats_cmd,
-        "🎯 Sinyal": morning_watchlist,
-        "⭐ Favorit": favorit,
-        "⏱️ Timeframe": tf,
-        "🌙 BSJP": bsjp,
-        "💼 Portfolio": portfolio,
-        "🔔 Notifikasi": notifikasi,
-        "₿ Crypto": crypto,
-    }
-    if update.message.text in handlers:
-        await handlers[update.message.text](update, ctx)
+    """Route button text. See handlers/commands/start.py"""
+    from handlers.commands.start import buttons as _buttons
+    return await _buttons(update, ctx)
+
+
 
 
 async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1142,6 +360,126 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # === REGISTER ALL HANDLERS ===
+async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Timeframe menu. See handlers/commands/timeframe.py"""
+    from handlers.commands.timeframe import tf as _tf
+    return await _tf(update, ctx)
+
+
+async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Timeframe category callback. See handlers/commands/timeframe.py"""
+    from handlers.commands.timeframe import tf_cat_cb as _tf_cat_cb
+    return await _tf_cat_cb(update, ctx)
+
+
+async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Timeframe selection callback. See handlers/commands/timeframe.py"""
+    from handlers.commands.timeframe import tf_cb as _tf_cb
+    return await _tf_cb(update, ctx)
+
+
+async def favorit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show favorites. See handlers/commands/favorites.py"""
+    from handlers.commands.favorites import favorit as _favorit
+    return await _favorit(update, ctx)
+
+
+async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Add favorite. See handlers/commands/favorites.py"""
+    from handlers.commands.favorites import add as _add
+    return await _add(update, ctx)
+
+
+async def remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Remove favorite. See handlers/commands/favorites.py"""
+    from handlers.commands.favorites import remove as _remove
+    return await _remove(update, ctx)
+
+
+async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Notification settings. See handlers/commands/notifications.py"""
+    from handlers.commands.notifications import notifikasi as _notifikasi
+    return await _notifikasi(update, ctx)
+
+
+async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Notification toggle callback. See handlers/commands/notifications.py"""
+    from handlers.commands.notifications import notifikasi_cb as _notifikasi_cb
+    return await _notifikasi_cb(update, ctx)
+
+
+async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show portfolio. See handlers/commands/portfolio.py"""
+    from handlers.commands.portfolio import portfolio as _portfolio
+    return await _portfolio(update, ctx)
+
+
+async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Record buy. See handlers/commands/portfolio.py"""
+    from handlers.commands.portfolio import buy as _buy
+    return await _buy(update, ctx)
+
+
+async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Record sell. See handlers/commands/portfolio.py"""
+    from handlers.commands.portfolio import sell as _sell
+    return await _sell(update, ctx)
+
+
+async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Crypto signals. See handlers/commands/signals.py"""
+    from handlers.commands.signals import crypto as _crypto
+    return await _crypto(update, ctx)
+
+
+async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """BSJP signals. See handlers/commands/signals.py"""
+    from handlers.commands.signals import bsjp as _bsjp
+    return await _bsjp(update, ctx)
+
+
+async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Morning watchlist. See handlers/commands/signals.py"""
+    from handlers.commands.signals import morning_watchlist as _morning_watchlist
+    return await _morning_watchlist(update, ctx)
+
+
+async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Health status. See handlers/commands/health.py"""
+    from handlers.commands.health import health_cmd as _health_cmd
+    return await _health_cmd(update, ctx)
+
+
+async def scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Manual scan. See handlers/commands/health.py"""
+    from handlers.commands.health import scan_cmd as _scan_cmd
+    return await _scan_cmd(update, ctx)
+
+
+async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reset circuit breakers. See handlers/commands/health.py"""
+    from handlers.commands.health import reset_cmd as _reset_cmd
+    return await _reset_cmd(update, ctx)
+
+
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Help command. See handlers/commands/help.py"""
+    from handlers.commands.help import help_cmd as _help_cmd
+    return await _help_cmd(update, ctx)
+
+
+async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Chart generator. See handlers/commands/chart.py"""
+    from handlers.commands.chart import chart_cmd as _chart_cmd
+    return await _chart_cmd(update, ctx)
+
+
+async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Detailed analysis. See handlers/commands/analisa.py"""
+    from handlers.commands.analisa import analisa_cmd as _analisa_cmd
+    return await _analisa_cmd(update, ctx)
+
+
 def register_handlers(app):
     """Register all command handlers to the application"""
     from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
