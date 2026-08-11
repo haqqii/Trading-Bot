@@ -78,6 +78,13 @@ class TelegramLogHandler(logging.Handler):
         now = datetime.now(timezone.utc)
 
         with _alert_lock:
+            # Periodic cleanup: remove entries older than 2x dedup window
+            # (prevents unbounded growth of _alert_history)
+            cutoff = now - 2 * _dedup_window
+            stale_keys = [k for k, v in _alert_history.items() if v < cutoff]
+            for k in stale_keys:
+                del _alert_history[k]
+
             last = _alert_history.get(fingerprint)
             if last and (now - last) < _dedup_window:
                 return
