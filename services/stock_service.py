@@ -499,10 +499,43 @@ class StockService:
         return None
 
     def load_stocks(self):
-        """Load all IDX stocks from TradingView, fallback to local idx_stocks.py"""
+        """Load all IDX stocks with JSON cache (refreshes from TradingView every 24h).
+
+        Priority:
+        1. Fresh cache (< 24h) -> use it
+        2. Stale cache + network -> fetch TradingView, save cache
+        3. Network down + stale cache -> use stale cache
+        4. Everything fails -> last resort fallback to idx_stocks.py
+        """
+        import json as _json
+        import os as _os
+        from datetime import datetime, timezone, timedelta
+
+        WIB = timezone(timedelta(hours=7))
+        cache_file = _os.path.join(
+            _os.path.dirname(_os.path.dirname(__file__)), 'data', 'stocks_cache.json'
+        )
+        cache_ttl_hours = 24
         url = "https://scanner.tradingview.com/indonesia/scan"
         stocks = {}
 
+        # Step 1: Check fresh cache
+        if _os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache = _json.load(f)
+                cached_at = datetime.fromisoformat(
+                    cache['cached_at'].replace('Z', '+00:00'))
+                age_hours = (datetime.now(WIB) - cached_at.astimezone(WIB)).total_seconds() / 3600
+                if age_hours < cache_ttl_hours:
+                    logger.info(f"Using fresh stocks cache ({len(cache['stocks'])} tickers, {age_hours:.1f}h old)")
+                    return cache['stocks']
+                logger.info(f"Stale cache ({age_hours:.1f}h old), will refresh from TradingView")
+            except Exception:
+                pass  # Cache corrupted, re-fetch
+
+        # Step 2: Fetch from TradingView
+        logger.info("Fetching IDX stocks from TradingView...")
         for page in range(5):
             offset = page * 200
             payload = {
@@ -511,7 +544,6 @@ class StockService:
                 'columns': ['name', 'description'],
                 'range': [offset, offset + 200]
             }
-
             try:
                 resp = _session.post(url, json=payload, timeout=10)
                 data = resp.json()
@@ -529,19 +561,45 @@ class StockService:
                 logger.warning(f"TradingView error (page {page}): {e}")
                 break
 
-        # Fallback to local idx_stocks.py if TradingView failed
-        if not stocks:
-            logger.warning("TradingView returned 0 stocks, falling back to local idx_stocks.py")
+        # Step 3: Save cache if we got data
+        if stocks:
             try:
-                from data.idx_stocks import ALL_IDX_STOCKS
-                stocks = dict(ALL_IDX_STOCKS)
-                logger.info(f"Loaded {len(stocks)} stocks from local idx_stocks.py")
-            except ImportError:
-                logger.error("Could not import idx_stocks.py fallback")
+                _os.makedirs(_os.path.dirname(cache_file), exist_ok=True)
+                cache_data = {
+                    'stocks': stocks,
+                    'cached_at': datetime.now(WIB).isoformat(),
+                    'count': len(stocks),
+                }
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    _json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"Saved {len(stocks)} stocks to cache")
+            except Exception as e:
+                logger.warning(f"Failed to save stocks cache: {e}")
+            return stocks
 
-        logger.info(f"Loaded {len(stocks)} stocks total")
+        # Step 4: Try stale cache if network failed
+        if _os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache = _json.load(f)
+                stale = cache.get('stocks', {})
+                logger.warning(f"TradingView failed, using stale cache ({len(stale)} stocks)")
+                return stale
+            except Exception:
+                pass
+
+        # Step 5: Last resort fallback to idx_stocks.py
+        logger.warning("TradingView and cache both failed, falling back to idx_stocks.py")
+        try:
+            from data.idx_stocks import ALL_IDX_STOCKS
+            stocks = dict(ALL_IDX_STOCKS)
+            logger.info(f"Loaded {len(stocks)} stocks from idx_stocks.py")
+        except ImportError:
+            logger.error("Could not import idx_stocks.py fallback")
         return stocks
 
 
-# Singleton instance
+
+
+
 stock_service = StockService()
