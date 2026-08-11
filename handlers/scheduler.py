@@ -89,6 +89,22 @@ async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, d
     return False
 
 
+
+def _safe_time_diff(t1, t2):
+    """Compute (t1 - t2) in seconds, handling naive/aware mismatch.
+
+    If one is naive, treat it as UTC (since SQLite CURRENT_TIMESTAMP
+    returns naive UTC). Returns total seconds as float.
+    """
+    from datetime import timezone as _tz
+    if t1.tzinfo is None and t2.tzinfo is not None:
+        t1 = t1.replace(tzinfo=_tz.utc)
+    elif t2.tzinfo is None and t1.tzinfo is not None:
+        t2 = t2.replace(tzinfo=_tz.utc)
+    return (t1 - t2).total_seconds()
+
+
+
 def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str = '3d'):
     """
     Get stock data with stale cache fallback.
@@ -630,7 +646,7 @@ async def check_stock_signals(app):
                     if existing is None:
                         should_send = True
                     else:
-                        time_diff = (now - existing.get('time', now)).total_seconds()
+                        time_diff = _safe_time_diff(now, existing.get('time', now))
                         if time_diff > 86400:  # 24 hours
                             last_entry = existing.get('entry', 0)
                             if last_entry > 0:
@@ -1343,7 +1359,7 @@ async def check_crypto_signals(app):
                     if existing is None:
                         should_send = True
                     else:
-                        time_diff = (now - existing.get('time', now)).total_seconds()
+                        time_diff = _safe_time_diff(now, existing.get('time', now))
                         if time_diff > 86400:  # 24 hours
                             last_entry = existing.get('entry', 0)
                             if last_entry > 0:
