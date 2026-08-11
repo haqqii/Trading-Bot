@@ -1644,7 +1644,7 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append(f"   ✅ TP1: {tp1} | ✅ TP2: {tp2} | ✅ TP3: {tp3} | ❌ SL: {sl}")
             lines.append(f"   📐 Avg TP reached: {avg}x per win")
         else:
-            lines.append("   ⏳ Belum ada sinyal yang закрыт")
+            lines.append("   ⏳ Belum ada sinyal yang ditutup")
         return '\n'.join(lines)
 
     stock = fmt_stats('stock', 'SAHAM', '📈')
@@ -1662,7 +1662,7 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if crypto:
             parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n" + crypto)
         parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        parts.append("_Data diperbarui otomatis saat sinyal закрыт_")
+        parts.append("_Data diperbarui otomatis saat sinyal ditutup_")
         msg = '\n'.join(parts)
 
     await update.message.reply_text(msg, parse_mode='Markdown')
