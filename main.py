@@ -14,10 +14,62 @@ import os
 import io
 import sys
 import logging
+import logging.handlers
 
 # Fix UTF-8 output for Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# Create logs directory if not exists (needed for logging setup below)
+logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
+# Custom handler to handle Windows file locking
+class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except PermissionError:
+            try:
+                self.stream.close()
+                self.stream = self._open()
+                super().emit(record)
+            except Exception as e:
+                print(f"[log handler] reopen failed: {e}", file=sys.stderr)
+
+# Configure logging with safe file rotation
+file_handler = SafeRotatingFileHandler(
+    os.path.join(logs_dir, 'bot.log'),
+    maxBytes=5 * 1024 * 1024,  # 5MB
+    backupCount=5,
+    encoding='utf-8',
+    delay=True
+)
+file_handler.setLevel(logging.INFO)
+
+error_handler = SafeRotatingFileHandler(
+    os.path.join(logs_dir, 'error.log'),
+    maxBytes=5 * 1024 * 1024,  # 5MB
+    backupCount=5,
+    encoding='utf-8',
+    delay=True
+)
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s\n'
+    '  File: %(filename)s:%(lineno)d\n'
+    '  Function: %(funcName)s'
+))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[file_handler, error_handler, console_handler]
+)
+logger = logging.getLogger(__name__)
 
 # Single instance lock - prevent multiple bot instances
 LOCK_FILE = os.path.join(os.path.dirname(__file__), 'bot.lock')
@@ -52,64 +104,6 @@ from services.crypto_service import crypto_service
 # Import handlers
 from handlers.command_handlers import register_handlers, ALL_STOCKS
 from handlers.scheduler import register_jobs, set_user_db, set_last_prices, set_last_crypto_prices, set_last_buy_signals, set_all_stocks
-
-# Configure logging
-import logging
-import logging.handlers
-
-# Create logs directory if not exists
-logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
-os.makedirs(logs_dir, exist_ok=True)
-
-# Custom handler to handle Windows file locking
-class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
-    def emit(self, record):
-        try:
-            super().emit(record)
-        except PermissionError:
-            # If file is locked, try to reopen it
-            try:
-                self.stream.close()
-                self.stream = self._open()
-                super().emit(record)
-            except Exception as e:
-                # Meta-logger is broken; fall back to stderr so we don't
-                # lose the failure silently.
-                print(f"[log handler] reopen failed: {e}", file=sys.stderr)
-
-# Configure logging with safe file rotation
-file_handler = SafeRotatingFileHandler(
-    os.path.join(logs_dir, 'bot.log'),
-    maxBytes=5 * 1024 * 1024,  # 5MB
-    backupCount=5,
-    encoding='utf-8',
-    delay=True  # Delay opening file until first write
-)
-file_handler.setLevel(logging.INFO)
-
-error_handler = SafeRotatingFileHandler(
-    os.path.join(logs_dir, 'error.log'),
-    maxBytes=5 * 1024 * 1024,  # 5MB
-    backupCount=5,
-    encoding='utf-8',
-    delay=True
-)
-error_handler.setLevel(logging.ERROR)
-error_handler.setFormatter(logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s\n'
-    '  File: %(filename)s:%(lineno)d\n'
-    '  Function: %(funcName)s'
-))
-
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[file_handler, error_handler, console_handler]
-)
-logger = logging.getLogger(__name__)
 
 # Suppress noisy loggers
 logging.getLogger('urllib3').setLevel(logging.WARNING)
