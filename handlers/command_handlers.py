@@ -41,14 +41,14 @@ def _strip_markdown_chars(text: str) -> str:
     return out
 
 
-async def _send_with_retry(message, text, retries=5, delay=3, **kwargs):
+async def _send_with_retry(message, text, retries=3, delay=2, **kwargs):
     """Send message with retry on timeout. Returns True if successful."""
     from telegram.error import TimedOut
     for attempt in range(retries):
         try:
             await asyncio.wait_for(
                 message.reply_text(text, **kwargs),
-                timeout=180
+                timeout=30
             )
             return True
         except TimedOut:
@@ -1294,10 +1294,10 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 update.message.reply_text(
                     f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
                     parse_mode='Markdown',
-                    read_timeout=15,
-                    write_timeout=15
+                    read_timeout=8,
+                    write_timeout=8
                 ),
-                timeout=15
+                timeout=8
             )
             logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
         except Exception as reply_err:
@@ -1380,7 +1380,13 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 d = yahoo_probe
             else:
                 try:
-                    d = crypto_service.get_crypto_data_combined(full_ticker, '1h', '5d')
+                    d = await asyncio.wait_for(
+                        asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, '1h', '5d'),
+                        timeout=20
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[ANALISA] Crypto fetch timeout for {full_ticker}")
+                    d = None
                 except Exception as fetch_err:
                     logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
                     await update.message.reply_text(
@@ -1394,12 +1400,26 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # Fallback: try without -USD suffix
             if not d and full_ticker.endswith('-USD'):
                 alt_ticker = full_ticker.replace('-USD', '')
-                d = crypto_service.get_crypto_data_combined(alt_ticker, '1h', '5d')
+                try:
+                    d = await asyncio.wait_for(
+                        asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                        timeout=20
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[ANALISA] Crypto fallback fetch timeout for {alt_ticker}")
+                    d = None
 
             # Fallback: try with -USDT suffix
             if not d and full_ticker.endswith('-USD'):
                 alt_ticker = full_ticker.replace('-USD', '-USDT')
-                d = crypto_service.get_crypto_data_combined(alt_ticker, '1h', '5d')
+                try:
+                    d = await asyncio.wait_for(
+                        asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                        timeout=20
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[ANALISA] Crypto USDT fallback fetch timeout for {alt_ticker}")
+                    d = None
 
             if not d:
                 if not ticker_known:
@@ -1492,7 +1512,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
                 # Wait for stock data first (needed for analysis) - with TIMEOUT
                 try:
-                    d = stock_future.result(timeout=15)  # 15 second timeout
+                    d = stock_future.result(timeout=20)  # 20 second timeout
                 except concurrent.futures.TimeoutError:
                     logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
                     d = None
