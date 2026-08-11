@@ -24,7 +24,28 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     rm = ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False)
 
     tf_name = TIMEFRAMES[u.get('timeframe', '5')]['name']
-    notif_status = "🔔 AKTIF" if u.get('notifications') else "🔕 NONAKTIF"
+
+    # Build detailed notification status
+    notif_keys = [
+        ('notif_saham', '📈 Sinyal Saham'),
+        ('notif_crypto', '₿ Sinyal Crypto'),
+        ('notif_bsjp', '🌙 BSJP'),
+        ('notif_morning', '☀️ Sinyal Pagi'),
+        ('notif_alert_favorit', '⭐️ Alert Favorit'),
+    ]
+    on_count = sum(1 for k, _ in notif_keys if u.get(k, False))
+    if on_count == 0:
+        notif_status = "🔕 NONAKTIF"
+    elif on_count == len(notif_keys):
+        notif_status = "✅ Semua AKTIF"
+    else:
+        notif_status = f"⚠️ Aktif Sebagian ({on_count}/{len(notif_keys)})"
+
+    notif_lines = []
+    for key, label in notif_keys:
+        is_on = u.get(key, False)
+        status = "✅ ON" if is_on else "❌ OFF"
+        notif_lines.append(f"{status} {label}")
 
     msg = f"""🤖 *Ochobot*
 
@@ -41,9 +62,10 @@ teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
 💡 _Timeframe = interval candle yg dianalisis_
 • 1m/5m → Scalping (trading cepat, 5-15 menit)
 • 15m/1h → Intraday (trading harian)
-• Default: 5 Menit (cok untuk pemula)
+• Default: 5 Menit (cocok untuk pemula)
 
 🔔 Notifikasi: {notif_status}
+{chr(10).join(notif_lines)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 📱 *MENU*
