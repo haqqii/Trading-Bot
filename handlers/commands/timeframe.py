@@ -23,8 +23,8 @@ TIMEFRAME_DESCRIPTIONS = {
 TF_BUTTON_LABELS = {
     '1':    'Scalping',
     '5':    'Scalping',
-    '15':   'Daytrade',
-    '30':   'Daytrade',
+    '15':   'Intraday swing',
+    '30':   'Swing pendek',
     '60':   'Swing trading',
     '240':  'Swing jangka panjang',
     '1440': 'Position (1-4 minggu)',
