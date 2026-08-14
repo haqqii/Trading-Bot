@@ -14,7 +14,7 @@ TIMEFRAMES = {
     '30':  {'name': '30 Menit', 'interval': '30m', 'period': '5d'},
     '60':  {'name': '1 Jam',    'interval': '1h',  'period': '1mo'},
     '240': {'name': '4 Jam',    'interval': '4h',  'period': '1mo'},
-    '1440': {'name': '1 Hari',  'interval': '1d',  'period': '3mo'},
+    '1440': {'name': 'Harian',  'interval': '1d',  'period': '3mo'},
 }
 
 # Valid intervals for custom input (maps Yahoo Finance interval -> TIMEFRAMES key)

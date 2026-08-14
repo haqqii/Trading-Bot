@@ -16,7 +16,7 @@ TIMEFRAME_DESCRIPTIONS = {
     '30':   ('30 Menit', 'Swing pendek. Hold 1-2 jam, noise lebih sedikit.'),
     '60':   ('1 Jam',    'Swing trading. Hold 1-3 hari, sinyal lebih akurat.'),
     '240':  ('4 Jam',    'Swing jangka panjang. Hold beberapa hari, tren utama.'),
-    '1440': ('1 Hari',   'Position trading. Hold 1-4 minggu, analisa jangka panjang.'),
+    '1440': ('Harian',   'Position trading. 1 candle = 1 hari. Hold 1-4 minggu.'),
 }
 
 TF_CATEGORIES = {
@@ -40,7 +40,7 @@ TF_CATEGORIES = {
     },
     'long_trade': {
         'name': 'Long Trade',
-        'desc': 'Position trading. Hold 1-4 minggu. Untuk analisa jangka panjang.',
+        'desc': 'Position trading. Hold 1-4 minggu. 1 candle = 1 hari data.',
         'emoji': '🏔️',
         'timeframes': ['1440'],
     },

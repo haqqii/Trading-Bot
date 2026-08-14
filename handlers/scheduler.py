@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 from services.stock_service import stock_service, FINNHUB_API_KEY
 from services.crypto_service import crypto_service
-from services.signal_service import signal_service
+from services.signal_service import signal_service, calc_tPSL
 from utils.formatters import format_unified_crypto_notification, format_unified_stock_notification
 from db import db
 
@@ -180,6 +180,29 @@ market_cache = {}
 # This prevents wasting time on scans that will just timeout
 _yahoo_stock_cooldown = 0  # Number of scan cycles to skip
 _stock_timeout_count = [0]  # Timeout counter for this scan (list for mutability)
+
+
+# Timeframe key -> (interval, period) mapping for stock data fetch
+TF_TO_INTERVAL = {
+    '1': ('1m', '1d'),
+    '5': ('5m', '5d'),
+    '15': ('15m', '5d'),
+    '30': ('30m', '5d'),
+    '60': ('1h', '1mo'),
+    '240': ('4h', '1mo'),
+    '1440': ('1d', '3mo'),
+}
+
+# Crypto timeframe key -> (interval, period) mapping
+CRYPTO_TF_TO_INTERVAL = {
+    '1': ('1m', '1d'),
+    '5': ('5m', '5d'),
+    '15': ('15m', '5d'),
+    '30': ('30m', '5d'),
+    '60': ('1h', '1mo'),
+    '240': ('4h', '1mo'),
+    '1440': ('1d', '3mo'),
+}
 
 
 def _get_user_db():
@@ -750,10 +773,13 @@ async def check_stock_signals(app):
                             s['entry'] = entry_price
                             s['entry_low'] = entry_low
                             s['entry_high'] = entry_high
-                            s['tp1'] = entry_price + (1 * atr)
-                            s['tp2'] = entry_price + (2 * atr)
-                            s['tp3'] = entry_price + (3 * atr)
-                            s['sl'] = entry_price - (2 * atr)
+                            # Timeframe-aware TP/SL (default 5m for stocks)
+                            tpsl = calc_tPSL('BUY', entry_price, atr, '5')
+                            s['tp1'] = tpsl['tp1']
+                            s['tp2'] = tpsl['tp2']
+                            s['tp3'] = tpsl['tp3']
+                            s['sl'] = tpsl['sl']
+                            s['timeframe'] = '5'
                             s['rsi'] = d.get('rsi', 50)
                             logger.info(f"[STOCK] Fresh price for {ticker}: {entry_price:,.0f} from {d.get('source', 'unknown')}")
                         else:
@@ -873,7 +899,8 @@ async def check_stock_signals(app):
                                     'buy_score': s.get('buy_score', 0),
                                     'quality': s.get('quality', 'WEAK'),
                                     'signal_type': signal_type,
-                                    'is_reversal': s.get('is_reversal', False)
+                                    'is_reversal': s.get('is_reversal', False),
+                                    'timeframe': s.get('timeframe', '5'),  # Store timeframe for TP/SL checks
                                 }
                         except Exception as e:
                             logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
@@ -924,7 +951,10 @@ async def check_stock_tp_sl(app):
                     continue
 
                 try:
-                    d = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '1d')
+                    # Use signal's timeframe for data fetch (default 5m for backward compat)
+                    tf = signal_data.get('timeframe', '5')
+                    interval, period = TF_TO_INTERVAL.get(tf, ('5m', '5d'))
+                    d = stock_service.get_stock_data_combined(ticker + ".JK", interval, period)
                     if not d:
                         continue
 
@@ -1423,10 +1453,13 @@ async def check_crypto_signals(app):
                             entry_price = d['price']
                             atr = d.get('atr', entry_price * 0.02)
                             s['entry'] = entry_price
-                            s['tp1'] = entry_price + (1 * atr)
-                            s['tp2'] = entry_price + (2 * atr)
-                            s['tp3'] = entry_price + (3 * atr)
-                            s['sl'] = entry_price - (2 * atr)
+                            # Timeframe-aware TP/SL (default 60 = 1h for crypto)
+                            tpsl = calc_tPSL('BUY', entry_price, atr, '60')
+                            s['tp1'] = tpsl['tp1']
+                            s['tp2'] = tpsl['tp2']
+                            s['tp3'] = tpsl['tp3']
+                            s['sl'] = tpsl['sl']
+                            s['timeframe'] = '60'
                             logger.info(f"[CRYPTO] Fresh price for {ticker}: ${entry_price:,.2f} from {d.get('source', 'unknown')}")
                         else:
                             logger.warning(f"[CRYPTO] Could not fetch fresh data for {ticker}, using original entry: ${s.get('entry', 0):,.2f}")
@@ -1521,7 +1554,8 @@ async def check_crypto_signals(app):
                                     'buy_score': s.get('buy_score', 0),
                                     'quality': s.get('quality', 'WEAK'),
                                     'signal_type': signal_type,
-                                    'is_reversal': s.get('is_reversal', False)
+                                    'is_reversal': s.get('is_reversal', False),
+                                    'timeframe': s.get('timeframe', '60'),  # Store timeframe for TP/SL checks
                                 }
                         except Exception as e:
                             logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
@@ -1557,7 +1591,10 @@ async def check_crypto_tp_sl(app):
                     continue
 
                 try:
-                    d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d')
+                    # Use signal's timeframe for data fetch (default 60 = 1h for crypto)
+                    tf = signal_data.get('timeframe', '60')
+                    interval, period = CRYPTO_TF_TO_INTERVAL.get(tf, ('1h', '1mo'))
+                    d = crypto_service.get_crypto_data_combined(ticker, interval, period)
                     if not d:
                         continue
 

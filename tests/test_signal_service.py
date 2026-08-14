@@ -16,6 +16,8 @@ from services.signal_service import (
     SignalService,
     detect_patterns_from_data,
     signal_service,
+    calc_tPSL,
+    get_tPSL_multipliers,
 )
 
 
@@ -303,6 +305,80 @@ class TestStockSignalTPSL:
         result = SignalService.generate_stock_signal(data)
         # min_atr = max(0.01, 100 * 0.003) = 0.3
         assert result['atr'] >= 0.3
+
+
+class TestTimeframeAwareTPSL:
+    """Tests for timeframe-aware TP/SL multipliers."""
+
+    def test_scalping_multipliers(self):
+        """Scalping (1m, 5m) should have tightest targets."""
+        m = get_tPSL_multipliers('1')
+        assert m['sl'] == 2.0
+        assert m['tp1'] == 1.0
+        assert m['tp2'] == 2.0
+        assert m['tp3'] == 3.0
+
+        m = get_tPSL_multipliers('5')
+        assert m == get_tPSL_multipliers('1')
+
+    def test_intraday_multipliers(self):
+        """Intraday (15m, 30m) should have moderate targets."""
+        m = get_tPSL_multipliers('15')
+        assert m['sl'] == 2.5
+        assert m['tp1'] == 1.5
+        assert m['tp2'] == 3.0
+        assert m['tp3'] == 5.0
+
+        m = get_tPSL_multipliers('30')
+        assert m == get_tPSL_multipliers('15')
+
+    def test_swing_multipliers(self):
+        """Swing (1h, 4h, 1d) should have widest targets."""
+        m = get_tPSL_multipliers('60')
+        assert m['sl'] == 3.0
+        assert m['tp1'] == 2.0
+        assert m['tp2'] == 4.0
+        assert m['tp3'] == 7.0
+
+        assert get_tPSL_multipliers('240') == m
+        assert get_tPSL_multipliers('1440') == m
+
+    def test_calc_tpsl_buy_scalping(self):
+        """Scalping BUY should have tight targets."""
+        tpsl = calc_tPSL('BUY', 100, 1.0, '5')
+        assert tpsl['sl'] == 98.0    # 100 - 2.0
+        assert tpsl['tp1'] == 101.0   # 100 + 1.0
+        assert tpsl['tp2'] == 102.0   # 100 + 2.0
+        assert tpsl['tp3'] == 103.0   # 100 + 3.0
+
+    def test_calc_tpsl_buy_swing(self):
+        """Swing BUY should have wider targets."""
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60')
+        assert tpsl['sl'] == 97.0     # 100 - 3.0
+        assert tpsl['tp1'] == 102.0   # 100 + 2.0
+        assert tpsl['tp2'] == 104.0   # 100 + 4.0
+        assert tpsl['tp3'] == 107.0   # 100 + 7.0
+
+    def test_calc_tpsl_sell(self):
+        """SELL TP/SL should be below entry."""
+        tpsl = calc_tPSL('SELL', 100, 1.0, '5')
+        assert tpsl['sl'] == 102.0    # 100 + 2.0
+        assert tpsl['tp1'] == 99.0    # 100 - 1.0
+        assert tpsl['tp2'] == 98.0    # 100 - 2.0
+        assert tpsl['tp3'] == 97.0    # 100 - 3.0
+
+    def test_calc_tpsl_hold(self):
+        """HOLD should return None for all targets."""
+        tpsl = calc_tPSL('HOLD', 100, 1.0, '5')
+        assert tpsl['sl'] is None
+        assert tpsl['tp1'] is None
+        assert tpsl['tp2'] is None
+        assert tpsl['tp3'] is None
+
+    def test_default_timeframe(self):
+        """Unknown timeframe should default to swing (safest option)."""
+        tpsl = calc_tPSL('BUY', 100, 1.0, '999')
+        assert tpsl['sl'] == 97.0  # Same as swing (wider protection)
 
 
 # === Crypto Signal Tests ===

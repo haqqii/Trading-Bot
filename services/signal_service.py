@@ -6,6 +6,47 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# TP/SL multipliers by timeframe category
+# Scalping: 1m, 5m — tight targets, frequent checks
+# Intraday: 15m, 30m — moderate targets
+# Swing: 60m (1h), 240m (4h), 1440m (1d) — wider targets, less frequent checks
+TF_TPSL_MULTIPLIERS = {
+    'scalping': {'sl': 2.0, 'tp1': 1.0, 'tp2': 2.0, 'tp3': 3.0},   # 1m, 5m
+    'intraday': {'sl': 2.5, 'tp1': 1.5, 'tp2': 3.0, 'tp3': 5.0},  # 15m, 30m
+    'swing': {'sl': 3.0, 'tp1': 2.0, 'tp2': 4.0, 'tp3': 7.0},     # 1h, 4h, 1d
+}
+
+
+def get_tPSL_multipliers(timeframe: str):
+    """Get TP/SL multipliers based on timeframe."""
+    if timeframe in ('1', '5'):
+        return TF_TPSL_MULTIPLIERS['scalping']
+    elif timeframe in ('15', '30'):
+        return TF_TPSL_MULTIPLIERS['intraday']
+    else:  # '60', '240', '1440' and default
+        return TF_TPSL_MULTIPLIERS['swing']
+
+
+def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5'):
+    """Calculate TP/SL with timeframe-adjusted multipliers."""
+    m = get_tPSL_multipliers(timeframe)
+    if signal == 'BUY':
+        return {
+            'sl': price - (m['sl'] * atr),
+            'tp1': price + (m['tp1'] * atr),
+            'tp2': price + (m['tp2'] * atr),
+            'tp3': price + (m['tp3'] * atr),
+        }
+    elif signal == 'SELL':
+        return {
+            'sl': price + (m['sl'] * atr),
+            'tp1': price - (m['tp1'] * atr),
+            'tp2': price - (m['tp2'] * atr),
+            'tp3': price - (m['tp3'] * atr),
+        }
+    return {'sl': None, 'tp1': None, 'tp2': None, 'tp3': None}
+
+
 def detect_patterns_from_data(data):
     """
     Detect chart patterns from stock/crypto data.
@@ -145,29 +186,18 @@ class SignalService:
             signal = 'SELL'
             quality = 'WEAK'
 
-        # Calculate TP/SL
+        # Calculate TP/SL with timeframe-adjusted multipliers
         min_atr = max(atr, price * 0.003)
         effective_atr = min_atr
-
-        if signal == 'BUY':
-            sl = price - (2 * effective_atr)
-            tp1 = price + (1 * effective_atr)
-            tp2 = price + (2 * effective_atr)
-            tp3 = price + (3 * effective_atr)
-        elif signal == 'SELL':
-            sl = price + (2 * effective_atr)
-            tp1 = price - (1 * effective_atr)
-            tp2 = price - (2 * effective_atr)
-            tp3 = price - (3 * effective_atr)
-        else:
-            sl = tp1 = tp2 = tp3 = None
+        timeframe = data.get('timeframe', '5')
+        tpsl = calc_tPSL(signal, price, effective_atr, timeframe)
 
         return {
             'signal': signal,
             'reason': ', '.join(reasons) if reasons else 'No signal',
             'entry': price,
-            'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-            'sl': sl,
+            'tp1': tpsl['tp1'], 'tp2': tpsl['tp2'], 'tp3': tpsl['tp3'],
+            'sl': tpsl['sl'],
             'rsi': rsi,
             'atr': effective_atr,
             'quality': quality,
@@ -364,28 +394,17 @@ class SignalService:
                 signal = 'SELL'
                 quality = 'WEAK'
 
-        # Crypto TP/SL: wider for volatile market
+        # Crypto TP/SL: wider for volatile market, timeframe-adjusted
         effective_atr = max(atr, price * 0.005)
-
-        if signal == 'BUY':
-            sl = price - (2 * effective_atr)
-            tp1 = price + (1 * effective_atr)
-            tp2 = price + (2 * effective_atr)
-            tp3 = price + (3 * effective_atr)
-        elif signal == 'SELL':
-            sl = price + (2 * effective_atr)
-            tp1 = price - (1 * effective_atr)
-            tp2 = price - (2 * effective_atr)
-            tp3 = price - (3 * effective_atr)
-        else:
-            sl = tp1 = tp2 = tp3 = None
+        timeframe = data.get('timeframe', '60')  # Crypto default 1h
+        tpsl = calc_tPSL(signal, price, effective_atr, timeframe)
 
         return {
             'signal': signal,
             'reason': ', '.join(reasons) if reasons else 'No signal',
             'entry': price,
-            'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-            'sl': sl,
+            'tp1': tpsl['tp1'], 'tp2': tpsl['tp2'], 'tp3': tpsl['tp3'],
+            'sl': tpsl['sl'],
             'rsi': rsi,
             'atr': effective_atr,
             'quality': quality,
