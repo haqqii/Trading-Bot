@@ -773,13 +773,13 @@ async def check_stock_signals(app):
                             s['entry'] = entry_price
                             s['entry_low'] = entry_low
                             s['entry_high'] = entry_high
-                            # Timeframe-aware TP/SL (default 5m for stocks)
+                            s['atr'] = atr  # Store ATR for per-user TF recalculation at check time
+                            # TP/SL shown in notification (uses default 5m for display purposes)
                             tpsl = calc_tPSL('BUY', entry_price, atr, '5')
                             s['tp1'] = tpsl['tp1']
                             s['tp2'] = tpsl['tp2']
                             s['tp3'] = tpsl['tp3']
                             s['sl'] = tpsl['sl']
-                            s['timeframe'] = '5'
                             s['rsi'] = d.get('rsi', 50)
                             logger.info(f"[STOCK] Fresh price for {ticker}: {entry_price:,.0f} from {d.get('source', 'unknown')}")
                         else:
@@ -886,22 +886,23 @@ async def check_stock_signals(app):
                             logger.info(f"[STOCK] Sent BUY signal for {ticker} to user {uid}")
 
                             # Only store signal for TP/SL tracking after successful delivery
-                            key = f"STOCK_{ticker}"
-                            if key not in signals:
-                                signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
-                                signals[key] = {
-                                    'name': name,
-                                    'entry': s['entry'],
-                                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
-                                    'sl': s['sl'], 'time': now_wib(),
-                                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                                    'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
-                                    'buy_score': s.get('buy_score', 0),
-                                    'quality': s.get('quality', 'WEAK'),
-                                    'signal_type': signal_type,
-                                    'is_reversal': s.get('is_reversal', False),
-                                    'timeframe': s.get('timeframe', '5'),  # Store timeframe for TP/SL checks
-                                }
+                            # Key includes user ID for per-user TP/SL tracking
+                            key = f"STOCK_{ticker}_{uid}"
+                            signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                            signals[key] = {
+                                'name': name,
+                                'entry': s['entry'],
+                                'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
+                                'sl': s['sl'], 'time': now_wib(),
+                                'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
+                                'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
+                                'buy_score': s.get('buy_score', 0),
+                                'quality': s.get('quality', 'WEAK'),
+                                'signal_type': signal_type,
+                                'is_reversal': s.get('is_reversal', False),
+                                'atr': s.get('atr', 0),  # ATR for per-user TF recalculation
+                                'user_id': uid,  # Track owner for TP/SL per-user
+                            }
                         except Exception as e:
                             logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
 
@@ -946,24 +947,39 @@ async def check_stock_tp_sl(app):
                 if signal_data.get('type') != 'stock':
                     continue
 
+                # Skip signals not owned by this user (per-user TP/SL tracking)
+                if signal_data.get('user_id') != uid:
+                    continue
+
                 ticker = signal_data.get('ticker_raw')
                 if not ticker:
                     continue
 
                 try:
-                    # Use signal's timeframe for data fetch (default 5m for backward compat)
-                    tf = signal_data.get('timeframe', '5')
-                    interval, period = TF_TO_INTERVAL.get(tf, ('5m', '5d'))
+                    # Get user's TF from their settings for per-user TP/SL calculation
+                    user_tf = u.get('timeframe', '5')
+                    interval, period = TF_TO_INTERVAL.get(user_tf, ('5m', '5d'))
                     d = stock_service.get_stock_data_combined(ticker + ".JK", interval, period)
                     if not d:
                         continue
 
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
-                    tp1 = signal_data.get('tp1', 0)
-                    tp2 = signal_data.get('tp2', 0)
-                    tp3 = signal_data.get('tp3', 0)
-                    sl = signal_data.get('sl', 0)
+                    atr = signal_data.get('atr', 0)
+
+                    # Recalculate TP/SL based on user's TF (per-user TP/SL)
+                    if entry > 0 and atr > 0:
+                        tpsl = calc_tPSL('BUY', entry, atr, user_tf)
+                        tp1 = tpsl['tp1']
+                        tp2 = tpsl['tp2']
+                        tp3 = tpsl['tp3']
+                        sl = tpsl['sl']
+                    else:
+                        # Fallback to stored values if ATR not available
+                        tp1 = signal_data.get('tp1', 0)
+                        tp2 = signal_data.get('tp2', 0)
+                        tp3 = signal_data.get('tp3', 0)
+                        sl = signal_data.get('sl', 0)
                     tp_hit = signal_data.get('tp_hit', {'tp1': False, 'tp2': False, 'tp3': False})
 
                     if entry <= 0:
@@ -1453,13 +1469,13 @@ async def check_crypto_signals(app):
                             entry_price = d['price']
                             atr = d.get('atr', entry_price * 0.02)
                             s['entry'] = entry_price
-                            # Timeframe-aware TP/SL (default 60 = 1h for crypto)
+                            s['atr'] = atr  # Store ATR for per-user TF recalculation
+                            # TP/SL shown in notification (uses default 1h for display)
                             tpsl = calc_tPSL('BUY', entry_price, atr, '60')
                             s['tp1'] = tpsl['tp1']
                             s['tp2'] = tpsl['tp2']
                             s['tp3'] = tpsl['tp3']
                             s['sl'] = tpsl['sl']
-                            s['timeframe'] = '60'
                             logger.info(f"[CRYPTO] Fresh price for {ticker}: ${entry_price:,.2f} from {d.get('source', 'unknown')}")
                         else:
                             logger.warning(f"[CRYPTO] Could not fetch fresh data for {ticker}, using original entry: ${s.get('entry', 0):,.2f}")
@@ -1541,21 +1557,22 @@ async def check_crypto_signals(app):
                             logger.info(f"[CRYPTO] Sent BUY signal for {ticker} to user {uid}")
 
                             # Only store signal for TP/SL tracking after successful delivery
-                            key = f"CRYPTO_{ticker}"
-                            if key not in signals:
-                                signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
-                                signals[key] = {
-                                    'name': name,
-                                    'entry': s['entry'],
-                                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
-                                    'sl': s['sl'], 'time': now_wib(),
-                                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                                    'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
-                                    'buy_score': s.get('buy_score', 0),
-                                    'quality': s.get('quality', 'WEAK'),
-                                    'signal_type': signal_type,
-                                    'is_reversal': s.get('is_reversal', False),
-                                    'timeframe': s.get('timeframe', '60'),  # Store timeframe for TP/SL checks
+                            # Key includes user ID for per-user TP/SL tracking
+                            key = f"CRYPTO_{ticker}_{uid}"
+                            signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                            signals[key] = {
+                                'name': name,
+                                'entry': s['entry'],
+                                'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
+                                'sl': s['sl'], 'time': now_wib(),
+                                'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
+                                'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
+                                'buy_score': s.get('buy_score', 0),
+                                'quality': s.get('quality', 'WEAK'),
+                                'signal_type': signal_type,
+                                'is_reversal': s.get('is_reversal', False),
+                                'atr': s.get('atr', 0),  # ATR for per-user TF recalculation
+                                'user_id': uid,  # Track owner for TP/SL per-user
                                 }
                         except Exception as e:
                             logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
@@ -1586,24 +1603,39 @@ async def check_crypto_tp_sl(app):
                 if signal_data.get('type') != 'crypto':
                     continue
 
+                # Skip signals not owned by this user (per-user TP/SL tracking)
+                if signal_data.get('user_id') != uid:
+                    continue
+
                 ticker = signal_data.get('ticker_raw')
                 if not ticker:
                     continue
 
                 try:
-                    # Use signal's timeframe for data fetch (default 60 = 1h for crypto)
-                    tf = signal_data.get('timeframe', '60')
-                    interval, period = CRYPTO_TF_TO_INTERVAL.get(tf, ('1h', '1mo'))
+                    # Get user's TF for per-user TP/SL calculation
+                    user_tf = u.get('timeframe', '60')
+                    interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
                     d = crypto_service.get_crypto_data_combined(ticker, interval, period)
                     if not d:
                         continue
 
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
-                    tp1 = signal_data.get('tp1', 0)
-                    tp2 = signal_data.get('tp2', 0)
-                    tp3 = signal_data.get('tp3', 0)
-                    sl = signal_data.get('sl', 0)
+                    atr = signal_data.get('atr', 0)
+
+                    # Recalculate TP/SL based on user's TF (per-user TP/SL)
+                    if entry > 0 and atr > 0:
+                        tpsl = calc_tPSL('BUY', entry, atr, user_tf)
+                        tp1 = tpsl['tp1']
+                        tp2 = tpsl['tp2']
+                        tp3 = tpsl['tp3']
+                        sl = tpsl['sl']
+                    else:
+                        # Fallback to stored values if ATR not available
+                        tp1 = signal_data.get('tp1', 0)
+                        tp2 = signal_data.get('tp2', 0)
+                        tp3 = signal_data.get('tp3', 0)
+                        sl = signal_data.get('sl', 0)
                     tp_hit = signal_data.get('tp_hit', {'tp1': False, 'tp2': False, 'tp3': False})
 
                     if entry <= 0:
