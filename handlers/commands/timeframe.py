@@ -127,20 +127,18 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
     for tf_key in cat['timeframes']:
         v = TIMEFRAMES[tf_key]
-        _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
         kb.append([InlineKeyboardButton(
-            f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']} - {desc[:35]}{'...' if len(desc) > 35 else ''}",
+            f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']}",
             callback_data=f"tf_{tf_key}"
         )])
 
     msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"
     msg += f"_{cat['desc']}_\n\n"
-    msg += "_Pilih timeframe untuk analisa:_\n\n"
+    msg += "_Pilih timeframe:_\n\n"
     for tf_key in cat['timeframes']:
         v = TIMEFRAMES[tf_key]
-        name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
         marker = '✅' if tf_key == curr else '⚪'
-        msg += f"{marker} *{name}* - {desc}\n"
+        msg += f"{marker} *{v['name']}*\n"
 
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
