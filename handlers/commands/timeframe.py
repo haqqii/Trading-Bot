@@ -21,8 +21,8 @@ TIMEFRAME_DESCRIPTIONS = {
 
 # Short labels for buttons (category-specific, user-friendly names)
 TF_BUTTON_LABELS = {
-    '1':    'Scalping',
-    '5':    'Scalping',
+    '1':    'Scalping 1 menit',
+    '5':    'Scalping 5 menit',
     '15':   'Intraday swing',
     '30':   'Swing pendek',
     '60':   'Swing trading',
