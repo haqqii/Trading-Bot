@@ -19,6 +19,17 @@ TIMEFRAME_DESCRIPTIONS = {
     '1440': ('Harian',   'Position trading. 1 candle = 1 hari. Hold 1-4 minggu.'),
 }
 
+# Short labels for buttons (category-specific, user-friendly names)
+TF_BUTTON_LABELS = {
+    '1':    'Scalping',
+    '5':    'Scalping',
+    '15':   'Daytrade',
+    '30':   'Daytrade',
+    '60':   'Swing trading',
+    '240':  'Swing jangka panjang',
+    '1440': 'Position (1-4 minggu)',
+}
+
 TF_CATEGORIES = {
     'scalping': {
         'name': 'Scalping',
@@ -127,8 +138,10 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
     for tf_key in cat['timeframes']:
         v = TIMEFRAMES[tf_key]
+        name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
+        btn_label = TF_BUTTON_LABELS.get(tf_key, v['name'])
         kb.append([InlineKeyboardButton(
-            f"{'✅ ' if tf_key == curr else '⚪ '}{v['name']}",
+            f"{'✅ ' if tf_key == curr else '⚪ '}{btn_label}",
             callback_data=f"tf_{tf_key}"
         )])
 
@@ -137,8 +150,9 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg += "_Pilih timeframe:_\n\n"
     for tf_key in cat['timeframes']:
         v = TIMEFRAMES[tf_key]
+        name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
         marker = '✅' if tf_key == curr else '⚪'
-        msg += f"{marker} *{v['name']}*\n"
+        msg += f"{marker} *{name}* - {desc}\n"
 
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
