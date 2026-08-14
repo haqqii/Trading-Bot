@@ -135,13 +135,15 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚠️ Kategori tidak dikenali.")
         return
 
+    # LTR mark pushes text left in Telegram buttons (center-aligned by default)
+    LTR = '‎'
     kb = []
     for tf_key in cat['timeframes']:
         v = TIMEFRAMES[tf_key]
         name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (v['name'], ''))
         btn_label = TF_BUTTON_LABELS.get(tf_key, v['name'])
         kb.append([InlineKeyboardButton(
-            f"{'✅ ' if tf_key == curr else '⚪ '}{btn_label}",
+            f"{LTR}{'✅ ' if tf_key == curr else '⚪ '}{btn_label}",
             callback_data=f"tf_{tf_key}"
         )])
 
