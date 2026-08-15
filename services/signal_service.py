@@ -321,36 +321,17 @@ class SignalService:
             sell_score += 8
             reasons.append(f'RSI {rsi:.0f} bearish')
 
-        # MA Score (weight: 10%)
-        if ma_f > ma_s:
-            buy_score += 10
-            reasons.append('MA golden cross')
-        elif ma_f < ma_s:
-            sell_score += 10
-            reasons.append('MA death cross')
+        # MA Score (weight: 10%) - same as stock
+        b, s, r = score_ma(ma_f, ma_s)
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MACD Score (weight: 15%)
-        if macd > macd_signal and macd_hist > 0:
-            buy_score += 15
-            reasons.append('MACD bullish')
-        elif macd > macd_signal:
-            buy_score += 8
-            reasons.append('MACD above signal')
-        elif macd < macd_signal and macd_hist < 0:
-            sell_score += 15
-            reasons.append('MACD bearish')
-        elif macd < macd_signal:
-            sell_score += 8
-            reasons.append('MACD below signal')
+        b, s, r = score_macd(macd, macd_signal, macd_hist, (15, 8))
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Bollinger Bands Score (weight: 10%)
-        bb_position = (price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
-        if bb_position < 0.2:
-            buy_score += 10
-            reasons.append('BB near lower')
-        elif bb_position > 0.8:
-            sell_score += 10
-            reasons.append('BB near upper')
+        b, s, r = score_bb(price, bb_upper, bb_lower, 10)
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Stochastic Score (weight: 10%)
         if stoch_oversold:
