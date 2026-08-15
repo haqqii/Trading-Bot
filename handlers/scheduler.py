@@ -62,7 +62,7 @@ async def reset_stock_circuit_breaker(app):
             logger.info("[MARKET OPEN] Shared Yahoo circuit breaker RESET")
 
     except Exception as e:
-        logger.error(f"[MARKET OPEN] Circuit breaker reset failed: {e}")
+        logger.error(f"[MARKET OPEN] Circuit breaker reset failed: {e}", exc_info=True)
 
 
 async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, delay: int = 3, **kwargs):
@@ -84,7 +84,7 @@ async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, d
                 logger.error(f"Send failed after {retries} attempts")
                 return False
         except Exception as e:
-            logger.error(f"Send error: {e}")
+            logger.error(f"Send error: {e}", exc_info=True)
             return False
     return False
 
@@ -316,7 +316,7 @@ def _schedule_followup_scan(app, kind: str, delay: int = 60):
         app.job_queue.run_once(target, when=delay)
         logger.info(f"Follow-up {kind} scan scheduled in {delay}s after TP3")
     except Exception as e:
-        logger.error(f"Failed to schedule follow-up {kind} scan: {e}")
+        logger.error(f"Failed to schedule follow-up {kind} scan: {e}", exc_info=True)
 
 
 def set_all_stocks(stocks):
@@ -402,11 +402,11 @@ async def check_favorit_alerts(app):
                         logger.info(f"Removed {ticker} from favorit after target reached")
 
                 except Exception as e:
-                    logger.error(f"Error checking favorit {ticker}: {e}")
+                    logger.error(f"Error checking favorit {ticker}: {e}", exc_info=True)
                     continue
 
     except Exception as e:
-        logger.error(f"Error in check_favorit_alerts: {e}")
+        logger.error(f"Error in check_favorit_alerts: {e}", exc_info=True)
 
 
 async def check_bsjp_signals(app):
@@ -573,7 +573,7 @@ async def check_bsjp_signals(app):
                         logger.error(f"[BSJP] Failed to send to user {uid} after retries")
 
                 except Exception as e:
-                    logger.error(f"Failed to send BSJP to user {uid}: {e}")
+                    logger.error(f"Failed to send BSJP to user {uid}: {e}", exc_info=True)
 
             # Mark as sent today ONLY if signals were found AND we have users to send to
             # (Don't mark if all sends failed - will retry next cycle)
@@ -589,7 +589,7 @@ async def check_bsjp_signals(app):
         logger.info(f"[BSJP] Scan complete: {len(bsjp_signals)} signals")
 
     except Exception as e:
-        logger.error(f"Error in check_bsjp_signals: {e}")
+        logger.error(f"Error in check_bsjp_signals: {e}", exc_info=True)
 
 
 async def check_stock_signals(app):
@@ -675,12 +675,12 @@ async def check_stock_signals(app):
                         if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
                             results.append((tf_key, ticker, ALL_STOCKS.get(ticker, ticker), d, s))
                     except Exception as e:
-                        logger.error(f"[STOCK_SIGNAL] signal gen failure for {ticker}/{tf_key}: {e}")
+                        logger.error(f"[STOCK_SIGNAL] signal gen failure for {ticker}/{tf_key}: {e}", exc_info=True)
 
                 if results:
                     scan_cache[(ticker, interval, period)] = results
             except Exception as e:
-                logger.error(f"[STOCK_SIGNAL] analyze failure for {ticker}: {e}")
+                logger.error(f"[STOCK_SIGNAL] analyze failure for {ticker}: {e}", exc_info=True)
 
         async def scan_with_semaphore(ticker, interval, period, tf_keys):
             try:
@@ -694,7 +694,7 @@ async def check_stock_signals(app):
                 logger.warning(f"[STOCK] Timeout for {ticker}")
             except Exception as e:
                 _stock_timeout_count[0] += 1
-                logger.error(f"[STOCK] Error fetching {ticker}: {e}")
+                logger.error(f"[STOCK] Error fetching {ticker}: {e}", exc_info=True)
 
         # Schedule scan tasks: one per (ticker, interval, period)
         scan_tasks = []
@@ -918,12 +918,12 @@ async def check_stock_signals(app):
                                 }
                             )
                         except Exception as e:
-                            logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
+                            logger.error(f"[STOCK] Failed to send message for {ticker}: {e}", exc_info=True)
 
                     logger.info(f"[STOCK] Sent TOP 3 [{tf_key}] signals to user {uid}")
 
                 except Exception as e:
-                    logger.error(f"Failed to send signals to user {uid}: {e}")
+                    logger.error(f"Failed to send signals to user {uid}: {e}", exc_info=True)
 
         # Cooldown check
         timeout_pct = _stock_timeout_count[0] / len(all_tickers) * 100 if all_tickers else 0
@@ -932,7 +932,7 @@ async def check_stock_signals(app):
             logger.warning(f"[STOCK] High timeout rate ({_stock_timeout_count[0]}/{len(all_tickers)} = {timeout_pct:.0f}%) - enabling cooldown")
 
     except Exception as e:
-        logger.error(f"Error in check_stock_signals: {e}")
+        logger.error(f"Error in check_stock_signals: {e}", exc_info=True)
 
 
 async def check_stock_tp_sl(app):
@@ -1107,11 +1107,11 @@ async def check_stock_tp_sl(app):
                         continue  # Skip remaining checks for this signal
 
                 except Exception as e:
-                    logger.error(f"TP/SL check error for {key}: {e}")
+                    logger.error(f"TP/SL check error for {key}: {e}", exc_info=True)
                     continue
 
     except Exception as e:
-        logger.error(f"Error in check_stock_tp_sl: {e}")
+        logger.error(f"Error in check_stock_tp_sl: {e}", exc_info=True)
 
 
 async def check_alerts(app):
@@ -1159,14 +1159,14 @@ async def check_alerts(app):
                         logger.info(f"Alert triggered: {ticker} at {current}")
 
                 except Exception as e:
-                    logger.error(f"Alert error for {ticker}: {e}")
+                    logger.error(f"Alert error for {ticker}: {e}", exc_info=True)
 
             for t in tickers_to_remove:
                 if t in alerts:
                     del alerts[t]
 
     except Exception as e:
-        logger.error(f"Check alerts error: {e}")
+        logger.error(f"Check alerts error: {e}", exc_info=True)
 
 
 import os
@@ -1383,7 +1383,7 @@ async def check_morning_notification(app):
                     logger.info(f"[MORNING] Sent {len(morning_signals)} signals to user {uid}")
 
                 except Exception as e:
-                    logger.error(f"Failed to send morning to user {uid}: {e}")
+                    logger.error(f"Failed to send morning to user {uid}: {e}", exc_info=True)
 
             # Mark as sent today AFTER all users processed (only if signals found)
             if morning_signals:
@@ -1397,7 +1397,7 @@ async def check_morning_notification(app):
         logger.info(f"[MORNING] Scan complete: {len(morning_signals)} signals")
 
     except Exception as e:
-        logger.error(f"Error in check_morning_notification: {e}")
+        logger.error(f"Error in check_morning_notification: {e}", exc_info=True)
 
 
 async def check_crypto_signals(app):
@@ -1477,7 +1477,7 @@ async def check_crypto_signals(app):
 
                     return None
                 except Exception as e:
-                    logger.error(f"[CRYPTO_SIGNAL] analyze failure for {ticker}: {e}")
+                    logger.error(f"[CRYPTO_SIGNAL] analyze failure for {ticker}: {e}", exc_info=True)
                     return None
 
             semaphore = asyncio.Semaphore(20)
@@ -1639,15 +1639,15 @@ async def check_crypto_signals(app):
                                 }
                             )
                         except Exception as e:
-                            logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
+                            logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}", exc_info=True)
 
                     logger.info(f"[CRYPTO] Sent TOP 3 [{tf_key}] signals to user {uid}")
 
                 except Exception as e:
-                    logger.error(f"Failed to send crypto signals to user {uid}: {e}")
+                    logger.error(f"Failed to send crypto signals to user {uid}: {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Error in check_crypto_signals: {e}")
+        logger.error(f"Error in check_crypto_signals: {e}", exc_info=True)
 
 
 async def check_crypto_tp_sl(app):
@@ -1819,11 +1819,11 @@ async def check_crypto_tp_sl(app):
                         continue  # Skip remaining checks for this signal
 
                 except Exception as e:
-                    logger.error(f"TP/SL check error for {key}: {e}")
+                    logger.error(f"TP/SL check error for {key}: {e}", exc_info=True)
                     continue
 
     except Exception as e:
-        logger.error(f"Error in check_crypto_tp_sl: {e}")
+        logger.error(f"Error in check_crypto_tp_sl: {e}", exc_info=True)
 
 
 async def check_crypto_favorit_alerts(app):
@@ -1867,7 +1867,7 @@ async def check_crypto_favorit_alerts(app):
                         tickers_to_remove.append(ticker)
 
                 except Exception as e:
-                    logger.error(f"Error checking crypto favorit {ticker}: {e}")
+                    logger.error(f"Error checking crypto favorit {ticker}: {e}", exc_info=True)
                     continue
 
             for t in tickers_to_remove:
@@ -1875,7 +1875,7 @@ async def check_crypto_favorit_alerts(app):
                     del crypto_favorit[t]
 
     except Exception as e:
-        logger.error(f"Error in check_crypto_favorit_alerts: {e}")
+        logger.error(f"Error in check_crypto_favorit_alerts: {e}", exc_info=True)
 
 
 async def auto_save_data(app):
@@ -1886,7 +1886,7 @@ async def auto_save_data(app):
         save_user_data()
         logger.debug("User data auto-saved")
     except Exception as e:
-        logger.error(f"Auto-save error: {e}")
+        logger.error(f"Auto-save error: {e}", exc_info=True)
 
 
 # === PREFETCH FOR FAST RESPONSE ===
@@ -1939,7 +1939,7 @@ async def prefetch_stock_cache(app):
             logger.info(f"[PREFETCH] Stock cache warmed: {cached_count}/{len(top_stocks)} stocks")
 
     except Exception as e:
-        logger.error(f"Prefetch stock cache error: {e}")
+        logger.error(f"Prefetch stock cache error: {e}", exc_info=True)
 
 
 async def prefetch_crypto_cache(app):
@@ -1981,7 +1981,7 @@ async def prefetch_crypto_cache(app):
             logger.info(f"[PREFETCH] Crypto cache warmed: {cached_count}/{len(major_crypto)} pairs")
 
     except Exception as e:
-        logger.error(f"Prefetch crypto cache error: {e}")
+        logger.error(f"Prefetch crypto cache error: {e}", exc_info=True)
 
 
 def register_jobs(app):
@@ -2045,4 +2045,4 @@ async def cleanup_caches(app):
         cleanup_old_signals()  # Cleanup old signals (max 7 days)
         logger.debug("Caches and signals cleaned up")
     except Exception as e:
-        logger.error(f"Cleanup error: {e}")
+        logger.error(f"Cleanup error: {e}", exc_info=True)
