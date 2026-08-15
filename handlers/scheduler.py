@@ -595,8 +595,9 @@ async def check_bsjp_signals(app):
 async def check_stock_signals(app):
     """Check stock signals per user TF and send BUY notifications with per-TF TP/SL.
 
-    Groups users by timeframe, scans stocks per TF group, and sends signals
-    with TP/SL calculated for each user's selected timeframe.
+    Optimized flow:
+    1. Scan each ticker once per UNIQUE interval (deduplicated across TF groups)
+    2. Reuse cached scan data when sending notifications (no re-fetch)
     """
     global _yahoo_stock_cooldown
 
@@ -642,103 +643,125 @@ async def check_stock_signals(app):
         all_tickers = list(ALL_STOCKS.keys())[:50]
         _stock_timeout_count[0] = 0
 
-        # Process each TF group separately
-        for tf_key, group_users in tf_groups.items():
+        # === PHASE 1: Dedup scan per UNIQUE (interval, period) ===
+        # Collect unique intervals needed across all TF groups
+        needed_intervals = {}  # (interval, period) -> [tf_keys]
+        for tf_key in tf_groups:
             interval, period = TF_TO_INTERVAL.get(tf_key, ('5m', '5d'))
-            logger.info(f"[STOCK] TF={tf_key} ({interval}): scanning for {len(group_users)} users")
+            needed_intervals.setdefault((interval, period), []).append(tf_key)
 
-            # Scan stocks for this TF
-            signals_found = 0
-            buy_signals = []
+        # Scan cache: (ticker, interval, period) -> (data_dict, signal_dict)
+        scan_cache = {}  # (ticker, interval, period) -> [(tf_key, signal, d)]
+        semaphore = asyncio.Semaphore(25)
 
-            def analyze_stock_for_tf(ticker):
-                """Blocking stock analysis for specific TF"""
-                try:
-                    if ticker in crypto_service.crypto_pairs:
-                        return None
+        async def scan_ticker(ticker, interval, period, tf_keys):
+            """Fetch data once and generate signals for all TF keys needing this interval."""
+            try:
+                d, _ = get_stock_data_with_fallback(ticker + ".JK", interval, period)
+                if not d or d.get('candles', 0) < 5:
+                    return
 
-                    d, _ = get_stock_data_with_fallback(ticker + ".JK", interval, period)
-                    if not d or d.get('candles', 0) < 5:
-                        return None
+                results = []
+                for tf_key in tf_keys:
+                    try:
+                        # Pass TF for timeframe-aware signal generation
+                        d_with_tf = dict(d)
+                        d_with_tf['timeframe'] = tf_key
+                        s = signal_service.generate_stock_signal(d_with_tf)
+                        if not s.get('entry') or s.get('entry', 0) <= 0:
+                            continue
 
-                    # Pass TF for timeframe-aware signal generation
-                    d['timeframe'] = tf_key
-                    s = signal_service.generate_stock_signal(d)
-                    if not s.get('entry') or s.get('entry', 0) <= 0:
-                        return None
+                        is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
+                        if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
+                            results.append((tf_key, ticker, ALL_STOCKS.get(ticker, ticker), d, s))
+                    except Exception as e:
+                        logger.error(f"[STOCK_SIGNAL] signal gen failure for {ticker}/{tf_key}: {e}")
 
-                    current_price = d['price']
-                    key = f"STOCK_{ticker}_{tf_key}"
+                if results:
+                    scan_cache[(ticker, interval, period)] = results
+            except Exception as e:
+                logger.error(f"[STOCK_SIGNAL] analyze failure for {ticker}: {e}")
 
-                    # Include REVERSAL signals
-                    is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
+        async def scan_with_semaphore(ticker, interval, period, tf_keys):
+            try:
+                async with semaphore:
+                    await asyncio.wait_for(
+                        scan_ticker(ticker, interval, period, tf_keys),
+                        timeout=30.0
+                    )
+            except asyncio.TimeoutError:
+                _stock_timeout_count[0] += 1
+                logger.warning(f"[STOCK] Timeout for {ticker}")
+            except Exception as e:
+                _stock_timeout_count[0] += 1
+                logger.error(f"[STOCK] Error fetching {ticker}: {e}")
 
-                    if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
-                        signals = _get_last_buy_signals()
-                        existing = signals.get(key)
-                        should_send = False
+        # Schedule scan tasks: one per (ticker, interval, period)
+        scan_tasks = []
+        for (interval, period), tf_keys in needed_intervals.items():
+            for ticker in all_tickers:
+                if ticker in crypto_service.crypto_pairs:
+                    continue
+                scan_tasks.append(scan_with_semaphore(ticker, interval, period, tf_keys))
 
-                        if existing is None:
-                            should_send = True
-                        else:
-                            time_diff = _safe_time_diff(now, existing.get('time', now))
-                            if time_diff > 86400:  # 24 hours
-                                last_entry = existing.get('entry', 0)
-                                if last_entry > 0:
-                                    price_change = abs(current_price - last_entry) / last_entry
-                                    if price_change > 0.05:  # 5% price change
-                                        should_send = True
+        logger.info(f"[STOCK] Scheduling {len(scan_tasks)} scan tasks ({len(needed_intervals)} intervals × {len(all_tickers)} tickers)")
+        await asyncio.gather(*scan_tasks, return_exceptions=True)
 
-                        if should_send:
-                            signal_type = 'REVERSAL' if s['signal'] == 'REVERSAL' else 'BUY'
-                            logger.info(f"✅ {signal_type} Signal [{tf_key}]: {ticker} @ Rp{s['entry']:,.0f} (Score: {s.get('buy_score', 0)})")
-                            return (ticker, ALL_STOCKS.get(ticker, ticker), d, s)
+        # === PHASE 2: Build per-TF top signals from cache ===
+        # scan_cache[(ticker, interval, period)] = [(tf_key, ticker, name, d, s), ...]
+        # Group results by tf_key
+        tf_signals = {}  # tf_key -> [(ticker, name, d, s)]
+        for results in scan_cache.values():
+            for tf_key, ticker, name, d, s in results:
+                tf_signals.setdefault(tf_key, []).append((ticker, name, d, s))
 
-                    return None
-                except Exception as e:
-                    logger.error(f"[STOCK_SIGNAL] analyze failure for {ticker}: {e}")
-                    return None
+        # === PHASE 3: Send notifications per TF group ===
+        signals = _get_last_buy_signals()
 
-            semaphore = asyncio.Semaphore(25)
-            async def fetch_with_semaphore(ticker):
-                try:
-                    async with semaphore:
-                        return await asyncio.wait_for(
-                            asyncio.to_thread(analyze_stock_for_tf, ticker),
-                            timeout=30.0
-                        )
-                except asyncio.TimeoutError:
-                    _stock_timeout_count[0] += 1
-                    logger.warning(f"[STOCK] Timeout for {ticker}")
-                    return None
-                except Exception as e:
-                    _stock_timeout_count[0] += 1
-                    logger.error(f"[STOCK] Error fetching {ticker}: {e}")
-                    return None
-
-            tasks = [fetch_with_semaphore(t) for t in all_tickers]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Collect BUY signals
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error(f"[STOCK] Task exception: {r}")
-                elif r is not None:
-                    buy_signals.append(r)
-
-            signals_found = len(buy_signals)
-
-            if not buy_signals:
+        for tf_key, group_users in tf_groups.items():
+            group_buy_signals = tf_signals.get(tf_key, [])
+            if not group_buy_signals:
                 logger.info(f"[STOCK] TF={tf_key}: No BUY signals found")
                 continue
 
+            # Dedup by ticker (might have multiple signals from different intervals)
+            seen = set()
+            unique_signals = []
+            for sig in group_buy_signals:
+                if sig[0] not in seen:
+                    seen.add(sig[0])
+                    unique_signals.append(sig)
+            group_buy_signals = unique_signals
+
+            # Filter out signals already sent (within 24h window)
+            fresh_signals = []
+            for ticker, name, d, s in group_buy_signals:
+                key = f"STOCK_{ticker}_{tf_key}"
+                existing = signals.get(key)
+                should_send = False
+                if existing is None:
+                    should_send = True
+                else:
+                    time_diff = _safe_time_diff(now, existing.get('time', now))
+                    if time_diff > 86400:
+                        last_entry = existing.get('entry', 0)
+                        if last_entry > 0:
+                            current_price = d['price']
+                            price_change = abs(current_price - last_entry) / last_entry
+                            if price_change > 0.05:
+                                should_send = True
+                if should_send:
+                    fresh_signals.append((ticker, name, d, s))
+
+            if not fresh_signals:
+                logger.info(f"[STOCK] TF={tf_key}: All signals already sent recently")
+                continue
+
             # Sort by score and take top 3
-            buy_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)
-            top_signals = buy_signals[:3]
+            fresh_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)
+            top_signals = fresh_signals[:3]
 
-            logger.info(f"[STOCK] TF={tf_key}: Found {len(buy_signals)} signals, sending TOP 3 to {len(group_users)} users")
-
-            signals = _get_last_buy_signals()
+            logger.info(f"[STOCK] TF={tf_key}: Found {len(fresh_signals)} fresh signals, sending TOP 3 to {len(group_users)} users")
 
             # Send signals to users in this TF group
             for uid, u in group_users:
@@ -747,45 +770,24 @@ async def check_stock_signals(app):
                         if i > 0:
                             await asyncio.sleep(60)
 
-                        # Fetch freshest data for current price
-                        fresh_d = get_stock_data_with_fallback(ticker + ".JK", interval, period)[0]
-
-                        if not fresh_d:
-                            # Fallback to other intervals
-                            for alt_interval, alt_period in [('5m', '5d'), ('5m', '1d'), ('1h', '3d')]:
-                                if alt_interval == interval:
-                                    continue
-                                fresh_d = get_stock_data_with_fallback(ticker + ".JK", alt_interval, alt_period)[0]
-                                if fresh_d:
-                                    break
-
-                        if not fresh_d:
-                            fresh_d = stock_service.get_stock_data_tradingview(ticker)
-
-                        if not fresh_d and FINNHUB_API_KEY:
-                            fresh_d = stock_service.get_stock_data_finnhub(ticker)
-
-                        if fresh_d:
-                            d = fresh_d
-                            entry_price = d['price']
-                            atr = d.get('atr', entry_price * 0.015)
-                            entry_low = entry_price * 0.995
-                            entry_high = entry_price * 1.005
-                            s['entry'] = entry_price
-                            s['entry_low'] = entry_low
-                            s['entry_high'] = entry_high
-                            s['atr'] = atr
-                            s['rsi'] = d.get('rsi', 50)
-                            # Calculate TP/SL using user's TF
-                            tpsl = calc_tPSL('BUY', entry_price, atr, tf_key)
-                            s['tp1'] = tpsl['tp1']
-                            s['tp2'] = tpsl['tp2']
-                            s['tp3'] = tpsl['tp3']
-                            s['sl'] = tpsl['sl']
-                            logger.info(f"[STOCK] Fresh price for {ticker}: {entry_price:,.0f}")
-                        else:
-                            logger.warning(f"[STOCK] Could not fetch fresh data for {ticker}")
-                            continue
+                        # Use cached scan data (no re-fetch)
+                        d = d  # Use data from scan cache
+                        entry_price = d['price']
+                        atr = d.get('atr', entry_price * 0.015)
+                        entry_low = entry_price * 0.995
+                        entry_high = entry_price * 1.005
+                        s['entry'] = entry_price
+                        s['entry_low'] = entry_low
+                        s['entry_high'] = entry_high
+                        s['atr'] = atr
+                        s['rsi'] = d.get('rsi', 50)
+                        # Calculate TP/SL using user's TF
+                        tpsl = calc_tPSL('BUY', entry_price, atr, tf_key)
+                        s['tp1'] = tpsl['tp1']
+                        s['tp2'] = tpsl['tp2']
+                        s['tp3'] = tpsl['tp3']
+                        s['sl'] = tpsl['sl']
+                        logger.info(f"[STOCK] Using cached data for {ticker}: {entry_price:,.0f}")
 
                         quality = s.get('quality', 'WEAK')
                         quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45}.get(quality, 50)
