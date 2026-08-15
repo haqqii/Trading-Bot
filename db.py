@@ -68,7 +68,7 @@ class Database:
             self._create_tables()
 
     def _migrate_signals_table(self):
-        """Add outcome tracking columns to signals table (safe for existing data)."""
+        """Add outcome tracking + active signal columns to signals table (safe for existing data)."""
         new_columns = [
             ('outcome', 'TEXT'),
             ('tp1_hit_at', 'TEXT'),
@@ -77,6 +77,11 @@ class Database:
             ('sl_hit_at', 'TEXT'),
             ('closed_at', 'TEXT'),
             ('closed_price', 'REAL'),
+            # Active signal persistence
+            ('name', 'TEXT'),
+            ('tp1', 'REAL'),
+            ('tp2', 'REAL'),
+            ('tp3', 'REAL'),
         ]
         with self._get_conn() as conn:
             for col_name, col_type in new_columns:
@@ -151,9 +156,13 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     key TEXT UNIQUE NOT NULL,
                     ticker TEXT NOT NULL,
+                    name TEXT,
                     asset_type TEXT NOT NULL,
                     signal_type TEXT NOT NULL,
                     price REAL,
+                    tp1 REAL,
+                    tp2 REAL,
+                    tp3 REAL,
                     target_price REAL,
                     stop_loss REAL,
                     score REAL,
@@ -473,6 +482,92 @@ class Database:
                     (closed_at, closed_price, key)
                 )
             return True
+
+    def save_active_signal(self, key: str, ticker: str, asset_type: str,
+                           signal_type: str, price: float, tp1: float,
+                           tp2: float, tp3: float, sl: float,
+                           score: float, quality: str, reason: str,
+                           extra_data: Dict = None) -> bool:
+        """Save or update an active signal for TP/SL tracking.
+
+        Persists the signal to DB so it survives bot restarts.
+        Uses INSERT OR REPLACE to handle updates.
+        """
+        self.initialize()
+        import json
+        extra_json = json.dumps(extra_data) if extra_data else None
+
+        with self._get_conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO signals
+                (key, ticker, asset_type, signal_type, price,
+                 target_price, tp1, tp2, tp3, stop_loss,
+                 score, quality, reason, extra_data, outcome,
+                 tp1_hit_at, tp2_hit_at, tp3_hit_at, sl_hit_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                        NULL, NULL, NULL, NULL)
+            """, (key, ticker, asset_type, signal_type, price,
+                  tp3, tp1, tp2, tp3, sl,
+                  score, quality, reason, extra_json))
+            return True
+
+    def load_active_signals(self) -> Dict[str, Dict]:
+        """Load all active (open) signals from DB.
+
+        Returns dict matching the in-memory last_buy_signals format.
+        Used on bot startup to restore signal tracking state.
+        """
+        self.initialize()
+        import json
+        result = {}
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM signals WHERE outcome IS NULL OR outcome = 'open'"
+            ).fetchall()
+
+        for row in rows:
+            # Convert sqlite3.Row to dict (Row doesn't support .get() in all Python versions)
+            row = dict(row)
+            key = row['key']
+            extra = {}
+            if row.get('extra_data'):
+                try:
+                    extra = json.loads(row['extra_data'])
+                except Exception:
+                    pass
+
+            result[key] = {
+                'name': row.get('name') or row['ticker'],
+                'entry': row.get('price') or 0,
+                'tp1': row.get('tp1') or 0,
+                'tp2': row.get('tp2') or 0,
+                'tp3': row.get('tp3') or 0,
+                'sl': row.get('stop_loss') or 0,
+                'time': row.get('created_at'),
+                'tp_hit': {
+                    'tp1': bool(row.get('tp1_hit_at')),
+                    'tp2': bool(row.get('tp2_hit_at')),
+                    'tp3': bool(row.get('tp3_hit_at')),
+                },
+                'type': row.get('asset_type'),
+                'direction': row.get('signal_type', 'LONG'),
+                'ticker_raw': row.get('ticker'),
+                'buy_score': row.get('score', 0),
+                'quality': row.get('quality', 'WEAK'),
+                'signal_type': row.get('signal_type'),
+                'is_reversal': extra.get('is_reversal', False),
+                'atr': extra.get('atr', 0),
+                'user_id': extra.get('user_id'),
+                'timeframe': extra.get('timeframe'),
+                # Restore tp_hit status from DB
+                'tp_hit': {
+                    'tp1': bool(row.get('tp1_hit_at')),
+                    'tp2': bool(row.get('tp2_hit_at')),
+                    'tp3': bool(row.get('tp3_hit_at')),
+                },
+            }
+
+        return result
 
     def get_signal_stats(self, asset_type: str = None) -> Dict:
         """Get aggregate win-rate stats for signals.

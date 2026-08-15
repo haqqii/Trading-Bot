@@ -47,6 +47,116 @@ def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5'):
     return {'sl': None, 'tp1': None, 'tp2': None, 'tp3': None}
 
 
+# === Shared Scoring Helpers ===
+
+def score_rsi(rsi: float, buy_thresholds: tuple = (30, 40),
+              sell_thresholds: tuple = (70, 60),
+              buy_pts: tuple = (25, 10), sell_pts: tuple = (25, 10)) -> tuple:
+    """Score RSI indicator. Returns (buy_score, sell_score, reason_or_None)."""
+    buy_score = sell_score = 0
+    reason = None
+    buy_lo, buy_hi = buy_thresholds
+    sell_lo, sell_hi = sell_thresholds
+    buy_full, buy_partial = buy_pts
+    sell_full, sell_partial = sell_pts
+    if rsi < buy_lo:
+        buy_score = buy_full
+        reason = f'RSI {rsi:.0f} oversold'
+    elif rsi < buy_hi:
+        buy_score = buy_partial
+        reason = f'RSI {rsi:.0f} bullish'
+    elif rsi > sell_lo:
+        sell_score = sell_full
+        reason = f'RSI {rsi:.0f} overbought'
+    elif rsi > sell_hi:
+        sell_score = sell_partial
+        reason = f'RSI {rsi:.0f} bearish'
+    return buy_score, sell_score, reason
+
+
+def score_ma(ma_fast: float, ma_slow: float) -> tuple:
+    """Score MA crossover. Returns (buy_score, sell_score, reason_or_None)."""
+    buy_score = sell_score = 0
+    reason = None
+    if ma_fast > ma_slow:
+        buy_score = 20
+        reason = 'MA golden cross'
+    elif ma_fast < ma_slow:
+        sell_score = 20
+        reason = 'MA death cross'
+    return buy_score, sell_score, reason
+
+
+def score_macd(macd: float, macd_signal: float, macd_hist: float,
+               weights: tuple = (25, 15)) -> tuple:
+    """Score MACD. weights = (cross_pts, above_pts)."""
+    buy_score = sell_score = 0
+    reason = None
+    cross, above = weights
+    if macd > macd_signal and macd_hist > 0:
+        buy_score = cross
+        reason = 'MACD bullish cross'
+    elif macd > macd_signal:
+        buy_score = above
+        reason = 'MACD above signal'
+    elif macd < macd_signal and macd_hist < 0:
+        sell_score = cross
+        reason = 'MACD bearish cross'
+    elif macd < macd_signal:
+        sell_score = above
+        reason = 'MACD below signal'
+    return buy_score, sell_score, reason
+
+
+def score_bb(price: float, bb_upper: float, bb_lower: float,
+             weight: int = 15) -> tuple:
+    """Score Bollinger Bands position. Returns (buy_score, sell_score, reason_or_None)."""
+    buy_score = sell_score = 0
+    reason = None
+    spread = bb_upper - bb_lower
+    pos = (price - bb_lower) / spread if spread > 0 else 0.5
+    if pos < 0.2:
+        buy_score = weight
+        reason = 'BB near lower band'
+    elif pos > 0.8:
+        sell_score = weight
+        reason = 'BB near upper band'
+    return buy_score, sell_score, reason
+
+
+def score_volume(volume_ratio: float, buy_score: int, sell_score: int,
+                 spike_pts: int = 15, moderate_pts: int = 8,
+                 spike_thresh: float = 1.5, moderate_thresh: float = 1.2) -> tuple:
+    """Score volume. Adjusts based on current direction bias."""
+    added_buy = added_sell = 0
+    reason = None
+    bias = 1 if buy_score > sell_score else -1 if sell_score > buy_score else 0
+    if volume_ratio > spike_thresh:
+        added_buy = spike_pts if bias >= 0 else 0
+        added_sell = spike_pts if bias <= 0 else 0
+        if added_buy or added_sell:
+            reason = f'Vol spike {volume_ratio:.1f}x'
+    elif volume_ratio > moderate_thresh:
+        added_buy = moderate_pts if bias >= 0 else 0
+        added_sell = moderate_pts if bias <= 0 else 0
+    return added_buy, added_sell, reason
+
+
+def determine_signal(buy_score: int, sell_score: int,
+                    buy_threshold: int = 55, sell_threshold: int = 55,
+                    weak_threshold: int = 40) -> tuple:
+    """Determine signal type and quality from scores. Returns (signal, quality)."""
+    if buy_score >= buy_threshold:
+        return 'BUY', 'STRONG' if buy_score >= 70 else 'MODERATE'
+    if sell_score >= sell_threshold:
+        return 'SELL', 'STRONG' if sell_score >= 70 else 'MODERATE'
+    if buy_score >= weak_threshold and buy_score > sell_score:
+        return 'BUY', 'WEAK'
+    if sell_score >= weak_threshold and sell_score > buy_score:
+        return 'SELL', 'WEAK'
+    return 'HOLD', 'WEAK'
+
+
 def detect_patterns_from_data(data):
     """
     Detect chart patterns from stock/crypto data.
@@ -88,7 +198,7 @@ class SignalService:
 
     @staticmethod
     def generate_stock_signal(data):
-        """Generate stock signal using weighted multi-indicator scoring system"""
+        """Generate stock signal using weighted multi-indicator scoring system."""
         if not data:
             return {'signal': 'HOLD', 'reason': 'No data'}
 
@@ -97,13 +207,11 @@ class SignalService:
         ma_f = data.get('ma_fast', price)
         ma_s = data.get('ma_slow', price)
         atr = data.get('atr', price * 0.015)
-
         macd = data.get('macd', 0)
         macd_signal = data.get('macd_signal', 0)
         macd_hist = data.get('macd_hist', 0)
         bb_upper = data.get('bb_upper', price * 1.05)
         bb_lower = data.get('bb_lower', price * 0.95)
-        bb_middle = data.get('bb_middle', price)
         volume_ratio = data.get('volume_ratio', 1.0)
 
         buy_score = 0
@@ -111,84 +219,30 @@ class SignalService:
         reasons = []
 
         # RSI Score (weight: 25%)
-        if rsi < 30:
-            buy_score += 25
-            reasons.append(f'RSI {rsi:.0f} oversold')
-        elif rsi < 40:
-            buy_score += 10
-            reasons.append(f'RSI {rsi:.0f} bullish')
-        elif rsi > 70:
-            sell_score += 25
-            reasons.append(f'RSI {rsi:.0f} overbought')
-        elif rsi > 60:
-            sell_score += 10
-            reasons.append(f'RSI {rsi:.0f} bearish')
+        b, s, r = score_rsi(rsi, (30, 40), (70, 60), (25, 10), (25, 10))
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MA Score (weight: 20%)
-        if ma_f > ma_s:
-            buy_score += 20
-            reasons.append('MA golden cross')
-        elif ma_f < ma_s:
-            sell_score += 20
-            reasons.append('MA death cross')
+        b, s, r = score_ma(ma_f, ma_s)
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MACD Score (weight: 25%)
-        if macd > macd_signal and macd_hist > 0:
-            buy_score += 25
-            reasons.append('MACD bullish cross')
-        elif macd > macd_signal:
-            buy_score += 15
-            reasons.append('MACD above signal')
-        elif macd < macd_signal and macd_hist < 0:
-            sell_score += 25
-            reasons.append('MACD bearish cross')
-        elif macd < macd_signal:
-            sell_score += 15
-            reasons.append('MACD below signal')
+        b, s, r = score_macd(macd, macd_signal, macd_hist, (25, 15))
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Bollinger Bands Score (weight: 15%)
-        bb_position = (price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
-        if bb_position < 0.2:
-            buy_score += 15
-            reasons.append('BB near lower band')
-        elif bb_position > 0.8:
-            sell_score += 15
-            reasons.append('BB near upper band')
+        b, s, r = score_bb(price, bb_upper, bb_lower, 15)
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Volume Score (weight: 15%)
-        if volume_ratio > 1.5:
-            if buy_score > sell_score:
-                buy_score += 15
-                reasons.append(f'Vol spike {volume_ratio:.1f}x')
-            else:
-                sell_score += 15
-                reasons.append(f'Vol spike {volume_ratio:.1f}x')
-        elif volume_ratio > 1.2:
-            if buy_score > sell_score:
-                buy_score += 8
-            else:
-                sell_score += 8
+        b, s, r = score_volume(volume_ratio, buy_score, sell_score, 15, 8, 1.5, 1.2)
+        buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Determine signal
-        signal = 'HOLD'
-        quality = 'WEAK'
-
-        if buy_score >= 55:
-            signal = 'BUY'
-            quality = 'STRONG' if buy_score >= 70 else 'MODERATE'
-        elif sell_score >= 55:
-            signal = 'SELL'
-            quality = 'STRONG' if sell_score >= 70 else 'MODERATE'
-        elif buy_score >= 40 and buy_score > sell_score:
-            signal = 'BUY'
-            quality = 'WEAK'
-        elif sell_score >= 40 and sell_score > buy_score:
-            signal = 'SELL'
-            quality = 'WEAK'
+        signal, quality = determine_signal(buy_score, sell_score)
 
         # Calculate TP/SL with timeframe-adjusted multipliers
-        min_atr = max(atr, price * 0.003)
-        effective_atr = min_atr
+        effective_atr = max(atr, price * 0.003)
         timeframe = data.get('timeframe', '5')
         tpsl = calc_tPSL(signal, price, effective_atr, timeframe)
 

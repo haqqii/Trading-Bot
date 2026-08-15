@@ -18,6 +18,7 @@ from services.signal_service import (
     signal_service,
     calc_tPSL,
     get_tPSL_multipliers,
+    score_rsi, score_ma, score_macd, score_bb, score_volume, determine_signal,
 )
 
 
@@ -379,6 +380,100 @@ class TestTimeframeAwareTPSL:
         """Unknown timeframe should default to swing (safest option)."""
         tpsl = calc_tPSL('BUY', 100, 1.0, '999')
         assert tpsl['sl'] == 97.0  # Same as swing (wider protection)
+
+
+
+class TestScoringHelpers:
+    """Tests for shared scoring helper functions."""
+
+    def test_score_rsi_oversold(self):
+        """RSI < 30 should give full buy score."""
+        b, s, r = score_rsi(25)
+        assert b == 25
+        assert s == 0
+        assert 'oversold' in r
+
+    def test_score_rsi_overbought(self):
+        """RSI > 70 should give full sell score."""
+        b, s, r = score_rsi(75)
+        assert b == 0
+        assert s == 25
+        assert 'overbought' in r
+
+    def test_score_rsi_neutral(self):
+        """RSI in middle should give 0."""
+        b, s, r = score_rsi(50)
+        assert b == 0
+        assert s == 0
+        assert r is None
+
+    def test_score_ma_golden_cross(self):
+        """MA fast > MA slow = golden cross."""
+        b, s, r = score_ma(110, 100)
+        assert b == 20
+        assert r == 'MA golden cross'
+
+    def test_score_ma_death_cross(self):
+        """MA fast < MA slow = death cross."""
+        b, s, r = score_ma(90, 100)
+        assert s == 20
+        assert r == 'MA death cross'
+
+    def test_score_macd_bullish_cross(self):
+        """MACD > signal + positive hist = bullish cross."""
+        b, s, r = score_macd(1.0, 0.5, 0.3)
+        assert b == 25
+        assert r == 'MACD bullish cross'
+
+    def test_score_bb_lower_band(self):
+        """Price near BB lower band = buy."""
+        # pos = (91-90)/(100-90) = 0.1 < 0.2
+        b, s, r = score_bb(91, 100, 90)
+        assert b == 15
+        assert r == 'BB near lower band'
+
+    def test_score_bb_upper_band(self):
+        """Price near BB upper band = sell."""
+        # pos = (99-90)/(100-90) = 0.9 > 0.8
+        b, s, r = score_bb(99, 100, 90)
+        assert s == 15
+        assert r == 'BB near upper band'
+
+    def test_score_volume_spike_bullish(self):
+        """Volume spike with bullish bias adds to buy score."""
+        b, s, r = score_volume(2.0, 60, 30)
+        assert b == 15
+        assert 'Vol spike' in r
+
+    def test_score_volume_spike_bearish(self):
+        """Volume spike with bearish bias adds to sell score."""
+        b, s, r = score_volume(2.0, 30, 60)
+        assert s == 15
+        assert 'Vol spike' in r
+
+    def test_determine_signal_strong_buy(self):
+        """Score >= 55 with >= 70 = STRONG BUY."""
+        s, q = determine_signal(75, 30)
+        assert s == 'BUY'
+        assert q == 'STRONG'
+
+    def test_determine_signal_moderate_buy(self):
+        """Score 55-69 = MODERATE BUY."""
+        s, q = determine_signal(60, 30)
+        assert s == 'BUY'
+        assert q == 'MODERATE'
+
+    def test_determine_signal_weak_buy(self):
+        """Score 40-54 = WEAK BUY."""
+        s, q = determine_signal(45, 30)
+        assert s == 'BUY'
+        assert q == 'WEAK'
+
+    def test_determine_signal_hold(self):
+        """Both scores low = HOLD."""
+        s, q = determine_signal(30, 30)
+        assert s == 'HOLD'
+        assert q == 'WEAK'
 
 
 # === Crypto Signal Tests ===

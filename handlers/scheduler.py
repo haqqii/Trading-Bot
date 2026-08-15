@@ -893,8 +893,28 @@ async def check_stock_signals(app):
                                 'is_reversal': s.get('is_reversal', False),
                                 'atr': s.get('atr', 0),
                                 'user_id': uid,
-                                'timeframe': tf_key,  # Store TF for TP/SL checks
+                                'timeframe': tf_key,
                             }
+                            # Persist to DB for recovery after restart
+                            db.save_active_signal(
+                                key=key,
+                                ticker=ticker,
+                                asset_type='stock',
+                                signal_type=signal_type,
+                                price=s['entry'],
+                                tp1=s['tp1'], tp2=s['tp2'], tp3=s['tp3'],
+                                sl=s['sl'],
+                                score=s.get('buy_score', 0),
+                                quality=s.get('quality', 'WEAK'),
+                                reason=s.get('reason', ''),
+                                extra_data={
+                                    'name': name,
+                                    'is_reversal': s.get('is_reversal', False),
+                                    'atr': s.get('atr', 0),
+                                    'user_id': uid,
+                                    'timeframe': tf_key,
+                                }
+                            )
                         except Exception as e:
                             logger.error(f"[STOCK] Failed to send message for {ticker}: {e}")
 
@@ -1557,6 +1577,26 @@ async def check_crypto_signals(app):
                                 'user_id': uid,
                                 'timeframe': tf_key,
                             }
+                            # Persist to DB for recovery after restart
+                            db.save_active_signal(
+                                key=key,
+                                ticker=ticker,
+                                asset_type='crypto',
+                                signal_type=signal_type,
+                                price=s['entry'],
+                                tp1=s['tp1'], tp2=s['tp2'], tp3=s['tp3'],
+                                sl=s['sl'],
+                                score=s.get('buy_score', 0),
+                                quality=s.get('quality', 'WEAK'),
+                                reason=s.get('reason', ''),
+                                extra_data={
+                                    'name': name,
+                                    'is_reversal': s.get('is_reversal', False),
+                                    'atr': s.get('atr', 0),
+                                    'user_id': uid,
+                                    'timeframe': tf_key,
+                                }
+                            )
                         except Exception as e:
                             logger.error(f"[CRYPTO] Failed to send message for {ticker}: {e}")
 

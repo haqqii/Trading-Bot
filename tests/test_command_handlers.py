@@ -283,79 +283,59 @@ class TestUserDataPersistence:
 
 
 class TestSignalDatetimeConversion:
-    """Tests for datetime conversion in signals."""
+    """Tests for datetime conversion in signals (DB-based)."""
 
-    def test_string_datetime_converted(self, monkeypatch, tmp_path):
-        """String datetime should be converted to datetime object."""
+    def test_load_active_signals_returns_dict(self, monkeypatch, tmp_path):
+        """load_active_signals should return a dict."""
         monkeypatch.chdir(tmp_path)
+        (tmp_path / 'data').mkdir(exist_ok=True)
         from handlers import command_handlers as ch
         import db as db_module
-        from datetime import datetime
 
-        # Reset DB singleton to use temp path
+        # Use temp DB
         original_db = db_module.db
         test_db_path = str(tmp_path / 'data' / 'test_signal.db')
-        (tmp_path / 'data').mkdir(exist_ok=True)
         new_db = db_module.Database(test_db_path)
         db_module.db = new_db
         ch.db = new_db
 
         try:
-            # Write test signals with string datetime
-            signals = {
-                'signal1': {
-                    'ticker': 'BBCA',
-                    'time': '2026-07-20T10:30:00',
-                    'price': 8500
-                }
-            }
-            with open('last_signals.json', 'w') as f:
-                json.dump(signals, f)
+            # Save a test signal
+            new_db.save_active_signal(
+                key='STOCK_BBCA_testuser',
+                ticker='BBCA',
+                asset_type='stock',
+                signal_type='BUY',
+                price=8500.0,
+                tp1=8600.0, tp2=8700.0, tp3=8800.0,
+                sl=8400.0,
+                score=65.0,
+                quality='MODERATE',
+                reason='RSI oversold',
+                extra_data={'user_id': 'testuser', 'atr': 50.0}
+            )
 
-            ch.last_buy_signals = {}
-            ch.load_user_data()
-
-            # Datetime should be converted
-            assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
+            # Load should return dict
+            result = new_db.load_active_signals()
+            assert isinstance(result, dict)
+            assert 'STOCK_BBCA_testuser' in result
+            assert result['STOCK_BBCA_testuser']['entry'] == 8500.0
         finally:
             db_module.db = original_db
             ch.db = original_db
 
-    def test_already_datetime_unchanged(self, monkeypatch, tmp_path):
-        """String datetime that can't be parsed should fall back to now()."""
+    def test_load_active_signals_empty_db(self, monkeypatch, tmp_path):
+        """load_active_signals on empty DB returns empty dict."""
         monkeypatch.chdir(tmp_path)
-        from handlers import command_handlers as ch
-        import db as db_module
-        from datetime import datetime
-
-        # Reset DB singleton to use temp path
-        original_db = db_module.db
-        test_db_path = str(tmp_path / 'data' / 'test_signal2.db')
         (tmp_path / 'data').mkdir(exist_ok=True)
+        import db as db_module
+
+        test_db_path = str(tmp_path / 'data' / 'test_signal_empty.db')
         new_db = db_module.Database(test_db_path)
-        db_module.db = new_db
-        ch.db = new_db
 
-        try:
-            # Write signal with bad datetime string
-            signals = {
-                'signal1': {
-                    'ticker': 'BBCA',
-                    'time': 'not-a-valid-datetime',
-                    'price': 8500
-                }
-            }
-            with open('last_signals.json', 'w') as f:
-                json.dump(signals, f)
-
-            ch.last_buy_signals = {}
-            ch.load_user_data()
-
-            # Bad datetime should fall back to current time
-            assert isinstance(ch.last_buy_signals['signal1']['time'], datetime)
-        finally:
-            db_module.db = original_db
-            ch.db = original_db
+        result = new_db.load_active_signals()
+        assert isinstance(result, dict)
+        assert len(result) == 0
 
 
 class TestTickerDetection:

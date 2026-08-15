@@ -152,27 +152,13 @@ def load_user_data():
     except Exception as e:
         logger.error(f"Error loading user data: {e}")
 
-    # Load signals into global dict (for BSJP tracking)
+    # Load active (open) signals into global dict for TP/SL tracking
+    # This restores signal tracking state after bot restart
     try:
         last_buy_signals.clear()
-        signals_data = db.get_all_signals()
-        # Use timezone-aware datetime to match scheduler.py's now_wib()
-        # (created_at is stored as naive ISO text by SQLite CURRENT_TIMESTAMP)
-        _WIB = timezone(timedelta(hours=7))
-        for key, signal in signals_data.items():
-            # Convert created_at string back to datetime
-            if 'created_at' in signal and isinstance(signal['created_at'], str):
-                try:
-                    parsed = datetime.fromisoformat(signal['created_at'])
-                    # Treat SQLite CURRENT_TIMESTAMP as WIB (server local time)
-                    if parsed.tzinfo is None:
-                        signal['time'] = parsed.replace(tzinfo=_WIB)
-                    else:
-                        signal['time'] = parsed
-                except (ValueError, TypeError):
-                    signal['time'] = datetime.now(timezone.utc).astimezone(_WIB)
-            last_buy_signals[key] = signal
-        logger.info(f"[LOAD_USER] Loaded {len(last_buy_signals)} signals from DB")
+        active_signals = db.load_active_signals()
+        last_buy_signals.update(active_signals)
+        logger.info(f"[LOAD_USER] Loaded {len(last_buy_signals)} active signals from DB")
     except Exception as e:
         logger.error(f"Error loading signals: {e}")
 
