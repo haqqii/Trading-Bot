@@ -27,7 +27,7 @@ def get_tPSL_multipliers(timeframe: str):
         return TF_TPSL_MULTIPLIERS['swing']
 
 
-def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5'):
+def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5') -> dict[str, float | None]:
     """Calculate TP/SL with timeframe-adjusted multipliers."""
     m = get_tPSL_multipliers(timeframe)
     if signal == 'BUY':
@@ -49,12 +49,17 @@ def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5'):
 
 # === Shared Scoring Helpers ===
 
-def score_rsi(rsi: float, buy_thresholds: tuple = (30, 40),
-              sell_thresholds: tuple = (70, 60),
-              buy_pts: tuple = (25, 10), sell_pts: tuple = (25, 10)) -> tuple:
+
+def score_rsi(
+    rsi: float,
+    buy_thresholds: tuple[float, float] = (30, 40),
+    sell_thresholds: tuple[float, float] = (70, 60),
+    buy_pts: tuple[int, int] = (25, 10),
+    sell_pts: tuple[int, int] = (25, 10)
+) -> tuple[int, int, str | None]:
     """Score RSI indicator. Returns (buy_score, sell_score, reason_or_None)."""
     buy_score = sell_score = 0
-    reason = None
+    reason: str | None = None
     buy_lo, buy_hi = buy_thresholds
     sell_lo, sell_hi = sell_thresholds
     buy_full, buy_partial = buy_pts
@@ -87,11 +92,16 @@ def score_ma(ma_fast: float, ma_slow: float) -> tuple:
     return buy_score, sell_score, reason
 
 
-def score_macd(macd: float, macd_signal: float, macd_hist: float,
-               weights: tuple = (25, 15)) -> tuple:
+def score_macd(
+    macd: float,
+    macd_signal: float,
+    macd_hist: float,
+    weights: tuple[int, int] = (25, 15)
+) -> tuple[int, int, str | None]:
     """Score MACD. weights = (cross_pts, above_pts)."""
-    buy_score = sell_score = 0
-    reason = None
+    buy_score: int = 0
+    sell_score: int = 0
+    reason: str | None = None
     cross, above = weights
     if macd > macd_signal and macd_hist > 0:
         buy_score = cross
@@ -108,11 +118,17 @@ def score_macd(macd: float, macd_signal: float, macd_hist: float,
     return buy_score, sell_score, reason
 
 
-def score_bb(price: float, bb_upper: float, bb_lower: float,
-             weight: int = 15) -> tuple:
+
+def score_bb(
+    price: float,
+    bb_upper: float,
+    bb_lower: float,
+    weight: int = 15
+) -> tuple[int, int, str | None]:
     """Score Bollinger Bands position. Returns (buy_score, sell_score, reason_or_None)."""
-    buy_score = sell_score = 0
-    reason = None
+    buy_score: int = 0
+    sell_score: int = 0
+    reason: str | None = None
     spread = bb_upper - bb_lower
     pos = (price - bb_lower) / spread if spread > 0 else 0.5
     if pos < 0.2:
@@ -124,13 +140,22 @@ def score_bb(price: float, bb_upper: float, bb_lower: float,
     return buy_score, sell_score, reason
 
 
-def score_volume(volume_ratio: float, buy_score: int, sell_score: int,
-                 spike_pts: int = 15, moderate_pts: int = 8,
-                 spike_thresh: float = 1.5, moderate_thresh: float = 1.2) -> tuple:
+def score_volume(
+    volume_ratio: float,
+    buy_score: int,
+    sell_score: int,
+    spike_pts: int = 15,
+    moderate_pts: int = 8,
+    spike_thresh: float = 1.5,
+    moderate_thresh: float = 1.2
+) -> tuple[int, int, str | None]:
+    """Score volume. Returns (buy_added, sell_added, reason)."""
     """Score volume. Adjusts based on current direction bias."""
     added_buy = added_sell = 0
-    reason = None
+    reason: str | None = None
     bias = 1 if buy_score > sell_score else -1 if sell_score > buy_score else 0
+    added_buy: int = 0
+    added_sell: int = 0
     if volume_ratio > spike_thresh:
         added_buy = spike_pts if bias >= 0 else 0
         added_sell = spike_pts if bias <= 0 else 0
@@ -142,9 +167,14 @@ def score_volume(volume_ratio: float, buy_score: int, sell_score: int,
     return added_buy, added_sell, reason
 
 
-def determine_signal(buy_score: int, sell_score: int,
-                    buy_threshold: int = 55, sell_threshold: int = 55,
-                    weak_threshold: int = 40) -> tuple:
+def determine_signal(
+    buy_score: int,
+    sell_score: int,
+    buy_threshold: int = 55,
+    sell_threshold: int = 55,
+    weak_threshold: int = 40
+) -> tuple[str, str]:
+                    #
     """Determine signal type and quality from scores. Returns (signal, quality)."""
     if buy_score >= buy_threshold:
         return 'BUY', 'STRONG' if buy_score >= 70 else 'MODERATE'
