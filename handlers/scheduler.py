@@ -421,8 +421,8 @@ async def check_bsjp_signals(app):
         if not (14 <= now.hour < 16):
             return
 
-        # Check if already sent today (file-based)
-        if _check_sent_today(BSJP_SENT_FILE):
+        # Check if already sent today
+        if _check_notification_sent_today('bsjp'):
             logger.info("[BSJP] Already sent today - skipping")
             return
 
@@ -578,7 +578,7 @@ async def check_bsjp_signals(app):
             # Mark as sent today ONLY if signals were found AND we have users to send to
             # (Don't mark if all sends failed - will retry next cycle)
             if bsjp_signals and bsjp_users:
-                _mark_sent_today(BSJP_SENT_FILE)
+                _mark_notification_sent_today('bsjp')
                 logger.info("[BSJP] Marked as sent for today")
 
         # Only mark as sent if we genuinely found no signals (not due to errors)
@@ -1171,12 +1171,60 @@ async def check_alerts(app):
 
 import os
 
-MORNING_SENT_FILE = 'morning_sent.txt'
-BSJP_SENT_FILE = 'bsjp_sent.txt'
+MORNING_SENT_FILE = 'morning_sent.txt'  # Legacy - kept for migration
+BSJP_SENT_FILE = 'bsjp_sent.txt'  # Legacy - kept for migration
 
 
+def _check_notification_sent_today(marker_type: str) -> bool:
+    """Check if notification was already sent today (DB-first, file fallback)."""
+    try:
+        # Try DB first
+        return db.check_notification_sent_today(marker_type)
+    except Exception as e:
+        logger.debug(f"DB check failed for {marker_type}, falling back to file: {e}")
+
+    # Fallback to file-based for legacy compatibility
+    filepath = MORNING_SENT_FILE if marker_type == 'morning' else BSJP_SENT_FILE
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as f:
+                last_sent = f.read().strip()
+            today = now_wib().date().isoformat()
+            return last_sent == today
+    except Exception as e:
+        logger.warning(f"Failed to read sent-marker {filepath}: {e}")
+    return False
+
+
+def _mark_notification_sent_today(marker_type: str):
+    """Mark notification as sent today (DB-first, file fallback)."""
+    try:
+        db.mark_notification_sent_today(marker_type)
+        return
+    except Exception as e:
+        logger.debug(f"DB mark failed for {marker_type}, falling back to file: {e}")
+
+    # Fallback to file-based for legacy compatibility
+    filepath = MORNING_SENT_FILE if marker_type == 'morning' else BSJP_SENT_FILE
+    try:
+        with open(filepath, 'w') as f:
+            f.write(now_wib().date().isoformat())
+    except Exception as e:
+        logger.warning(f"Failed to write sent-marker {filepath}: {e}")
+
+
+# Backward compatibility wrappers
+def _check_morning_sent_today():
+    return _check_notification_sent_today('morning')
+
+
+def _mark_morning_sent():
+    _mark_notification_sent_today('morning')
+
+
+# Legacy file-based function names (still used by some tests)
 def _check_sent_today(filepath: str) -> bool:
-    """Check if notification was already sent today (file-based)"""
+    """Check if notification was already sent today (file-based only)."""
     try:
         if os.path.exists(filepath):
             with open(filepath, 'r') as f:
@@ -1189,21 +1237,12 @@ def _check_sent_today(filepath: str) -> bool:
 
 
 def _mark_sent_today(filepath: str):
-    """Mark notification as sent today"""
+    """Mark notification as sent today (file-based only)."""
     try:
         with open(filepath, 'w') as f:
             f.write(now_wib().date().isoformat())
     except Exception as e:
         logger.warning(f"Failed to write sent-marker {filepath}: {e}")
-
-
-# Backward compatibility wrappers
-def _check_morning_sent_today():
-    return _check_sent_today(MORNING_SENT_FILE)
-
-
-def _mark_morning_sent():
-    _mark_sent_today(MORNING_SENT_FILE)
 
 
 async def check_morning_notification(app):

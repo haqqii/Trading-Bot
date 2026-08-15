@@ -195,6 +195,12 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id);
                 CREATE INDEX IF NOT EXISTS idx_alerts_ticker ON price_alerts(ticker);
+
+                CREATE TABLE IF NOT EXISTS notification_markers (
+                    marker_type TEXT PRIMARY KEY,
+                    sent_date TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             # Migration: add outcome columns to existing signals table
             self._migrate_signals_table()
@@ -568,6 +574,50 @@ class Database:
             }
 
         return result
+
+    # === NOTIFICATION MARKERS (replaces file-based markers) ===
+
+    def check_notification_sent_today(self, marker_type: str) -> bool:
+        """Check if notification was already sent today.
+
+        Args:
+            marker_type: 'morning' or 'bsjp'
+
+        Returns:
+            True if sent today, False otherwise
+        """
+        self.initialize()
+        from datetime import datetime, timezone, timedelta
+        WIB = timezone(timedelta(hours=7))
+        today = datetime.now(WIB).date().isoformat()
+
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT sent_date FROM notification_markers WHERE marker_type = ?",
+                (marker_type,)
+            ).fetchone()
+            if row:
+                return bool(row['sent_date'] == today)
+        return False
+
+    def mark_notification_sent_today(self, marker_type: str) -> bool:
+        """Mark notification as sent today.
+
+        Args:
+            marker_type: 'morning' or 'bsjp'
+        """
+        self.initialize()
+        from datetime import datetime, timezone, timedelta
+        WIB = timezone(timedelta(hours=7))
+        now = datetime.now(WIB)
+        today = now.date().isoformat()
+
+        with self._get_conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO notification_markers (marker_type, sent_date, updated_at)
+                VALUES (?, ?, ?)
+            """, (marker_type, today, now.isoformat()))
+        return True
 
     def get_signal_stats(self, asset_type: str = None) -> Dict:
         """Get aggregate win-rate stats for signals.
