@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import concurrent.futures
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from services.stock_service import stock_service, StockDataResult
@@ -14,6 +14,27 @@ from utils.cache import _price_cache
 from ._shared import _strip_markdown_chars, _send_with_retry, ALL_STOCKS
 
 logger = logging.getLogger(__name__)
+
+
+def _build_analisa_keyboard(ticker: str, is_crypto: bool = False) -> InlineKeyboardMarkup:
+    """Build inline keyboard with quick action buttons for analisa result."""
+    keyboard = []
+
+    # Row 1: Main actions
+    row1 = [
+        InlineKeyboardButton("⭐ Favorit", callback_data=f"fav_add_{ticker}"),
+        InlineKeyboardButton("📊 Chart", callback_data=f"chart_{ticker}"),
+    ]
+    keyboard.append(row1)
+
+    # Row 2: Secondary actions
+    row2 = [
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"analisa_{ticker}"),
+        InlineKeyboardButton("📈 Sinyal", callback_data=f"signal_{ticker}"),
+    ]
+    keyboard.append(row2)
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -42,7 +63,9 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await asyncio.wait_for(
                 update.message.reply_text(
-                    f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
+                    f"📊 Menganalisis `{ticker}`...\n\n"
+                    f"⏳ Mengambil data dari Yahoo Finance...\n"
+                    f"📰 Cek berita terbaru...",
                     parse_mode='Markdown',
                     read_timeout=15,
                     write_timeout=15
@@ -379,11 +402,17 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"[ANALISA] Sending final result for {ticker}")
         sanitized = _strip_markdown_chars(msg)
+
+        # Build inline keyboard for quick actions
+        is_crypto_ticker = ticker_upper in crypto_service.crypto_pairs or ticker.endswith('-USD') or ticker.endswith('-USDT')
+        keyboard = _build_analisa_keyboard(ticker, is_crypto=is_crypto_ticker)
+
+        # Send with inline keyboard
         sent = await _send_with_retry(
-            update.message, msg, parse_mode='Markdown'
+            update.message, msg, parse_mode='Markdown', reply_markup=keyboard
         )
         if not sent:
-            sent = await _send_with_retry(update.message, sanitized)
+            sent = await _send_with_retry(update.message, sanitized, reply_markup=keyboard)
         if sent:
             logger.info(f"[ANALISA] Done for {ticker}")
         else:

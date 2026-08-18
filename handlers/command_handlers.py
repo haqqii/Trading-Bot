@@ -478,6 +478,44 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return await _analisa_cmd(update, ctx)
 
 
+async def analisa_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button callbacks from analisa results."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data:
+        return
+
+    # Parse callback data
+    if data.startswith("fav_add_"):
+        ticker = data[8:]
+        from handlers.commands.favorites import add_favorit_cmd
+        ctx.args = [ticker]
+        await add_favorit_cmd(update, ctx)
+
+    elif data.startswith("chart_"):
+        ticker = data[6:]
+        from handlers.commands.chart import chart_cmd
+        ctx.args = [ticker]
+        await chart_cmd(update, ctx)
+
+    elif data.startswith("analisa_"):
+        ticker = data[8:]
+        ctx.args = [ticker]
+        from handlers.commands.analisa import analisa_cmd as _analisa_cmd
+        await _analisa_cmd(update, ctx)
+
+    elif data.startswith("signal_"):
+        ticker = data[8:]
+        # Show quick signal summary
+        await query.edit_message_text(
+            text=f"📈 Sinyal untuk {ticker}\n\n"
+                 f"Mengambil data terbaru...\n\n"
+                 f"Gunakan `/analisa {ticker}` untuk analisa lengkap"
+        )
+
+
 def register_handlers(app):
     """Register all command handlers to the application"""
     from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -508,6 +546,7 @@ def register_handlers(app):
     app.add_handler(CallbackQueryHandler(tf_cat_cb, pattern=r"tfcat_"))
     app.add_handler(CallbackQueryHandler(tf_cb, pattern=r"tf_"))
     app.add_handler(CallbackQueryHandler(notifikasi_cb, pattern=r"notif_"))
+    app.add_handler(CallbackQueryHandler(analisa_cb, pattern=r"^(fav_add_|chart_|analisa_|signal_)"))
 
     # Message handler for buttons
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, buttons))
