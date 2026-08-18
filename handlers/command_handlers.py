@@ -61,7 +61,7 @@ async def _send_with_retry(message, text, retries=3, delay=2, **kwargs):
                 logger.error(f"Send failed after {retries} attempts")
                 return False
         except Exception as e:
-            logger.error(f"Send failed: {e}")
+            logger.error(f"Send failed: {type(e).__name__}: {e}")
             return False
     return False
 

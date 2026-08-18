@@ -639,8 +639,8 @@ async def check_stock_signals(app):
         total_users = sum(len(v) for v in tf_groups.values())
         logger.info(f"[STOCK SIGNALS] {total_users} users in {len(tf_groups)} TF groups")
 
-        # Limit scan to top 50 most liquid stocks
-        all_tickers = list(ALL_STOCKS.keys())[:50]
+        # Limit scan to top 30 most liquid stocks - reduced for rate limit
+        all_tickers = list(ALL_STOCKS.keys())[:30]
         _stock_timeout_count[0] = 0
 
         # === PHASE 1: Dedup scan per UNIQUE (interval, period) ===
@@ -1991,14 +1991,14 @@ def register_jobs(app):
     app.job_queue.run_repeating(reset_stock_circuit_breaker, interval=60, first=5)
 
     # === PREFETCH JOBS (run first to warm cache) ===
-    # Prefetch stock cache every 2 minutes during market hours
-    app.job_queue.run_repeating(prefetch_stock_cache, interval=120, first=5)
+    # Prefetch stock cache every 5 minutes during market hours - reduced for rate limit
+    app.job_queue.run_repeating(prefetch_stock_cache, interval=300, first=5)
 
-    # Prefetch crypto cache every 5 minutes (reduced due to CoinGecko rate limits)
-    app.job_queue.run_repeating(prefetch_crypto_cache, interval=300, first=10)
+    # Prefetch crypto cache every 15 minutes (reduced due to CoinGecko rate limits)
+    app.job_queue.run_repeating(prefetch_crypto_cache, interval=900, first=10)
 
-    # Favorit alerts check every 2 minutes
-    app.job_queue.run_repeating(check_favorit_alerts, interval=120, first=30)
+    # Favorit alerts check every 5 minutes - reduced for rate limit
+    app.job_queue.run_repeating(check_favorit_alerts, interval=300, first=30)
 
     # Alerts check every minute
     app.job_queue.run_repeating(check_alerts, interval=60, first=60)
@@ -2009,14 +2009,14 @@ def register_jobs(app):
     # BSJP check every minute (14:00-16:00)
     app.job_queue.run_repeating(check_bsjp_signals, interval=60, first=30)
 
-    # Stock signals check every 5 minutes (market hours only)
-    app.job_queue.run_repeating(check_stock_signals, interval=300, first=90)
+    # Stock signals check every 15 minutes (market hours only) - reduced to avoid rate limit
+    app.job_queue.run_repeating(check_stock_signals, interval=900, first=90)
 
-    # Stock TP/SL tracking check every 2 minutes
-    app.job_queue.run_repeating(check_stock_tp_sl, interval=120, first=60)
+    # Stock TP/SL tracking check every 3 minutes
+    app.job_queue.run_repeating(check_stock_tp_sl, interval=180, first=60)
 
-    # Crypto signals check every 5 minutes
-    app.job_queue.run_repeating(check_crypto_signals, interval=300, first=90)
+    # Crypto signals check every 15 minutes - reduced to avoid rate limit
+    app.job_queue.run_repeating(check_crypto_signals, interval=900, first=90)
 
     # Crypto TP/SL tracking check every 2 minutes
     app.job_queue.run_repeating(check_crypto_tp_sl, interval=120, first=60)

@@ -10,6 +10,7 @@ from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from services.news_service import news_service
 from utils.formatters import format_analisa_simple, format_analisa_pemula
+from utils.cache import _price_cache
 from ._shared import _strip_markdown_chars, _send_with_retry, ALL_STOCKS
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,14 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 update.message.reply_text(
                     f"📊 Menganalisis `{ticker}`...\n\n⏳ Mengambil data dan analisis...",
                     parse_mode='Markdown',
-                    read_timeout=8,
-                    write_timeout=8
+                    read_timeout=15,
+                    write_timeout=15
                 ),
-                timeout=8
+                timeout=15
             )
             logger.info(f"[ANALISA] Immediate reply sent for {ticker}")
         except Exception as reply_err:
-            logger.warning(f"[ANALISA] Immediate reply failed (non-blocking): {reply_err}")
+            logger.warning(f"[ANALISA] Immediate reply failed (non-blocking): {type(reply_err).__name__}: {reply_err}")
 
     asyncio.create_task(send_immediate_reply())
 
@@ -115,50 +116,67 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 or yahoo_probe is not None
             )
 
-            if yahoo_probe is not None:
-                d = yahoo_probe
+            cache_key = f"crypto_{full_ticker}_1h_5d"
+            used_stale_cache = False
+
+            # Step 1: Check cache first (instant, no API call)
+            d = _price_cache.get(cache_key)
+            if d and d.get('candles', 0) >= 5:
+                logger.info(f"[ANALISA] Using cached crypto data for {full_ticker}")
             else:
-                try:
-                    d = await asyncio.wait_for(
-                        asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, '1h', '5d'),
-                        timeout=20
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(f"[ANALISA] Crypto fetch timeout for {full_ticker}")
-                    d = None
-                except Exception as fetch_err:
-                    logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
-                    await update.message.reply_text(
-                        f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
-                        f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
-                        "Coba lagi dalam beberapa saat.",
-                        parse_mode='Markdown'
-                    )
-                    return
+                d = None
+                if yahoo_probe is not None:
+                    d = yahoo_probe
+                else:
+                    try:
+                        d = await asyncio.wait_for(
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, '1h', '5d'),
+                            timeout=20
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"[ANALISA] Crypto fetch timeout for {full_ticker}")
+                        d = None
+                    except Exception as fetch_err:
+                        logger.error(f"[ANALISA] Crypto fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
+                        await update.message.reply_text(
+                            f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
+                            f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
+                            "Coba lagi dalam beberapa saat.",
+                            parse_mode='Markdown'
+                        )
+                        return
 
-            # Fallback: try without -USD suffix
-            if not d and full_ticker.endswith('-USD'):
-                alt_ticker = full_ticker.replace('-USD', '')
-                try:
-                    d = await asyncio.wait_for(
-                        asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
-                        timeout=20
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(f"[ANALISA] Crypto fallback fetch timeout for {alt_ticker}")
-                    d = None
+                # Fallback: try without -USD suffix
+                if not d and full_ticker.endswith('-USD'):
+                    alt_ticker = full_ticker.replace('-USD', '')
+                    try:
+                        d = await asyncio.wait_for(
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                            timeout=20
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"[ANALISA] Crypto fallback fetch timeout for {alt_ticker}")
+                        d = None
 
-            # Fallback: try with -USDT suffix
-            if not d and full_ticker.endswith('-USD'):
-                alt_ticker = full_ticker.replace('-USD', '-USDT')
-                try:
-                    d = await asyncio.wait_for(
-                        asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
-                        timeout=20
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(f"[ANALISA] Crypto USDT fallback fetch timeout for {alt_ticker}")
-                    d = None
+                # Fallback: try with -USDT suffix
+                if not d and full_ticker.endswith('-USD'):
+                    alt_ticker = full_ticker.replace('-USD', '-USDT')
+                    try:
+                        d = await asyncio.wait_for(
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                            timeout=20
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"[ANALISA] Crypto USDT fallback fetch timeout for {alt_ticker}")
+                        d = None
+
+                # Step 3: If API failed, try stale cache
+                if not d:
+                    logger.info(f"[ANALISA] Crypto API failed, trying stale cache for {full_ticker}")
+                    d = _price_cache.get_stale(cache_key)
+                    if d:
+                        used_stale_cache = True
+                        logger.info(f"[ANALISA] Using STALE crypto cache for {full_ticker}")
 
             if not d:
                 if not ticker_known:
@@ -173,9 +191,9 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await update.message.reply_text(
-                        f"❌ Gagal mengambil data untuk `{ticker}`\n\n"
-                        f"Ticker dikenal di database, tapi CoinGecko & Yahoo Finance keduanya tidak merespon.\n"
-                        f"Mungkin API sedang down atau kena rate limit. Coba lagi dalam 1-2 menit.",
+                        f"⚠️ Gagal mengambil data untuk `{ticker}`\n\n"
+                        f"Ticker dikenal, tapi CoinGecko & Yahoo Finance tidak merespon.\n\n"
+                        f"Coba lagi dalam 1-2 menit saat rate limit reset.",
                         parse_mode='Markdown'
                     )
                 return
@@ -214,49 +232,69 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 usd_idr_rate=crypto_service.get_usd_idr_rate()
             )
 
+            # Add note if using stale cache
+            if used_stale_cache:
+                msg = msg.rstrip() + "\n\n⚠️ Data dari cache (stale) karena API sedang tidak merespon"
+
         else:
             # Stock analysis path
             full_ticker = ticker + ".JK"
             ticker_known = ticker in ALL_STOCKS
+            cache_key = f"stock_{ticker}_5m_1d"
 
             d, sentiment = None, None
+            used_stale_cache = False
 
-            def fetch_stock_data():
-                try:
-                    return stock_service.get_stock_data_combined(full_ticker, '5m', '1d')
-                except Exception as e:
-                    logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
+            # Step 1: Check cache first (instant, no API call)
+            d = _price_cache.get(cache_key)
+            if d:
+                logger.info(f"[ANALISA] Using cached data for {full_ticker}")
+            else:
+                # Step 2: Try fresh fetch from API
+                def fetch_stock_data():
+                    try:
+                        return stock_service.get_stock_data_combined(full_ticker, '5m', '1d')
+                    except Exception as e:
+                        logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
+                        return None
+
+                async def fetch_news_async():
+                    try:
+                        result = await asyncio.to_thread(news_service.get_stock_news, ticker, None)
+                        if result and len(result) >= 2:
+                            return result[1]
+                    except Exception as e:
+                        logger.warning(f"[ANALISA] News fetch failed for {ticker}: {e}")
                     return None
 
-            async def fetch_news_async():
-                try:
-                    result = await asyncio.to_thread(news_service.get_stock_news, ticker, None)
-                    if result and len(result) >= 2:
-                        return result[1]
-                except Exception as e:
-                    logger.warning(f"[ANALISA] News fetch failed for {ticker}: {e}")
-                return None
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    stock_future = executor.submit(fetch_stock_data)
+                    news_coro = fetch_news_async()
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                stock_future = executor.submit(fetch_stock_data)
-                news_coro = fetch_news_async()
+                    try:
+                        d = stock_future.result(timeout=20)
+                    except concurrent.futures.TimeoutError:
+                        logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
+                        d = None
 
-                try:
-                    d = stock_future.result(timeout=20)
-                except concurrent.futures.TimeoutError:
-                    logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
-                    d = None
+                    try:
+                        sentiment = await asyncio.wait_for(news_coro, timeout=10)
+                    except (asyncio.TimeoutError, Exception):
+                        sentiment = None
 
-                name = None
-                if d:
-                    name = d.get('name') or ALL_STOCKS.get(ticker, ticker)
-                else:
-                    name = ALL_STOCKS.get(ticker, ticker)
+                # Step 3: If API fails, try stale cache
+                if not d:
+                    logger.info(f"[ANALISA] API failed, trying stale cache for {full_ticker}")
+                    d = _price_cache.get_stale(cache_key)
+                    if d:
+                        used_stale_cache = True
+                        logger.info(f"[ANALISA] Using STALE cache for {full_ticker}")
 
-                try:
-                    sentiment = await asyncio.wait_for(news_coro, timeout=10)
-                except (asyncio.TimeoutError, Exception):
-                    sentiment = None
+            name = None
+            if d:
+                name = d.get('name') or ALL_STOCKS.get(ticker, ticker)
+            else:
+                name = ALL_STOCKS.get(ticker, ticker)
 
             if not d:
                 if not ticker_known:
@@ -272,9 +310,10 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     await _send_with_retry(
                         update.message,
-                        f"❌ Gagal mengambil data untuk `{ticker}`\n\n"
-                        f"Saham ada di database IDX, tapi Yahoo Finance & TradingView keduanya tidak merespon.\n"
-                        f"Mungkin API sedang down atau kena rate limit. Coba lagi dalam 1-2 menit.",
+                        f"⚠️ Gagal mengambil data untuk `{ticker}`\n\n"
+                        f"Saham ada di database, tapi Yahoo Finance & TradingView tidak merespon.\n\n"
+                        f"Coba lagi dalam 1-2 menit saat rate limit reset.\n\n"
+                        f"💡 Tips: Gunakan `/favorit {ticker}` untuk auto-alert",
                         parse_mode='Markdown'
                     )
                 return
@@ -302,6 +341,11 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 sentiment=sentiment,
                 timeframe='5 Menit',
             )
+
+            # Add note if using stale cache
+            if used_stale_cache:
+                msg = msg.rstrip() + "\n\n⚠️ Data dari cache (stale) karena API sedang tidak merespon"
+
 
         logger.info(f"[ANALISA] Sending final result for {ticker}")
         sanitized = _strip_markdown_chars(msg)
