@@ -1,23 +1,30 @@
 """
 Signal generation service for stocks and crypto.
 """
+from __future__ import annotations
+
 import logging
+from typing import Dict, Any, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
+
+# Type alias for signal dict
+SignalDict = Dict[str, Any]
+StockDataDict = Dict[str, Any]
 
 
 # TP/SL multipliers by timeframe category
 # Scalping: 1m, 5m — tight targets, frequent checks
 # Intraday: 15m, 30m — moderate targets
 # Swing: 60m (1h), 240m (4h), 1440m (1d) — wider targets, less frequent checks
-TF_TPSL_MULTIPLIERS = {
+TF_TPSL_MULTIPLIERS: Dict[str, Dict[str, float]] = {
     'scalping': {'sl': 2.0, 'tp1': 1.0, 'tp2': 2.0, 'tp3': 3.0},   # 1m, 5m
     'intraday': {'sl': 2.5, 'tp1': 1.5, 'tp2': 3.0, 'tp3': 5.0},  # 15m, 30m
     'swing': {'sl': 3.0, 'tp1': 2.0, 'tp2': 4.0, 'tp3': 7.0},     # 1h, 4h, 1d
 }
 
 
-def get_tPSL_multipliers(timeframe: str):
+def get_tPSL_multipliers(timeframe: str) -> Dict[str, float]:
     """Get TP/SL multipliers based on timeframe."""
     if timeframe in ('1', '5'):
         return TF_TPSL_MULTIPLIERS['scalping']
@@ -27,7 +34,7 @@ def get_tPSL_multipliers(timeframe: str):
         return TF_TPSL_MULTIPLIERS['swing']
 
 
-def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5') -> dict[str, float | None]:
+def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5') -> Dict[str, Optional[float]]:
     """Calculate TP/SL with timeframe-adjusted multipliers."""
     m = get_tPSL_multipliers(timeframe)
     if signal == 'BUY':
@@ -227,7 +234,7 @@ class SignalService:
     """Service for generating trading signals"""
 
     @staticmethod
-    def generate_stock_signal(data):
+    def generate_stock_signal(data: Optional[StockDataDict]) -> SignalDict:
         """Generate stock signal using weighted multi-indicator scoring system."""
         if not data:
             return {'signal': 'HOLD', 'reason': 'No data'}
@@ -292,7 +299,7 @@ class SignalService:
         }
 
     @staticmethod
-    def generate_crypto_signal(data):
+    def generate_crypto_signal(data: Optional[StockDataDict]) -> SignalDict:
         """Generate crypto signal using weighted multi-indicator scoring system"""
         if not data:
             return {'signal': 'HOLD', 'reason': 'No data'}

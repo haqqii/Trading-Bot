@@ -129,7 +129,7 @@ class TestGetStockDataCombined:
         # Should have called TradingView, not Yahoo
         assert len(tv_called) == 1
         assert len(yahoo_called) == 0
-        assert result['source'] == 'tradingview'
+        assert result.source == 'tradingview'
 
     def test_non_blacklisted_uses_yahoo_first(self):
         """Non-blacklisted ticker should try Yahoo first."""
@@ -162,7 +162,7 @@ class TestGetStockDataCombined:
         assert len(yahoo_called) == 1
         # No need to call others since Yahoo succeeded
         assert len(tv_called) == 0
-        assert result['source'] == 'yahoo'
+        assert result.source == 'yahoo'
 
     def test_falls_back_to_tradingview(self):
         """Should fall back to TradingView if Yahoo fails."""
@@ -193,10 +193,10 @@ class TestGetStockDataCombined:
         # Yahoo, v8, and TV should be called
         assert len(yahoo_called) == 1
         assert len(tv_called) == 1
-        assert result['source'] == 'tradingview'
+        assert result.source == 'tradingview'
 
-    def test_returns_none_when_all_fail(self):
-        """Should return None if all sources fail."""
+    def test_returns_error_result_when_all_fail(self):
+        """Should return StockDataResult with success=False if all sources fail."""
         from services.stock_service import StockService
         service = StockService()
 
@@ -206,7 +206,9 @@ class TestGetStockDataCombined:
         service.get_stock_data_finnhub = lambda x: None
 
         result = service.get_stock_data_combined('BBCA.JK', '5m', '1d')
-        assert result is None
+        assert result.success is False
+        assert result.error is not None
+        assert result.retry_after > 0
 
 
 class TestCacheKeyFormat:

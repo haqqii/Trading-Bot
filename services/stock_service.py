@@ -4,6 +4,8 @@ Stock data fetching service using Yahoo Finance, TradingView, and Finnhub.
 import os
 import time
 import logging
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, List
 import requests
 import yfinance as yf
 import pandas as pd
@@ -16,6 +18,34 @@ from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_ba
 from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StockDataResult:
+    """Structured result for stock data fetching."""
+    success: bool = False
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    source: str = "unknown"
+    retry_after: int = 0  # seconds to wait before retry
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.retry_after > 0
+
+    @property
+    def is_not_found(self) -> bool:
+        return self.error and "not found" in self.error.lower()
+
+    @property
+    def is_insufficient_data(self) -> bool:
+        return self.error and "insufficient" in self.error.lower()
+
+    def unwrap(self) -> Dict[str, Any]:
+        """Get data or raise if error."""
+        if not self.success or self.data is None:
+            raise ValueError(self.error or "No data available")
+        return self.data
 
 # HTTP session with connection pooling
 _session = requests.Session()
@@ -380,39 +410,89 @@ class StockService:
             logger.error(f"Yahoo v8 error for {ticker}: {e}")
             return None
 
-    def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d'):
-        """Get stock data - try Yahoo Finance first, then v8 API, TradingView, then Finnhub"""
+    def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d') -> StockDataResult:
+        """Get stock data - try Yahoo Finance first, then v8 API, TradingView, then Finnhub.
+
+        Returns StockDataResult with structured error information for better error handling.
+        """
         base_ticker = ticker.replace('.JK', '')
+
+        # Track which sources failed and why
+        failures: List[Dict[str, str]] = []
+
         if base_ticker in YAHOO_BLACKLIST:
+            # Try v8 first for blacklisted
             data = self.get_stock_data_v8(ticker, interval, period)
             if data:
-                return data
+                return StockDataResult(success=True, data=data, source='yahoo_v8')
+
+            # Try TradingView
             data = self.get_stock_data_tradingview(base_ticker)
             if data:
-                return data
-            # Try Finnhub as backup for blacklisted tickers
-            if FINNHUB_API_KEY:
-                return self.get_stock_data_finnhub(base_ticker)
-            return None
+                return StockDataResult(success=True, data=data, source='tradingview')
 
+            # Try Finnhub
+            if FINNHUB_API_KEY:
+                data = self.get_stock_data_finnhub(base_ticker)
+                if data:
+                    return StockDataResult(success=True, data=data, source='finnhub')
+
+            return StockDataResult(
+                success=False,
+                error=f"All sources failed for {base_ticker}",
+                source='all',
+                retry_after=60
+            )
+
+        # Try Yahoo Finance first
         data = self.get_stock_data(ticker, interval, period)
         if data:
-            return data
+            return StockDataResult(success=True, data=data, source='yahoo')
 
-        # Try Yahoo Finance v8 API as backup (different rate limits)
+        # Try Yahoo Finance v8 API as backup
         data = self.get_stock_data_v8(ticker, interval, period)
         if data:
-            return data
+            return StockDataResult(success=True, data=data, source='yahoo_v8')
 
+        # Try TradingView
         data = self.get_stock_data_tradingview(base_ticker)
         if data:
-            return data
+            return StockDataResult(success=True, data=data, source='tradingview')
 
         # Try Finnhub as final fallback
         if FINNHUB_API_KEY:
-            return self.get_stock_data_finnhub(base_ticker)
+            data = self.get_stock_data_finnhub(base_ticker)
+            if data:
+                return StockDataResult(success=True, data=data, source='finnhub')
 
-        return None
+        # All sources failed - check circuit breakers for rate limit info
+        yahoo_breaker = _circuit_breakers.get('yahoo')
+        tv_breaker = _circuit_breakers.get('tradingview')
+
+        retry_after = 30  # Default retry
+        if yahoo_breaker and yahoo_breaker.state.name == 'OPEN':
+            retry_after = yahoo_breaker.recovery_timeout
+            return StockDataResult(
+                success=False,
+                error="Yahoo Finance rate limited",
+                source='yahoo',
+                retry_after=retry_after
+            )
+        if tv_breaker and tv_breaker.state.name == 'OPEN':
+            retry_after = tv_breaker.recovery_timeout
+            return StockDataResult(
+                success=False,
+                error="TradingView rate limited",
+                source='tradingview',
+                retry_after=retry_after
+            )
+
+        return StockDataResult(
+            success=False,
+            error=f"All sources failed for {ticker}. Yahoo & TradingView not responding.",
+            source='all',
+            retry_after=retry_after
+        )
 
     def get_stock_data_finnhub(self, ticker: str, retry: int = 1):
         """Get stock data from Finnhub API"""

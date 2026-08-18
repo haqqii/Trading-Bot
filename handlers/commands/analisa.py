@@ -5,7 +5,7 @@ import concurrent.futures
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from services.stock_service import stock_service
+from services.stock_service import stock_service, StockDataResult
 from services.crypto_service import crypto_service
 from services.signal_service import signal_service
 from services.news_service import news_service
@@ -244,6 +244,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             d, sentiment = None, None
             used_stale_cache = False
+            fetch_error: str | None = None
+            retry_after: int = 0
 
             # Step 1: Check cache first (instant, no API call)
             d = _price_cache.get(cache_key)
@@ -256,7 +258,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         return stock_service.get_stock_data_combined(full_ticker, '5m', '1d')
                     except Exception as e:
                         logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
-                        return None
+                        return StockDataResult(success=False, error=str(e), source='exception')
 
                 async def fetch_news_async():
                     try:
@@ -272,10 +274,16 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     news_coro = fetch_news_async()
 
                     try:
-                        d = stock_future.result(timeout=20)
+                        result = stock_future.result(timeout=20)
+                        if result and result.success:
+                            d = result.data
+                        else:
+                            fetch_error = result.error if result else "Unknown error"
+                            retry_after = result.retry_after if result else 0
                     except concurrent.futures.TimeoutError:
                         logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
-                        d = None
+                        fetch_error = "Timeout saat mengambil data"
+                        retry_after = 30
 
                     try:
                         sentiment = await asyncio.wait_for(news_coro, timeout=10)
@@ -284,7 +292,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
                 # Step 3: If API fails, try stale cache
                 if not d:
-                    logger.info(f"[ANALISA] API failed, trying stale cache for {full_ticker}")
+                    logger.info(f"[ANALISA] API failed (retry_after={retry_after}s), trying stale cache for {full_ticker}")
                     d = _price_cache.get_stale(cache_key)
                     if d:
                         used_stale_cache = True
@@ -297,6 +305,28 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 name = ALL_STOCKS.get(ticker, ticker)
 
             if not d:
+                if not ticker_known:
+                    await _send_with_retry(
+                        update.message,
+                        f"❌ Saham `{ticker}` tidak ditemukan\n\n"
+                        f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
+                        f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
+                        f"ℹ️ Ini command untuk saham. Untuk crypto gunakan:\n"
+                        f"`/analisa BTC` atau `/analisa BEAT`",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    # Better error message with retry timing
+                    retry_msg = f"Coba lagi dalam {retry_after} detik." if retry_after > 0 else "Coba lagi dalam 1-2 menit."
+                    await _send_with_retry(
+                        update.message,
+                        f"⚠️ Gagal mengambil data untuk `{ticker}`\n\n"
+                        f"Error: {fetch_error or 'Yahoo Finance & TradingView tidak merespon'}\n\n"
+                        f"{retry_msg}\n\n"
+                        f"💡 Tips: Gunakan `/favorit {ticker}` untuk auto-alert saat data tersedia",
+                        parse_mode='Markdown'
+                    )
+                return
                 if not ticker_known:
                     await _send_with_retry(
                         update.message,

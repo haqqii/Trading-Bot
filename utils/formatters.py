@@ -1,12 +1,14 @@
 """
 Message formatters for Telegram bot.
 """
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from config.settings import TIMEFRAMES
 
 logger = logging.getLogger(__name__)
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional, Union
 
 
 # Characters that Telegram's legacy Markdown parser treats as formatting.
@@ -17,7 +19,7 @@ from typing import Dict, List, Any, Tuple
 _MD_SPECIAL = ('\\', '*', '_', '`', '[')
 
 
-def escape_md(text) -> str:
+def escape_md(text: Optional[str]) -> str:
     """Escape Markdown special characters for Telegram legacy parse mode."""
     if text is None:
         return ''
@@ -766,11 +768,11 @@ def format_unified_stock_notification(
 def format_analisa_simple(
     ticker: str,
     name: str,
-    data: Dict,
-    signal: Dict,
-    sentiment: Dict = None,
+    data: Optional[Dict[str, Any]],
+    signal: Optional[Dict[str, Any]],
+    sentiment: Optional[Dict[str, Any]] = None,
     is_crypto: bool = False,
-    usd_idr_rate: float = 0
+    usd_idr_rate: float = 0.0
 ) -> str:
     """
     Clean, readable analisa output format.
@@ -1299,9 +1301,9 @@ def _intinya_pemula(signal_type: str, data: Dict, sentiment: Dict) -> str:
 def format_analisa_pemula(
     ticker: str,
     name: str,
-    data: Dict,
-    signal: Dict,
-    sentiment: Dict = None,
+    data: Optional[Dict[str, Any]],
+    signal: Optional[Dict[str, Any]],
+    sentiment: Optional[Dict[str, Any]] = None,
     timeframe: str = '5 Menit',
 ) -> str:
     """
