@@ -5,7 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
-from services.stock_service import stock_service, FINNHUB_API_KEY
+from services.stock_service import stock_service, FINNHUB_API_KEY, StockDataResult
 from services.crypto_service import crypto_service
 from services.signal_service import signal_service, calc_tPSL
 from utils.formatters import format_unified_crypto_notification, format_unified_stock_notification
@@ -28,6 +28,20 @@ def now_wib():
     system timezone setting.
     """
     return datetime.now(timezone.utc).astimezone(WIB)
+
+
+def _unwrap_stock_result(result) -> dict | None:
+    """Unwrap StockDataResult or dict to get the actual data dict.
+
+    Handles both new StockDataResult return type and old dict return type
+    for backward compatibility during migration.
+    """
+    if result is None:
+        return None
+    if isinstance(result, StockDataResult):
+        return result.data if result.success else None
+    # Legacy: return dict as-is
+    return result
 
 
 async def reset_stock_circuit_breaker(app):
@@ -120,7 +134,8 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
         return cached, False
 
     # Try fresh data
-    d = stock_service.get_stock_data_combined(ticker, interval, period)
+    result = stock_service.get_stock_data_combined(ticker, interval, period)
+    d = _unwrap_stock_result(result)
     if d and d.get('candles', 0) >= 5:
         # Also cache with fallback key format for other callers
         fallback_key = f"stock_{ticker}_{interval}_{period}"
@@ -376,7 +391,8 @@ async def check_favorit_alerts(app):
                     continue
 
                 try:
-                    d = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '1d')
+                    result = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '1d')
+                    d = _unwrap_stock_result(result)
                     if not d:
                         continue
 
@@ -968,7 +984,8 @@ async def check_stock_tp_sl(app):
                     # Get user's TF from their settings for per-user TP/SL calculation
                     user_tf = u.get('timeframe', '5')
                     interval, period = TF_TO_INTERVAL.get(user_tf, ('5m', '5d'))
-                    d = stock_service.get_stock_data_combined(ticker + ".JK", interval, period)
+                    result = stock_service.get_stock_data_combined(ticker + ".JK", interval, period)
+                    d = _unwrap_stock_result(result)
                     if not d:
                         continue
 
@@ -1130,7 +1147,8 @@ async def check_alerts(app):
 
             for ticker, a in list(alerts.items()):
                 try:
-                    d = stock_service.get_stock_data_combined(ticker + ".JK", '1m', '1d')
+                    result = stock_service.get_stock_data_combined(ticker + ".JK", '1m', '1d')
+                    d = _unwrap_stock_result(result)
                     if not d:
                         continue
 
@@ -1919,7 +1937,8 @@ async def prefetch_stock_cache(app):
                     return None
 
                 # Fetch fresh data - this will auto-cache via stock_service
-                d = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '3d')
+                result = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '3d')
+                d = _unwrap_stock_result(result)
                 if d and d.get('candles', 0) >= 5:
                     return ticker
             except Exception as e:
