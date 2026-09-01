@@ -103,6 +103,7 @@ class TestGetStockDataCombined:
         # Mock the underlying methods to verify routing
         original_tv = service.get_stock_data_tradingview
         original_yahoo = service.get_stock_data
+        original_v8 = service.get_stock_data_v8
         original_finnhub = service.get_stock_data_finnhub
 
         tv_called = []
@@ -116,11 +117,15 @@ class TestGetStockDataCombined:
             yahoo_called.append(ticker)
             return None
 
+        def mock_v8(ticker, *args, **kwargs):
+            return None  # Simulate v8 failure for blacklisted ticker
+
         def mock_finnhub(ticker):
             return None
 
         service.get_stock_data_tradingview = mock_tv
         service.get_stock_data = mock_yahoo
+        service.get_stock_data_v8 = mock_v8
         service.get_stock_data_finnhub = mock_finnhub
 
         # Use a blacklisted ticker

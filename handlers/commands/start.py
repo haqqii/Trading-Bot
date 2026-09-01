@@ -106,7 +106,8 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     stocks = list(ALL_STOCKS.items())[:30]
 
     async def fetch_stock(ticker, name):
-        d = stock_service.get_stock_data_combined(ticker + ".JK", tf['interval'], tf['period'])
+        result = stock_service.get_stock_data_combined(ticker + ".JK", tf['interval'], tf['period'])
+        d = result.data if result and result.success else None
         if d:
             return (ticker, name, d)
         return None

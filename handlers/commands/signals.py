@@ -60,7 +60,8 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     async def analyze_stock(ticker):
         try:
-            d1h = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            result = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            d1h = result.data if result and result.success else None
             if not d1h or d1h.get('candles', 0) < 10:
                 return None
 
@@ -124,7 +125,8 @@ async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     async def analyze_stock(ticker):
         try:
-            d = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            result = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            d = result.data if result and result.success else None
             if not d or d.get('candles', 0) < 10:
                 return None
 
