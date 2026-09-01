@@ -129,9 +129,14 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
     cache_key = f"{ticker}:{interval}:{period}"
 
     # Check cache first - use stock_service's cache key format
+    # Also handle case where cached value is a StockDataResult (old cached data)
     cached = _price_cache.get(cache_key)
-    if cached and cached.get('candles', 0) >= 5:
-        return cached, False
+    if cached:
+        # Unwrap if cached value is StockDataResult
+        if isinstance(cached, StockDataResult):
+            cached = cached.data if cached.success else None
+        if cached and cached.get('candles', 0) >= 5:
+            return cached, False
 
     # Try fresh data
     result = stock_service.get_stock_data_combined(ticker, interval, period)
@@ -144,15 +149,21 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
 
     # Try stale cache (check both key formats)
     stale_d = _price_cache.get_stale(cache_key)
-    if stale_d and stale_d.get('candles', 0) >= 5:
-        logger.warning(f"Using stale cache for {ticker} (API may be down)")
-        return stale_d, True
+    if stale_d:
+        if isinstance(stale_d, StockDataResult):
+            stale_d = stale_d.data if stale_d.success else None
+        if stale_d and stale_d.get('candles', 0) >= 5:
+            logger.warning(f"Using stale cache for {ticker} (API may be down)")
+            return stale_d, True
 
     fallback_key = f"stock_{ticker}_{interval}_{period}"
     stale_d = _price_cache.get_stale(fallback_key)
-    if stale_d and stale_d.get('candles', 0) >= 5:
-        logger.warning(f"Using stale cache for {ticker} (API may be down)")
-        return stale_d, True
+    if stale_d:
+        if isinstance(stale_d, StockDataResult):
+            stale_d = stale_d.data if stale_d.success else None
+        if stale_d and stale_d.get('candles', 0) >= 5:
+            logger.warning(f"Using stale cache for {ticker} (API may be down)")
+            return stale_d, True
 
     return None, False
 
@@ -166,8 +177,12 @@ def get_crypto_data_with_fallback(ticker: str, interval: str = '1h', period: str
 
     # Check cache first before API call
     cached = _price_cache.get(cache_key)
-    if cached and cached.get('candles', 0) >= 5:
-        return cached, False
+    if cached:
+        # Handle case where cached value is StockDataResult (shouldn't happen for crypto, but be safe)
+        if isinstance(cached, StockDataResult):
+            cached = cached.data if cached.success else None
+        if cached and cached.get('candles', 0) >= 5:
+            return cached, False
 
     # Try fresh data
     d = crypto_service.get_crypto_data_combined(ticker, interval, period)
@@ -177,9 +192,12 @@ def get_crypto_data_with_fallback(ticker: str, interval: str = '1h', period: str
 
     # Try stale cache
     stale_d = _price_cache.get_stale(cache_key)
-    if stale_d and stale_d.get('candles', 0) >= 5:
-        logger.warning(f"Using stale crypto cache for {ticker} (API may be down)")
-        return stale_d, True
+    if stale_d:
+        if isinstance(stale_d, StockDataResult):
+            stale_d = stale_d.data if stale_d.success else None
+        if stale_d and stale_d.get('candles', 0) >= 5:
+            logger.warning(f"Using stale crypto cache for {ticker} (API may be down)")
+            return stale_d, True
 
     return None, False
 
