@@ -36,7 +36,7 @@ Bot Saham 2/
 │   └── ochobot_backup_*.db # Migration backup files
 ├── scripts/
 │   └── migrate_bot.py      # Bot migration utility (backup, broadcast, verify)
-├── tests/                  # Unit tests (393 tests, all passing)
+├── tests/                  # Unit tests (434 tests, all passing)
 │   ├── test_db.py          # SQLite database tests (41)
 │   ├── test_indicators.py  # Technical indicators (33)
 │   ├── test_patterns.py    # Pattern detection (35)
@@ -62,7 +62,7 @@ Bot Saham 2/
 
 ## 🎯 Highlights
 
-- ✅ **393 unit tests** (all passing) - comprehensive test coverage
+- ✅ **434 unit tests** (all passing) - comprehensive test coverage
 - ✅ **SQLite storage** - atomic writes, crash-safe, concurrent access
 - ✅ **Multi-source fallback** - Yahoo → TradingView → CoinGecko → local data
 - ✅ **Pattern detection** - Channel, Triangle, Wedge with confidence scores
@@ -179,7 +179,7 @@ The bot will:
 
 ## 🧪 Testing
 
-The project has a comprehensive test suite with **393 tests** covering all major modules.
+The project has a comprehensive test suite with **434 tests** covering all major modules.
 
 ```bash
 # Run all tests
@@ -210,7 +210,7 @@ python -m pytest tests/ --cov=utils --cov=services --cov=handlers --cov=db
 | `services/stock_service.py` | 26 | Blacklist, routing logic, API keys, fallback |
 | `services/crypto_service.py` | 33 | Yahoo/CoinGecko routing, fallback pairs |
 | `services/chart_service.py` | 18 | Matplotlib config, chart generation |
-| **TOTAL** | **393** | ✅ All passing |
+| **TOTAL** | **434** | ✅ All passing |
 
 ## 📱 How to Use
 
