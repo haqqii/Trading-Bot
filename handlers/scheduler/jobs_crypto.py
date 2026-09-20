@@ -11,7 +11,7 @@ import logging
 
 from services.crypto_service import crypto_service
 from services.signal_service import calc_tPSL, signal_service
-from utils.formatters import format_unified_crypto_notification
+from utils.formatters import format_unified_crypto_notification, escape_md
 from db import db
 from utils.cache import _price_cache
 
@@ -525,7 +525,7 @@ async def check_crypto_favorit_alerts(app):
                     # Check if price reached target (for crypto, check if ABOVE target for SELL or BELOW for BUY)
                     # Default: alert when price >= target (good for take profit)
                     if current_price >= target_price:
-                        msg = f"🎯 *TARGET TERCAPAI: {name} ({ticker})*\n\n"
+                        msg = f"🎯 *TARGET TERCAPAI: {escape_md(name)} ({escape_md(ticker)})*\n\n"
                         msg += f"💰 Target: ${target_price:,.2f}\n"
                         msg += f"📈 Current: ${current_price:,.2f}\n"
                         msg += f"💱 Rate USD-IDR: Rp {usd_idr:,.0f}\n"

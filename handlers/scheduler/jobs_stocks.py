@@ -18,7 +18,7 @@ import logging
 from services.stock_service import stock_service
 from services.signal_service import calc_tPSL
 from services.crypto_service import crypto_service
-from utils.formatters import format_unified_stock_notification
+from utils.formatters import format_unified_stock_notification, escape_md
 from db import db
 
 from handlers.scheduler._common import (
@@ -113,7 +113,7 @@ async def check_favorit_alerts(app):
                         name = ALL_STOCKS.get(ticker, ticker)
                         emoji = "🎯"
 
-                        msg = f"{emoji} *TARGET TERCAPAI: {name} ({ticker})*\n\n"
+                        msg = f"{emoji} *TARGET TERCAPAI: {escape_md(name)} ({escape_md(ticker)})*\n\n"
                         msg += f"💰 Target: Rp {target_price:,.0f}\n"
                         msg += f"📈 Current: Rp {current_price:,.0f}\n"
                         msg += f"📊 Profit: {((current_price - target_price) / target_price * 100):+.2f}%\n\n"
@@ -713,14 +713,14 @@ async def check_alerts(app):
                     if alert_type == 'BUY' and current <= target:
                         triggered = True
                         msg = f"🟢 *ALERT BUY!*\n\n"
-                        msg += f"{ticker} sudah turun ke Rp {current:,.0f}\n"
+                        msg += f"{escape_md(ticker)} sudah turun ke Rp {current:,.0f}\n"
                         msg += f"Target: Rp {target:,.0f}\n\n"
                         msg += "Saatnya buy!"
 
                     elif alert_type == 'SELL' and current >= target:
                         triggered = True
                         msg = f"🔴 *ALERT SELL!*\n\n"
-                        msg += f"{ticker} sudah naik ke Rp {current:,.0f}\n"
+                        msg += f"{escape_md(ticker)} sudah naik ke Rp {current:,.0f}\n"
                         msg += f"Target: Rp {target:,.0f}\n\n"
                         msg += "Saatnya sell!"
 

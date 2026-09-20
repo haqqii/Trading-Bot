@@ -3,12 +3,10 @@ Command handlers for Telegram bot.
 """
 import asyncio
 import time
-from datetime import datetime, timezone, timedelta
 import json
 import os
 import logging
 import concurrent.futures
-from datetime import datetime
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -334,20 +332,15 @@ def get_user(user_id):
     """Get or create user data"""
     if user_id not in user_data_db:
         user_data_db[user_id] = {
-            'watchlist': [],
-            'crypto_watchlist': [],
             'portfolio': [],
-            'notifications': True,
             'notif_saham': False,
             'notif_crypto': False,
             'notif_bsjp': False,
             'notif_morning': False,
-            'notif_watchlist': False,
+            'notif_alert_favorit': False,
             'favorit': {},
             'crypto_favorit': {},
             'timeframe': '5',
-            'alerts': {},
-            'subscribed_at': datetime.now().isoformat()
         }
     return user_data_db[user_id]
 
