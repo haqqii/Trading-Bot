@@ -1,24 +1,26 @@
 """Module-level state and setters used by the scheduler package.
 
-These globals are owned here and written by the setter functions exported
-through the package ``__init__``. They are kept for backward compatibility
-with ``main.py`` even where nothing in the scheduler reads them today.
+Owned state:
+- ``ALL_STOCKS`` — dict of all IDX stock codes, written by ``set_all_stocks``
+  (called by ``main.py`` during startup).
+
+Removed dead state (previously exported for backward compat but never read
+by any scheduler job):
+- ``last_prices`` / ``set_last_prices`` — empty dict, never used
+- ``last_crypto_prices`` / ``set_last_crypto_prices`` — empty dict, never used
+- ``last_buy_signals`` / ``set_last_buy_signals`` — scheduler reads directly from
+  ``command_handlers`` via ``_get_last_buy_signals()`` instead
+- ``get_market_snapshot`` — defined but never called by any job
 """
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Public, mutable containers.
 ALL_STOCKS: dict[str, str] = {}
-last_prices: dict[str, float] = {}
-last_crypto_prices: dict[str, float] = {}
-market_cache: dict[str, Any] = {}
-last_buy_signals: dict[str, dict[str, Any]] = {}  # written by set_last_buy_signals; not currently read by jobs
 
 
 def set_all_stocks(stocks):
-    """Set stocks reference."""
+    """Set stocks reference (called by main.py during startup)."""
     global ALL_STOCKS
     ALL_STOCKS = stocks
 
@@ -32,27 +34,3 @@ def set_user_db(db):
     logger.info(f"[SCHEDULER] set_user_db called with {len(db)} users (now reading directly from command_handlers)")
     for uid, u in db.items():
         logger.info(f"[SCHEDULER]   User {uid}: notif_saham={u.get('notif_saham')}, notif_crypto={u.get('notif_crypto')}")
-
-
-def set_last_prices(prices):
-    """Set last prices reference."""
-    global last_prices
-    last_prices = prices
-
-
-def set_last_crypto_prices(prices):
-    """Set last crypto prices reference."""
-    global last_crypto_prices
-    last_crypto_prices = prices
-
-
-def set_last_buy_signals(signals):
-    """Set last buy signals reference."""
-    global last_buy_signals
-    last_buy_signals = signals
-
-
-def get_market_snapshot():
-    """Get cached market snapshot data."""
-    global market_cache
-    return market_cache

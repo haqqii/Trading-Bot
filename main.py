@@ -105,7 +105,7 @@ from services.crypto_service import crypto_service
 
 # Import handlers
 from handlers.command_handlers import register_handlers, ALL_STOCKS
-from handlers.scheduler import register_jobs, set_user_db, set_last_prices, set_last_crypto_prices, set_last_buy_signals, set_all_stocks
+from handlers.scheduler import register_jobs, set_user_db, set_all_stocks
 
 # Suppress noisy loggers
 logging.getLogger('urllib3').setLevel(logging.WARNING)
@@ -160,9 +160,6 @@ def main():
         # Set global references for scheduler
         set_all_stocks(ALL_STOCKS)
         set_user_db(ch.user_data_db)
-        set_last_prices(ch.last_prices)
-        set_last_crypto_prices(ch.last_crypto_prices)
-        set_last_buy_signals(ch.last_buy_signals)
 
         # Debug: Log user data status AFTER set
         logger.info(f"[MAIN] Users after set_user_db: {len(ch.user_data_db)}")

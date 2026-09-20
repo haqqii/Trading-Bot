@@ -17,10 +17,6 @@ Internal layout:
 from ._state import (
     set_all_stocks,
     set_user_db,
-    set_last_prices,
-    set_last_crypto_prices,
-    set_last_buy_signals,
-    get_market_snapshot,
 )
 
 # Shared utilities
@@ -70,10 +66,6 @@ __all__ = [
     'register_jobs',
     'set_all_stocks',
     'set_user_db',
-    'set_last_prices',
-    'set_last_crypto_prices',
-    'set_last_buy_signals',
-    'get_market_snapshot',
     # Helpers
     'now_wib',
     '_check_sent_today',
