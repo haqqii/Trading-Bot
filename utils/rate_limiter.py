@@ -160,7 +160,7 @@ class CircuitBreaker:
 
     def get_status(self) -> str:
         """Get current state as string"""
-        return self.state.value.upper()
+        return str(self.state.value).upper()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get circuit breaker stats"""

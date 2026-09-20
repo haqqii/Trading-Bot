@@ -59,4 +59,5 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parts.append("_Data diperbarui otomatis saat sinyal ditutup_")
         msg = '\n'.join(parts)
 
+    assert update.message is not None
     await update.message.reply_text(msg, parse_mode='Markdown')

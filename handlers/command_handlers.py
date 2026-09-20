@@ -9,6 +9,7 @@ import os
 import logging
 import concurrent.futures
 from datetime import datetime
+from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -91,11 +92,11 @@ async def _safe_query_answer(query, retries=2, delay=0.5):
 
 # Global state
 ALL_STOCKS = ALL_IDX_STOCKS
-user_data_db = {}
-last_signal_sent = {}
-last_prices = {}
-last_crypto_prices = {}
-last_buy_signals = {}
+user_data_db: dict[str, dict[str, Any]] = {}
+last_signal_sent: dict[str, float] = {}
+last_prices: dict[str, float] = {}
+last_crypto_prices: dict[str, float] = {}
+last_buy_signals: dict[str, dict[str, Any]] = {}
 
 # Persistence
 USER_DATA_FILE = 'user_data.json'  # Legacy - kept for migration reference
@@ -287,10 +288,10 @@ def save_user_data():
 
 
 def save_signal(key: str, ticker: str, signal_type: str,
-                asset_type: str = 'stock', price: float = None,
-                target_price: float = None, stop_loss: float = None,
-                score: float = None, quality: str = None,
-                reason: str = None, extra_data: dict = None):
+                asset_type: str = 'stock', price: float | None = None,
+                target_price: float | None = None, stop_loss: float | None = None,
+                score: float | None = None, quality: str | None = None,
+                reason: str | None = None, extra_data: dict | None = None):
     """Convenience function to save a single signal."""
     db.initialize()
     db.save_signal(
@@ -481,16 +482,18 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def analisa_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Handle inline button callbacks from analisa results."""
     query = update.callback_query
+    assert query is not None
     await query.answer()
 
     data = query.data
+    assert data is not None
     if not data:
         return
 
     # Parse callback data
     if data.startswith("fav_add_"):
         ticker = data[8:]
-        from handlers.commands.favorites import add_favorit_cmd
+        from handlers.commands.favorites import add as add_favorit_cmd
         ctx.args = [ticker]
         await add_favorit_cmd(update, ctx)
 

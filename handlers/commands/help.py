@@ -19,4 +19,5 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 ║  /sell     - Catat sell            ║
 ║  /health   - Cek status            ║
 ╚══════════════════════════════════════╝"""
+    assert update.message is not None
     await update.message.reply_text(msg, parse_mode='Markdown')

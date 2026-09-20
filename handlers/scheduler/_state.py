@@ -5,15 +5,16 @@ through the package ``__init__``. They are kept for backward compatibility
 with ``main.py`` even where nothing in the scheduler reads them today.
 """
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Public, mutable containers.
-ALL_STOCKS = {}
-last_prices = {}
-last_crypto_prices = {}
-market_cache = {}
-last_buy_signals = {}  # written by set_last_buy_signals; not currently read by jobs
+ALL_STOCKS: dict[str, str] = {}
+last_prices: dict[str, float] = {}
+last_crypto_prices: dict[str, float] = {}
+market_cache: dict[str, Any] = {}
+last_buy_signals: dict[str, dict[str, Any]] = {}  # written by set_last_buy_signals; not currently read by jobs
 
 
 def set_all_stocks(stocks):

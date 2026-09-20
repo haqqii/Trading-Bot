@@ -44,7 +44,7 @@ _FALLBACK_CRYPTO_PAIRS = {
     'LINK-USD': ('Chainlink', 'chainlink'), 'UNI-USD': ('Uniswap', 'uniswap'),
 }
 
-COINGECKO_IDS = {}
+COINGECKO_IDS: dict[str, str] = {}
 
 
 class CryptoService:

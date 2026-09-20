@@ -15,7 +15,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, cast
 
 logger = logging.getLogger(__name__)
 
@@ -220,8 +220,8 @@ class Database:
                 return None
             return dict(row)
 
-    def upsert_user(self, user_id: int, username: str = None,
-                    first_name: str = None) -> Dict:
+    def upsert_user(self, user_id: int, username: str | None = None,
+                    first_name: str | None = None) -> Dict:
         """Create or update user, returns the user dict."""
         self.initialize()
         with self._get_conn() as conn:
@@ -308,7 +308,7 @@ class Database:
                 "DELETE FROM favorites WHERE user_id = ? AND ticker = ?",
                 (user_id, ticker.upper())
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def get_favorites(self, user_id: int) -> List[Dict]:
         """Get all favorites for a user."""
@@ -332,7 +332,7 @@ class Database:
                    VALUES (?, ?, ?, ?)""",
                 (user_id, ticker.upper(), buy_price, lot)
             )
-            return cursor.lastrowid
+            return cast(int, cursor.lastrowid)
 
     def get_portfolio(self, user_id: int, include_sold: bool = False) -> List[Dict]:
         """Get portfolio entries for a user."""
@@ -361,15 +361,15 @@ class Database:
                    sell_date = CURRENT_TIMESTAMP WHERE id = ?""",
                 (sell_price, entry_id)
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     # === SIGNAL OPERATIONS ===
 
     def save_signal(self, key: str, ticker: str, asset_type: str,
-                    signal_type: str, price: float = None,
-                    target_price: float = None, stop_loss: float = None,
-                    score: float = None, quality: str = None,
-                    reason: str = None, extra_data: dict = None) -> bool:
+                    signal_type: str, price: float | None = None,
+                    target_price: float | None = None, stop_loss: float | None = None,
+                    score: float | None = None, quality: str | None = None,
+                    reason: str | None = None, extra_data: dict | None = None) -> bool:
         """Save or update a signal."""
         self.initialize()
         extra_json = json.dumps(extra_data) if extra_data else None
@@ -440,11 +440,11 @@ class Database:
             cursor = conn.execute(
                 "DELETE FROM signals WHERE key = ?", (key,)
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def save_signal_outcome(self, key: str, outcome: str,
-                            hit_at: str = None,
-                            closed_price: float = None) -> bool:
+                            hit_at: str | None = None,
+                            closed_price: float | None = None) -> bool:
         """Update signal outcome when TP/SL is hit.
 
         Args:
@@ -493,7 +493,7 @@ class Database:
                            signal_type: str, price: float, tp1: float,
                            tp2: float, tp3: float, sl: float,
                            score: float, quality: str, reason: str,
-                           extra_data: Dict = None) -> bool:
+                           extra_data: Dict | None = None) -> bool:
         """Save or update an active signal for TP/SL tracking.
 
         Persists the signal to DB so it survives bot restarts.
@@ -619,7 +619,7 @@ class Database:
             """, (marker_type, today, now.isoformat()))
         return True
 
-    def get_signal_stats(self, asset_type: str = None) -> Dict:
+    def get_signal_stats(self, asset_type: str | None = None) -> Dict:
         """Get aggregate win-rate stats for signals.
 
         Returns:
@@ -675,7 +675,7 @@ class Database:
                    AND key NOT LIKE 'BSJP_%'""",
                 (f'-{max_age_days} days',)
             )
-            removed += cursor.rowcount
+            removed += cast(int, cursor.rowcount)
 
             # Trim per type (keep most recent)
             for signal_type in ['stock', 'crypto']:
@@ -687,7 +687,7 @@ class Database:
                    )""",
                     (signal_type, max_per_type)
                 )
-                removed += cursor.rowcount
+                removed += cast(int, cursor.rowcount)
         return removed
 
     # === PRICE ALERTS ===
@@ -703,7 +703,7 @@ class Database:
                    VALUES (?, ?, ?, ?)""",
                 (user_id, ticker.upper(), target_price, alert_type)
             )
-            return cursor.lastrowid
+            return cast(int, cursor.lastrowid)
 
     def get_user_alerts(self, user_id: int) -> List[Dict]:
         """Get all untriggered alerts for a user."""
@@ -725,7 +725,7 @@ class Database:
                    WHERE user_id = ? AND ticker = ?""",
                 (user_id, ticker.upper())
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     def get_active_alerts_for_ticker(self, ticker: str) -> List[Dict]:
         """Get all active alerts for a specific ticker."""
@@ -746,7 +746,7 @@ class Database:
                 "UPDATE price_alerts SET triggered = 1 WHERE id = ?",
                 (alert_id,)
             )
-            return cursor.rowcount > 0
+            return cast(int, cursor.rowcount) > 0
 
     # === STATISTICS ===
 

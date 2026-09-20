@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show notification settings menu"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
 
@@ -45,6 +47,8 @@ async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Toggle notification settings via callback"""
     query = update.callback_query
+    assert query is not None
+    assert query.data is not None
     await _safe_query_answer(query)
     # Use count=1 to only remove the FIRST 'notif_' prefix
     # (callback_data is 'notif_notif_saham', so without count=1 we get 'saham')

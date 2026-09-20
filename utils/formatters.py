@@ -384,8 +384,8 @@ def format_unified_crypto_notification(
     tp2: float,
     tp3: float,
     sl: float,
-    analysis_data: Dict = None,
-    market_data: Dict = None,
+    analysis_data: Dict | None = None,
+    market_data: Dict | None = None,
     change_pct: float = 0,
     profit_loss: float = 0,
     usd_idr_rate: float = 16000
@@ -600,7 +600,7 @@ def format_unified_stock_notification(
     tp2: float,
     tp3: float,
     sl: float,
-    analysis_data: Dict = None,
+    analysis_data: Dict | None = None,
     change_pct: float = 0,
     profit_loss: float = 0,
     entry_low: float = 0,
@@ -1478,7 +1478,7 @@ def format_analisa_pemula(
     # === INTINYA ===
     lines.append("")
     lines.append("💬 Intinya")
-    lines.append(_intinya_pemula(signal_type, data, sentiment))
+    lines.append(_intinya_pemula(signal_type, data, sentiment or {}))
 
     # === FOOTER ===
     ts = datetime.now().strftime('%d %b %Y %H:%M')

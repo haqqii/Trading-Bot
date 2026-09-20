@@ -39,6 +39,7 @@ def _build_analisa_keyboard(ticker: str, is_crypto: bool = False) -> InlineKeybo
 
 async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Analisis saham atau crypto dengan format lengkap"""
+    assert update.message is not None
     args = ctx.args
 
     logger.info(f"[ANALISA] Command received: {args}")

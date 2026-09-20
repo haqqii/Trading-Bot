@@ -12,6 +12,7 @@ Includes:
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Any, cast
 
 from services.stock_service import stock_service, StockDataResult
 from services.crypto_service import crypto_service
@@ -84,7 +85,7 @@ def _unwrap_stock_result(result) -> dict | None:
     if isinstance(result, StockDataResult):
         return result.data if result.success else None
     # Legacy: return dict as-is
-    return result
+    return cast(dict[Any, Any], result)
 
 
 async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, delay: int = 3, **kwargs):

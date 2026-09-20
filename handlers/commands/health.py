@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Check API health status"""
+    assert update.message is not None
+    assert update.effective_user is not None
     msg = "🏥 *HEALTH STATUS*\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
@@ -63,6 +65,8 @@ async def scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Manually trigger stock scan (for testing)"""
     from handlers.scheduler import check_stock_signals
 
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
 
@@ -90,6 +94,7 @@ async def scan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Reset circuit breakers and clear stale caches"""
+    assert update.message is not None
     await update.message.reply_text("🔄 Resetting...")
 
     status_before = get_circuit_breaker_status()

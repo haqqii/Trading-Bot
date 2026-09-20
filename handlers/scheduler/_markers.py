@@ -6,6 +6,7 @@ for backward compatibility with tests and any pre-DB callers.
 """
 import logging
 import os
+from typing import cast
 
 from db import db
 
@@ -22,7 +23,7 @@ def _check_notification_sent_today(marker_type: str) -> bool:
     """Check if notification was already sent today (DB-first, file fallback)."""
     try:
         # Try DB first
-        return db.check_notification_sent_today(marker_type)
+        return cast(bool, db.check_notification_sent_today(marker_type))
     except Exception as e:
         logger.debug(f"DB check failed for {marker_type}, falling back to file: {e}")
 
@@ -33,7 +34,7 @@ def _check_notification_sent_today(marker_type: str) -> bool:
             with open(filepath, 'r') as f:
                 last_sent = f.read().strip()
             today = now_wib().date().isoformat()
-            return last_sent == today
+            return cast(bool, last_sent == today)
     except Exception as e:
         logger.warning(f"Failed to read sent-marker {filepath}: {e}")
     return False
@@ -76,7 +77,7 @@ def _check_sent_today(filepath: str) -> bool:
             with open(filepath, 'r') as f:
                 last_sent = f.read().strip()
             today = now_wib().date().isoformat()
-            return last_sent == today
+            return cast(bool, last_sent == today)
     except Exception as e:
         logger.warning(f"Failed to read sent-marker {filepath}: {e}")
     return False

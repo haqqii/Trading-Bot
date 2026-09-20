@@ -34,12 +34,12 @@ def find_swing_points(df: pd.DataFrame, lookback: int = 20) -> Tuple[np.ndarray,
         if is_low:
             lows.append((i, df['Low'].iloc[i]))
 
-    return highs, lows
+    return np.array(highs, dtype=object), np.array(lows, dtype=object)
 
 
 def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect triangle patterns: Symmetrical, Ascending, Descending"""
-    patterns = []
+    patterns: List[Dict] = []
     close = df['Close'].values
     high = df['High'].values
     low = df['Low'].values
@@ -105,7 +105,7 @@ def detect_triangle_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict
 
 def detect_channel_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect channel patterns: Uptrend, Downtrend, Ranging"""
-    patterns = []
+    patterns: List[Dict] = []
     high = df['High'].values
     low = df['Low'].values
     close = df['Close'].values
@@ -191,7 +191,7 @@ def detect_channel_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]
 
 def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect wedge patterns: Rising, Falling, Contracting, Expanding"""
-    patterns = []
+    patterns: List[Dict] = []
     high = df['High'].values
     low = df['Low'].values
     close = df['Close'].values
@@ -262,7 +262,7 @@ def detect_wedge_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
 
 def detect_harmonic_patterns(df: pd.DataFrame, lookback: int = 100) -> List[Dict]:
     """Detect harmonic patterns: Gartley, Bat, Butterfly, Crab, etc."""
-    patterns = []
+    patterns: List[Dict] = []
     close = df['Close'].values
     high = df['High'].values
     low = df['Low'].values

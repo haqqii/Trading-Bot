@@ -48,10 +48,10 @@ class NewsService:
     """Service for fetching news and analyzing sentiment"""
 
     def __init__(self):
-        self.cache = {}  # Simple in-memory cache
+        self.cache: Dict[str, Tuple[Tuple[List[Dict], Dict], float]] = {}  # Simple in-memory cache
         self.cache_ttl = 3600  # 1 hour for news (news doesn't change frequently)
 
-    def _get_cache(self, key: str) -> Optional[List]:
+    def _get_cache(self, key: str) -> Optional[Tuple[List[Dict], Dict]]:
         """Get from cache if not expired"""
         if key in self.cache:
             data, timestamp = self.cache[key]
@@ -59,11 +59,11 @@ class NewsService:
                 return data
         return None
 
-    def _set_cache(self, key: str, data: List):
+    def _set_cache(self, key: str, data: Tuple[List[Dict], Dict]) -> None:
         """Set cache with timestamp"""
         self.cache[key] = (data, time.time())
 
-    def fetch_finnhub_news(self, ticker: str = None, category: str = 'general') -> List[Dict]:
+    def fetch_finnhub_news(self, ticker: Optional[str] = None, category: str = 'general') -> List[Dict]:
         """Fetch news from Finnhub API"""
         if not FINNHUB_API_KEY:
             logger.debug("Finnhub API key not set")
@@ -82,7 +82,7 @@ class NewsService:
                 logger.warning(f"Finnhub news failed: {resp.status_code}")
                 return []
 
-            news = resp.json()
+            news: List[Dict] = resp.json()
             if not news:
                 return []
 
@@ -147,7 +147,7 @@ class NewsService:
             logger.warning(f"NewsAPI error: {e}")
             return []
 
-    def fetch_google_news(self, ticker: str, stock_name: str = None) -> List[Dict]:
+    def fetch_google_news(self, ticker: str, stock_name: Optional[str] = None) -> List[Dict]:
         """Fetch news from Google News RSS for Indonesian stock market.
         Uses multiple query variations to capture ticker-specific news like
         those from Stockbit, Kontan, Investor.id, etc.
@@ -232,7 +232,7 @@ class NewsService:
 
                     articles.append({
                         'headline': self._clean_html(title_text),
-                        'summary': self._clean_html(description.text if description is not None else ''),
+                        'summary': self._clean_html(description.text if description is not None and description.text is not None else ''),
                         'source': source.text if source is not None else 'Google News',
                         'datetime': pub_date.text if pub_date is not None else '',
                         'url': link.text if link is not None else ''
@@ -359,7 +359,7 @@ class NewsService:
             'all_headlines': all_headlines_list[:5]  # Include all headlines for display
         }
 
-    def get_stock_news(self, ticker: str, stock_name: str = None) -> Tuple[List[Dict], Dict]:
+    def get_stock_news(self, ticker: str, stock_name: Optional[str] = None) -> Tuple[List[Dict], Dict]:
         """
         Get news and sentiment for a stock (Indonesian IDX stocks).
         Returns (articles, sentiment)

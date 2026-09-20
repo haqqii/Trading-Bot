@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show user portfolio"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
     portfolio = u.get('portfolio', [])
@@ -52,10 +54,13 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Record buy position"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
 
-    if len(ctx.args) < 3:
+    args = ctx.args or []
+    if len(args) < 3:
         await update.message.reply_text(
             "❌ Format: `/buy [KODE] [HARGA] [LOT]`\n"
             "Contoh: `/buy BBCA 9500 100`",
@@ -63,10 +68,10 @@ async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    ticker = ctx.args[0].upper()
+    ticker = args[0].upper()
     try:
-        buy_price = float(ctx.args[1])
-        lot = int(ctx.args[2])
+        buy_price = float(args[1])
+        lot = int(args[2])
     except (ValueError, TypeError, IndexError):
         await update.message.reply_text("❌ Format angka salah!")
         return
@@ -95,11 +100,14 @@ async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Record sell position"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
     portfolio = u.get('portfolio', [])
 
-    if not ctx.args:
+    args = ctx.args or []
+    if not args:
         await update.message.reply_text(
             "❌ Format: `/sell [KODE] [LOT]`\n"
             "Contoh: `/sell BBCA 50`",
@@ -107,9 +115,9 @@ async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    ticker = ctx.args[0].upper()
+    ticker = args[0].upper()
     try:
-        sell_lot = int(ctx.args[1])
+        sell_lot = int(args[1])
     except (ValueError, TypeError, IndexError):
         await update.message.reply_text("❌ Format angka salah!")
         return

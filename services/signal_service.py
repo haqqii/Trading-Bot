@@ -4,7 +4,7 @@ Signal generation service for stocks and crypto.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, cast
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +161,6 @@ def score_volume(
     added_buy = added_sell = 0
     reason: str | None = None
     bias = 1 if buy_score > sell_score else -1 if sell_score > buy_score else 0
-    added_buy: int = 0
-    added_sell: int = 0
     if volume_ratio > spike_thresh:
         added_buy = spike_pts if bias >= 0 else 0
         added_sell = spike_pts if bias <= 0 else 0
@@ -241,8 +239,8 @@ class SignalService:
 
         price = data['price']
         rsi = data.get('rsi', 50)
-        ma_f = data.get('ma_fast', price)
-        ma_s = data.get('ma_slow', price)
+        ma_f = cast(float, data.get('ma_fast')) if data.get('ma_fast') is not None else cast(float, price)
+        ma_s = cast(float, data.get('ma_slow')) if data.get('ma_slow') is not None else cast(float, price)
         atr = data.get('atr', price * 0.015)
         macd = data.get('macd', 0)
         macd_signal = data.get('macd_signal', 0)
@@ -306,8 +304,8 @@ class SignalService:
 
         price = data['price']
         rsi = data.get('rsi', 50)
-        ma_f = data.get('ma_fast', price)
-        ma_s = data.get('ma_slow', price)
+        ma_f = cast(float, data.get('ma_fast')) if data.get('ma_fast') is not None else cast(float, price)
+        ma_s = cast(float, data.get('ma_slow')) if data.get('ma_slow') is not None else cast(float, price)
         atr = data.get('atr', price * 0.025)
         change = data.get('change', 0)
 

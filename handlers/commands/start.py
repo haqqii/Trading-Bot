@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    assert update.effective_user is not None
     user = update.effective_user
     uid = str(user.id)
     u = get_user(uid)
@@ -96,6 +98,8 @@ teknikal (RSI, MACD, Bollinger Bands, MA, VWAP, ADX, Ichimoku).
 
 
 async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
     tf = TIMEFRAMES[u.get('timeframe', '5')]
@@ -140,6 +144,7 @@ from services.stock_service import stock_service
 
 async def buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Route button text to corresponding handler."""
+    assert update.message is not None
     from handlers.command_handlers import (
         stats_cmd, morning_watchlist, favorit, tf, bsjp, portfolio, notifikasi, crypto
     )

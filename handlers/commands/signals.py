@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """View crypto signals - PARALLEL FETCHING"""
+    assert update.message is not None
     start_time = time.time()
     await update.message.chat.send_action('typing')
     await update.message.reply_text("₿ Mengambil data crypto...")
@@ -53,6 +54,7 @@ async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """BSJP - Beli Sore Jual Pagi signals"""
+    assert update.message is not None
     await update.message.chat.send_action('typing')
     await update.message.reply_text("🌙 Menganalisis sinyal BSJP...")
 
@@ -118,6 +120,7 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Morning watchlist - stocks likely to go up during the day"""
+    assert update.message is not None
     await update.message.chat.send_action('typing')
     await update.message.reply_text("☀️ Menganalisis rekomendasi pagi...")
 

@@ -35,11 +35,11 @@ class StockDataResult:
 
     @property
     def is_not_found(self) -> bool:
-        return self.error and "not found" in self.error.lower()
+        return bool(self.error and "not found" in self.error.lower())
 
     @property
     def is_insufficient_data(self) -> bool:
-        return self.error and "insufficient" in self.error.lower()
+        return bool(self.error and "insufficient" in self.error.lower())
 
     def unwrap(self) -> Dict[str, Any]:
         """Get data or raise if error."""
@@ -149,7 +149,7 @@ class StockService:
                 prev_close = stock_info.get('regularMarketPreviousClose') or stock_info.get('previousClose') or df.iloc[-2]['Close']
                 daily_change_pct = ((latest['Close'] - prev_close) / prev_close) * 100
 
-                return {
+                result = {
                     'name': stock_name,
                     'price': latest['Close'],
                     'change': daily_change_pct,

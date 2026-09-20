@@ -67,6 +67,8 @@ def _get_category_for_key(tf_key: str) -> str:
 
 
 async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
     curr = u.get('timeframe', '5')
@@ -120,6 +122,8 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show timeframe options within a category."""
     query = update.callback_query
+    assert query is not None
+    assert query.data is not None
     await _safe_query_answer(query)
     cat_key = query.data.replace('tfcat_', '')
     uid = str(query.from_user.id)
@@ -147,7 +151,7 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             callback_data=f"tf_{tf_key}"
         )])
 
-    msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"
+    msg = f"{cat['emoji']} *{cat['name'].upper()}*\n\n"  # type: ignore[attr-defined]
     msg += f"_{cat['desc']}_\n\n"
     msg += "_Pilih timeframe:_\n\n"
     for tf_key in cat['timeframes']:
@@ -161,6 +165,8 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    assert query is not None
+    assert query.data is not None
     await _safe_query_answer(query)
     tf_key = query.data.replace('tf_', '')
     uid = str(query.from_user.id)

@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 async def favorit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show favorit list (stocks and crypto)"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
     favorit = u.get('favorit', {})
@@ -53,19 +55,22 @@ async def favorit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Add stock or crypto to favorit/alert"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
 
-    if not ctx.args:
+    args = ctx.args or []
+    if not args:
         await update.message.reply_text("❌ /add BBCA 5000\n❌ /add BTC-USD 70000")
         return
 
-    ticker = ctx.args[0].upper()
+    ticker = args[0].upper()
     target_price = None
 
-    if len(ctx.args) > 1:
+    if len(args) > 1:
         try:
-            target_price = float(ctx.args[1])
+            target_price = float(args[1])
         except (ValueError, TypeError, IndexError, KeyError):
             await update.message.reply_text("❌ Harga harus angka!")
             return
@@ -98,14 +103,17 @@ async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Remove stock or crypto from favorit"""
+    assert update.message is not None
+    assert update.effective_user is not None
     uid = str(update.effective_user.id)
     u = get_user(uid)
 
-    if not ctx.args:
+    args = ctx.args or []
+    if not args:
         await update.message.reply_text("❌ /remove BBCA\n❌ /remove BTC-USD")
         return
 
-    ticker = ctx.args[0].upper()
+    ticker = args[0].upper()
     removed = False
 
     if ticker in u.get('favorit', {}):

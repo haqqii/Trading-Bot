@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
     args = ctx.args
 
     if not args:

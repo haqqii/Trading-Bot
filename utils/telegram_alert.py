@@ -54,12 +54,14 @@ class TelegramLogHandler(logging.Handler):
     Falls back to logging if ADMIN_CHAT_ID is not set.
     """
 
+    _worker_started: bool = False
+
     def __init__(self, app, admin_chat_id: Optional[int] = None):
         super().__init__(level=logging.ERROR)
         self.app = app
         self.admin_chat_id = admin_chat_id
 
-        if admin_chat_id and not hasattr(TelegramLogHandler, '_worker_started'):
+        if admin_chat_id and not TelegramLogHandler._worker_started:
             t = threading.Thread(
                 target=_alert_worker,
                 args=(app, admin_chat_id),
