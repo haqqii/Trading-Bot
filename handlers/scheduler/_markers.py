@@ -14,9 +14,10 @@ from handlers.scheduler._common import now_wib
 
 logger = logging.getLogger(__name__)
 
-# Legacy filenames — kept for tests that mock these via tmp_path.
-MORNING_SENT_FILE = 'morning_sent.txt'  # Legacy - kept for migration
-BSJP_SENT_FILE = 'bsjp_sent.txt'  # Legacy - kept for migration
+# Absolute paths in data/ directory
+_scheduler_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MORNING_SENT_FILE = os.path.join(_scheduler_dir, 'data', 'morning_sent.txt')
+BSJP_SENT_FILE = os.path.join(_scheduler_dir, 'data', 'bsjp_sent.txt')
 
 
 def _check_notification_sent_today(marker_type: str) -> bool:

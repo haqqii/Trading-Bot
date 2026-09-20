@@ -72,7 +72,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Single instance lock - prevent multiple bot instances
-LOCK_FILE = os.path.join(os.path.dirname(__file__), 'bot.lock')
+DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
+LOCK_FILE = os.path.join(DATA_DIR, 'bot.lock')
 if os.path.exists(LOCK_FILE):
     try:
         with open(LOCK_FILE, 'r') as f:

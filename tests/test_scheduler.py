@@ -127,12 +127,12 @@ class TestSentFileConstants:
     def test_morning_sent_file_constant(self):
         """MORNING_SENT_FILE constant should be set."""
         from handlers.scheduler import MORNING_SENT_FILE
-        assert MORNING_SENT_FILE == 'morning_sent.txt'
+        assert MORNING_SENT_FILE.endswith('data' + os.sep + 'morning_sent.txt')
 
     def test_bsjp_sent_file_constant(self):
         """BSJP_SENT_FILE constant should be set."""
         from handlers.scheduler import BSJP_SENT_FILE
-        assert BSJP_SENT_FILE == 'bsjp_sent.txt'
+        assert BSJP_SENT_FILE.endswith('data' + os.sep + 'bsjp_sent.txt')
 
     def test_files_are_different(self):
         """Morning and BSJP files should be different."""

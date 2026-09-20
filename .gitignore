@@ -47,11 +47,10 @@ user_data.json.bak
 last_signals.json
 last_signals.json.bak
 
-# Bot runtime (lock + dedup state)
-bot.lock
-bsjp_sent.txt
-morning_sent.txt
-test_output.txt
+# Bot runtime state in data/ directory
+data/bot.lock
+data/bsjp_sent.txt
+data/morning_sent.txt
 
 # Cloudflare Tunnel installer (don't commit)
 cloudflared.deb
