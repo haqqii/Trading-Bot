@@ -57,7 +57,29 @@ class Database:
             # Enable WAL mode for concurrent reads
             self._local.conn.execute("PRAGMA journal_mode=WAL")
             self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         yield self._local.conn
+
+    def checkpoint(self):
+        """Truncate WAL file by checkpointing.
+
+        Safe to call while the database is in use. Runs every ~5 min via
+        the cleanup_caches job to keep the WAL file small on disk.
+        """
+        with self._get_conn() as conn:
+            # PASSIVE: don't block writers; TRUNCATE: shrink WAL file to 0
+            result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            logger.debug(f"WAL checkpoint: frames={result[0]}, checkpointed={result[1]}")
+
+    def vacuum(self):
+        """Reclaim unused database pages.
+
+        More expensive than checkpoint — rewrites the entire DB file.
+        Only called manually or monthly; not in the regular cleanup loop.
+        """
+        with self._get_conn() as conn:
+            conn.execute("VACUUM")
+            logger.info("Database VACUUM completed")
 
     def initialize(self):
         """Create tables if they don't exist."""

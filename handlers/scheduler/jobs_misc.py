@@ -7,6 +7,7 @@ Owns:
 """
 import logging
 
+from db import db
 from utils.cache import _price_cache, _signal_cache, _market_cache, _usd_cache
 
 from handlers.scheduler._common import cleanup_old_signals
@@ -51,7 +52,8 @@ async def cleanup_caches(app):
         _market_cache.cleanup()
         _usd_cache.cleanup()
         cleanup_old_signals()  # Cleanup old signals (max 7 days)
-        logger.debug("Caches and signals cleaned up")
+        db.checkpoint()       # Truncate WAL file to keep disk usage small
+        logger.debug("Caches, signals, and WAL checkpoint done")
     except Exception as e:
         logger.error(f"Cleanup error: {e}", exc_info=True)
 
