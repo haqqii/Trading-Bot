@@ -134,19 +134,36 @@ def load_user_data():
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         for row in conn.execute(
-            'SELECT user_id, username, first_name, notif_saham, notif_crypto, '
-            'notif_bsjp, notif_morning, notif_alert_favorit FROM users'
+            'SELECT user_id, username, first_name, timeframe, '
+            'notif_saham, notif_crypto, notif_bsjp, notif_morning, '
+            'notif_alert_favorit FROM users'
         ).fetchall():
-            user_id_str = str(row['user_id'])
+            user_id_int = row['user_id']
+            user_id_str = str(user_id_int)
+
+            # Build favorit/crypto_favorit dicts from the favorites table
+            favorit: dict[str, float | None] = {}
+            crypto_favorit: dict[str, float | None] = {}
+            for fav in db.get_favorites(user_id_int):
+                t = fav['ticker']
+                tp = fav.get('target_price')
+                if fav.get('asset_type') == 'crypto':
+                    crypto_favorit[t] = tp
+                else:
+                    favorit[t] = tp
+
             user_data_db[user_id_str] = {
                 'username': row['username'],
                 'first_name': row['first_name'],
+                'timeframe': row['timeframe'] or '5',
                 'notif_saham': bool(row['notif_saham']),
                 'notif_crypto': bool(row['notif_crypto']),
                 'notif_bsjp': bool(row['notif_bsjp']),
                 'notif_morning': bool(row['notif_morning']),
                 'notif_alert_favorit': bool(row['notif_alert_favorit']),
-                'favorites': [f['ticker'] for f in db.get_favorites(row['user_id'])],
+                'favorit': favorit,
+                'crypto_favorit': crypto_favorit,
+                'favorites': list(favorit.keys()),
             }
         conn.close()
         logger.info(f"[LOAD_USER] Loaded {len(user_data_db)} users into cache for scheduler")
@@ -243,11 +260,12 @@ def save_user_data():
             user_id = int(user_id_str)
         except (ValueError, TypeError):
             continue
-        # Upsert user
+        # Upsert user (includes username, first_name, timeframe)
         db.upsert_user(
             user_id=user_id,
             username=user_info.get('username'),
-            first_name=user_info.get('first_name')
+            first_name=user_info.get('first_name'),
+            timeframe=user_info.get('timeframe'),
         )
         # Update notifications
         notif_settings = {
@@ -256,9 +274,12 @@ def save_user_data():
                       'notif_morning', 'notif_alert_favorit']
         }
         db.update_notifications(user_id, **notif_settings)
-        # Sync favorites
-        for ticker in user_info.get('favorites', []):
-            db.add_favorite(user_id, ticker)
+        # Sync favorit dict (ticker → target_price) for stocks
+        favorit = user_info.get('favorit') or {}
+        db.replace_user_favorites(user_id, favorit, asset_type='stock')
+        # Sync favorit dict for crypto
+        crypto_favorit = user_info.get('crypto_favorit') or {}
+        db.replace_user_favorites(user_id, crypto_favorit, asset_type='crypto')
 
     # Save signals
     for key, val in last_buy_signals.items():

@@ -116,6 +116,27 @@ class Database:
                     else:
                         raise  # Real error
 
+    def _migrate_user_settings(self):
+        """Add timeframe column to users and target_price column to favorites.
+
+        Both columns are nullable / have defaults so existing rows are safe.
+        Idempotent — re-running on a migrated DB is a no-op.
+        """
+        new_columns = [
+            ('users', 'timeframe', "TEXT DEFAULT '5'"),
+            ('favorites', 'target_price', 'REAL'),
+        ]
+        with self._get_conn() as conn:
+            for table, col_name, col_type in new_columns:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"[DB] Added column {table}.{col_name}")
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column name' in str(e).lower():
+                        pass  # Already exists
+                    else:
+                        raise
+
     def _fix_signals_asset_type(self):
         """Fix asset_type for existing signals. Bug: save_user_data() used val.get('asset_type')
         but signal dict has 'type' key, not 'asset_type'. All signals were stored as 'stock'
@@ -138,6 +159,7 @@ class Database:
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
                     first_name TEXT,
+                    timeframe TEXT DEFAULT '5',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     notif_saham INTEGER DEFAULT 1,
@@ -152,6 +174,7 @@ class Database:
                     user_id INTEGER NOT NULL,
                     ticker TEXT NOT NULL,
                     asset_type TEXT NOT NULL DEFAULT 'stock',
+                    target_price REAL,
                     added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(user_id, ticker),
                     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -226,6 +249,8 @@ class Database:
             """)
             # Migration: add outcome columns to existing signals table
             self._migrate_signals_table()
+            # Migration: add timeframe + favorites.target_price for older DBs
+            self._migrate_user_settings()
             # Migration: fix asset_type from old bug where all signals were 'stock'
             self._fix_signals_asset_type()
 
@@ -243,8 +268,13 @@ class Database:
             return dict(row)
 
     def upsert_user(self, user_id: int, username: str | None = None,
-                    first_name: str | None = None) -> Dict:
-        """Create or update user, returns the user dict."""
+                    first_name: str | None = None,
+                    timeframe: str | None = None) -> Dict:
+        """Create or update user, returns the user dict.
+
+        Only non-None fields are written on UPDATE, so partial updates
+        (e.g. just timeframe) don't clobber other columns.
+        """
         self.initialize()
         with self._get_conn() as conn:
             existing = conn.execute(
@@ -253,16 +283,24 @@ class Database:
             if existing is None:
                 conn.execute(
                     """INSERT INTO users
-                       (user_id, username, first_name)
-                       VALUES (?, ?, ?)""",
-                    (user_id, username, first_name)
+                       (user_id, username, first_name, timeframe)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, username, first_name, timeframe or '5')
                 )
             else:
+                # Build dynamic UPDATE — only set columns that were passed in
+                sets = ['updated_at = CURRENT_TIMESTAMP']
+                values: list = []
+                if username is not None:
+                    sets.append('username = ?'); values.append(username)
+                if first_name is not None:
+                    sets.append('first_name = ?'); values.append(first_name)
+                if timeframe is not None:
+                    sets.append('timeframe = ?'); values.append(timeframe)
+                values.append(user_id)
                 conn.execute(
-                    """UPDATE users SET username = ?, first_name = ?,
-                       updated_at = CURRENT_TIMESTAMP
-                       WHERE user_id = ?""",
-                    (username, first_name, user_id)
+                    f"UPDATE users SET {', '.join(sets)} WHERE user_id = ?",
+                    values
                 )
             row = conn.execute(
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
@@ -308,29 +346,56 @@ class Database:
     # === FAVORITES OPERATIONS ===
 
     def add_favorite(self, user_id: int, ticker: str,
-                     asset_type: str = 'stock') -> bool:
-        """Add a favorite for a user."""
+                     asset_type: str = 'stock',
+                     target_price: float | None = None) -> bool:
+        """Add a favorite for a user. Returns False if already exists."""
         self.initialize()
         with self._get_conn() as conn:
             try:
                 conn.execute(
-                    """INSERT INTO favorites (user_id, ticker, asset_type)
-                       VALUES (?, ?, ?)""",
-                    (user_id, ticker.upper(), asset_type)
+                    """INSERT INTO favorites (user_id, ticker, asset_type, target_price)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, ticker.upper(), asset_type, target_price)
                 )
                 return True
             except sqlite3.IntegrityError:
-                return False  # Already exists
+                return False
 
-    def remove_favorite(self, user_id: int, ticker: str) -> bool:
-        """Remove a favorite from a user."""
+    def remove_favorite(self, user_id: int, ticker: str,
+                        asset_type: str = 'stock') -> bool:
+        """Remove a favorite. Returns True if a row was deleted."""
         self.initialize()
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "DELETE FROM favorites WHERE user_id = ? AND ticker = ?",
-                (user_id, ticker.upper())
+                """DELETE FROM favorites
+                   WHERE user_id = ? AND ticker = ? AND asset_type = ?""",
+                (user_id, ticker.upper(), asset_type)
             )
             return cast(int, cursor.rowcount) > 0
+
+    def replace_user_favorites(self, user_id: int,
+                                targets: dict, asset_type: str = 'stock') -> None:
+        """Replace all favorites for a user with the given ticker→target map.
+
+        Used by save_user_data() to sync the in-memory favorit dict with DB.
+        Tickers whose target_price is None are stored with target_price=NULL
+        (still considered "favorited" but no target).
+        """
+        self.initialize()
+        with self._get_conn() as conn:
+            # Delete existing favorites for this user + asset_type
+            conn.execute(
+                """DELETE FROM favorites
+                   WHERE user_id = ? AND asset_type = ?""",
+                (user_id, asset_type)
+            )
+            # Insert new ones
+            for ticker, target in targets.items():
+                conn.execute(
+                    """INSERT INTO favorites (user_id, ticker, asset_type, target_price)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, ticker.upper(), asset_type, target)
+                )  # Already exists
 
     def get_favorites(self, user_id: int) -> List[Dict]:
         """Get all favorites for a user."""
