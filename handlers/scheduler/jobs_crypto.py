@@ -81,12 +81,14 @@ async def check_crypto_signals(app):
                         return None
 
                     current_price = d['price']
-                    key = f"CRYPTO_{ticker}_{tf_key}"
+                    # Include REVERSAL and SELL signals
+                    if s['signal'] not in ('BUY', 'REVERSAL', 'SELL'):
+                        return None
+                    dir_key = 'SELL' if s['signal'] == 'SELL' else 'BUY'
+                    key = f"CRYPTO_{ticker}_{tf_key}_{dir_key}"
+                    score = s.get('sell_score', 0) if s['signal'] == 'SELL' else s.get('buy_score', 0)
 
-                    # Include REVERSAL signals
-                    is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
-
-                    if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
+                    if score >= 25:
                         existing = signals.get(key)
                         should_send = False
 
@@ -147,13 +149,14 @@ async def check_crypto_signals(app):
                             atr = d.get('atr', entry_price * 0.02)
                             s['entry'] = entry_price
                             s['atr'] = atr
-                            # Calculate TP/SL using user's TF
-                            tpsl = calc_tPSL('BUY', entry_price, atr, tf_key)
+                            # Calculate TP/SL using user's TF — direction-aware for SELL
+                            direction = 'SELL' if s['signal'] == 'SELL' else 'BUY'
+                            tpsl = calc_tPSL(direction, entry_price, atr, tf_key)
                             s['tp1'] = tpsl['tp1']
                             s['tp2'] = tpsl['tp2']
                             s['tp3'] = tpsl['tp3']
                             s['sl'] = tpsl['sl']
-                            logger.info(f"[CRYPTO] Fresh price for {ticker}: ${entry_price:,.2f}")
+                            logger.info(f"[CRYPTO] Fresh price for {ticker}: ${entry_price:,.2f} ({direction})")
                         else:
                             logger.warning(f"[CRYPTO] Could not fetch fresh data for {ticker}")
                             continue
@@ -190,7 +193,7 @@ async def check_crypto_signals(app):
                         except Exception as e:
                             logger.debug(f"Pattern detection failed: {e}")
 
-                        notif_type = 'REVERSAL' if s.get('is_reversal', False) else 'BUY'
+                        notif_type = direction if direction == 'SELL' else ('REVERSAL' if s.get('is_reversal', False) else 'BUY')
 
                         analysis_data = {
                             'pattern': {'type': trend, 'reliability': quality_reliability},
@@ -228,18 +231,21 @@ async def check_crypto_signals(app):
                                 chat_id=int(uid), text=msg, parse_mode='Markdown',
                                 read_timeout=10, connect_timeout=10
                             )
-                            logger.info(f"[CRYPTO] Sent BUY [{tf_key}] for {ticker} to user {uid}")
+                            logger.info(f"[CRYPTO] Sent {notif_type} [{tf_key}] for {ticker} to user {uid}")
 
                             key = f"CRYPTO_{ticker}_{uid}"
-                            signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                            signal_type = s['signal']
                             signals[key] = {
                                 'name': name,
                                 'entry': s['entry'],
                                 'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
                                 'sl': s['sl'], 'time': now_wib(),
                                 'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                                'type': 'crypto', 'direction': 'LONG', 'ticker_raw': ticker,
+                                'type': 'crypto',
+                                'direction': 'SHORT' if direction == 'SELL' else 'LONG',
+                                'ticker_raw': ticker,
                                 'buy_score': s.get('buy_score', 0),
+                                'sell_score': s.get('sell_score', 0),
                                 'quality': s.get('quality', 'WEAK'),
                                 'signal_type': signal_type,
                                 'is_reversal': s.get('is_reversal', False),
@@ -256,12 +262,13 @@ async def check_crypto_signals(app):
                                 price=s['entry'],
                                 tp1=s['tp1'], tp2=s['tp2'], tp3=s['tp3'],
                                 sl=s['sl'],
-                                score=s.get('buy_score', 0),
+                                score=s.get('sell_score' if direction == 'SELL' else 'buy_score', 0),
                                 quality=s.get('quality', 'WEAK'),
                                 reason=s.get('reason', ''),
                                 extra_data={
                                     'name': name,
                                     'is_reversal': s.get('is_reversal', False),
+                                    'direction': 'SHORT' if direction == 'SELL' else 'LONG',
                                     'atr': s.get('atr', 0),
                                     'user_id': uid,
                                     'timeframe': tf_key,
@@ -310,10 +317,11 @@ async def check_crypto_tp_sl(app):
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
                     atr = signal_data.get('atr', 0)
+                    is_short = signal_data.get('direction', 'LONG') == 'SHORT'
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
-                        tpsl = calc_tPSL('BUY', entry, atr, user_tf)
+                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf)
                         tp1 = tpsl['tp1']
                         tp2 = tpsl['tp2']
                         tp3 = tpsl['tp3']
@@ -336,11 +344,24 @@ async def check_crypto_tp_sl(app):
                         }
                     }
 
+                    # Direction-aware comparison functions.
+                    # LONG: profit when price rises; SL hit when price drops below sl.
+                    # SHORT: profit when price drops; SL hit when price rises above sl.
+                    def _is_tp_hit(target):
+                        if not target:
+                            return False
+                        return current_price <= target if is_short else current_price >= target
+
+                    def _profit_pct(price_at):
+                        return ((entry - price_at) / entry) * 100 if is_short else ((price_at - entry) / entry) * 100
+
+                    sl_hit = (sl > 0) and (current_price >= sl if is_short else current_price <= sl)
+
                     # === CHECK SL FIRST ===
                     # If SL hit, send SL notification and delete signal immediately.
                     # Skip TP checks to avoid sending TP after SL.
-                    if current_price <= sl > 0:
-                        profit_pct = ((current_price - entry) / entry) * 100
+                    if sl_hit:
+                        profit_pct = _profit_pct(current_price)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_crypto_notification(
@@ -368,11 +389,11 @@ async def check_crypto_tp_sl(app):
 
                     # === CHECK TP (only if SL not hit) ===
                     # Check TP1 hit
-                    if not tp_hit.get('tp1') and current_price >= tp1 > 0:
+                    if not tp_hit.get('tp1') and _is_tp_hit(tp1):
                         tp_hit['tp1'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp1')
-                        profit_pct = ((tp1 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp1)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_crypto_notification(
@@ -392,11 +413,11 @@ async def check_crypto_tp_sl(app):
                         logger.info(f"TP1 hit: {ticker} at {current_price}")
 
                     # Check TP2 hit
-                    if not tp_hit.get('tp2') and current_price >= tp2 > 0:
+                    if not tp_hit.get('tp2') and _is_tp_hit(tp2):
                         tp_hit['tp2'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp2')
-                        profit_pct = ((tp2 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp2)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_crypto_notification(
@@ -416,11 +437,11 @@ async def check_crypto_tp_sl(app):
                         logger.info(f"TP2 hit: {ticker} at {current_price}")
 
                     # Check TP3 hit
-                    if not tp_hit.get('tp3') and current_price >= tp3 > 0:
+                    if not tp_hit.get('tp3') and _is_tp_hit(tp3):
                         tp_hit['tp3'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp3', closed_price=current_price)
-                        profit_pct = ((tp3 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp3)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_crypto_notification(
@@ -443,7 +464,7 @@ async def check_crypto_tp_sl(app):
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
 
-                        # Trigger a fresh signal scan within ~60s so user gets a new BUY quickly
+                        # Trigger a fresh signal scan within ~60s for fresh entry
                         _schedule_followup_scan(app, 'crypto', delay=60)
                         continue  # Skip remaining checks for this signal
 

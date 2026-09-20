@@ -213,8 +213,12 @@ async def check_stock_signals(app):
                         if not s.get('entry') or s.get('entry', 0) <= 0:
                             continue
 
-                        is_buy_or_reversal = s['signal'] in ('BUY', 'REVERSAL')
-                        if is_buy_or_reversal and s.get('buy_score', 0) >= 25:
+                        # Accept BUY, REVERSAL, and SELL signals
+                        if s['signal'] not in ('BUY', 'REVERSAL', 'SELL'):
+                            continue
+                        # Score threshold uses the matching direction
+                        score = s.get('sell_score', 0) if s['signal'] == 'SELL' else s.get('buy_score', 0)
+                        if score >= 25:
                             results.append((tf_key, ticker, ALL_STOCKS.get(ticker, ticker), d, s))
                     except Exception as e:
                         logger.error(f"[STOCK_SIGNAL] signal gen failure for {ticker}/{tf_key}: {e}", exc_info=True)
@@ -263,7 +267,7 @@ async def check_stock_signals(app):
         for tf_key, group_users in tf_groups.items():
             group_buy_signals = tf_signals.get(tf_key, [])
             if not group_buy_signals:
-                logger.info(f"[STOCK] TF={tf_key}: No BUY signals found")
+                logger.info(f"[STOCK] TF={tf_key}: No actionable signals found")
                 continue
 
             # Dedup by ticker (might have multiple signals from different intervals)
@@ -278,7 +282,9 @@ async def check_stock_signals(app):
             # Filter out signals already sent (within 24h window)
             fresh_signals = []
             for ticker, name, d, s in group_buy_signals:
-                key = f"STOCK_{ticker}_{tf_key}"
+                # Key includes direction so BUY and SELL don't dedupe each other
+                dir_key = 'SELL' if s.get('signal') == 'SELL' else 'BUY'
+                key = f"STOCK_{ticker}_{tf_key}_{dir_key}"
                 existing = signals.get(key)
                 should_send = False
                 if existing is None:
@@ -299,8 +305,11 @@ async def check_stock_signals(app):
                 logger.info(f"[STOCK] TF={tf_key}: All signals already sent recently")
                 continue
 
-            # Sort by score and take top 3
-            fresh_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)
+            # Sort by score and take top 3 — pick the matching score by direction
+            def _signal_score_key(sig_tuple):
+                sig = sig_tuple[3]
+                return sig.get('sell_score' if sig.get('signal') == 'SELL' else 'buy_score', 0)
+            fresh_signals.sort(key=_signal_score_key, reverse=True)
             top_signals = fresh_signals[:3]
 
             logger.info(f"[STOCK] TF={tf_key}: Found {len(fresh_signals)} fresh signals, sending TOP 3 to {len(group_users)} users")
@@ -323,13 +332,14 @@ async def check_stock_signals(app):
                         s['entry_high'] = entry_high
                         s['atr'] = atr
                         s['rsi'] = d.get('rsi', 50)
-                        # Calculate TP/SL using user's TF
-                        tpsl = calc_tPSL('BUY', entry_price, atr, tf_key)
+                        # Calculate TP/SL using user's TF — direction-aware for SELL signals
+                        direction = 'SELL' if s['signal'] == 'SELL' else 'BUY'
+                        tpsl = calc_tPSL(direction, entry_price, atr, tf_key)
                         s['tp1'] = tpsl['tp1']
                         s['tp2'] = tpsl['tp2']
                         s['tp3'] = tpsl['tp3']
                         s['sl'] = tpsl['sl']
-                        logger.info(f"[STOCK] Using cached data for {ticker}: {entry_price:,.0f}")
+                        logger.info(f"[STOCK] Using cached data for {ticker}: {entry_price:,.0f} ({direction})")
 
                         quality = s.get('quality', 'WEAK')
                         quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45}.get(quality, 50)
@@ -400,7 +410,7 @@ async def check_stock_signals(app):
 
                         try:
                             msg = format_unified_stock_notification(
-                                notif_type='BUY',
+                                notif_type=direction,
                                 ticker=ticker,
                                 name=name,
                                 entry=s['entry'],
@@ -419,19 +429,22 @@ async def check_stock_signals(app):
                                 chat_id=int(uid), text=msg, parse_mode='Markdown',
                                 read_timeout=10, connect_timeout=10
                             )
-                            logger.info(f"[STOCK] Sent BUY [{tf_key}] for {ticker} to user {uid}")
+                            logger.info(f"[STOCK] Sent {direction} [{tf_key}] for {ticker} to user {uid}")
 
                             # Store signal for TP/SL tracking
                             key = f"STOCK_{ticker}_{uid}"
-                            signal_type = s['signal'] if s.get('signal') in ('BUY', 'REVERSAL') else 'BUY'
+                            signal_type = s['signal']
                             signals[key] = {
                                 'name': name,
                                 'entry': s['entry'],
                                 'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
                                 'sl': s['sl'], 'time': now_wib(),
                                 'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                                'type': 'stock', 'direction': 'LONG', 'ticker_raw': ticker,
+                                'type': 'stock',
+                                'direction': 'SHORT' if direction == 'SELL' else 'LONG',
+                                'ticker_raw': ticker,
                                 'buy_score': s.get('buy_score', 0),
+                                'sell_score': s.get('sell_score', 0),
                                 'quality': s.get('quality', 'WEAK'),
                                 'signal_type': signal_type,
                                 'is_reversal': s.get('is_reversal', False),
@@ -448,12 +461,13 @@ async def check_stock_signals(app):
                                 price=s['entry'],
                                 tp1=s['tp1'], tp2=s['tp2'], tp3=s['tp3'],
                                 sl=s['sl'],
-                                score=s.get('buy_score', 0),
+                                score=s.get('sell_score' if direction == 'SELL' else 'buy_score', 0),
                                 quality=s.get('quality', 'WEAK'),
                                 reason=s.get('reason', ''),
                                 extra_data={
                                     'name': name,
                                     'is_reversal': s.get('is_reversal', False),
+                                    'direction': 'SHORT' if direction == 'SELL' else 'LONG',
                                     'atr': s.get('atr', 0),
                                     'user_id': uid,
                                     'timeframe': tf_key,
@@ -518,10 +532,11 @@ async def check_stock_tp_sl(app):
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
                     atr = signal_data.get('atr', 0)
+                    is_short = signal_data.get('direction', 'LONG') == 'SHORT'
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
-                        tpsl = calc_tPSL('BUY', entry, atr, user_tf)
+                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf)
                         tp1 = tpsl['tp1']
                         tp2 = tpsl['tp2']
                         tp3 = tpsl['tp3']
@@ -543,11 +558,24 @@ async def check_stock_tp_sl(app):
                         }
                     }
 
+                    # Direction-aware comparison functions.
+                    # LONG: profit when price rises; SL hit when price drops below sl.
+                    # SHORT: profit when price drops; SL hit when price rises above sl.
+                    def _is_tp_hit(target):
+                        if not target:
+                            return False
+                        return current_price <= target if is_short else current_price >= target
+
+                    def _profit_pct(price_at):
+                        return ((entry - price_at) / entry) * 100 if is_short else ((price_at - entry) / entry) * 100
+
+                    sl_hit = (sl > 0) and (current_price >= sl if is_short else current_price <= sl)
+
                     # === CHECK SL FIRST ===
                     # If SL hit, send SL notification and delete signal immediately.
                     # Skip TP checks to avoid sending TP after SL.
-                    if current_price <= sl > 0:
-                        profit_pct = ((current_price - entry) / entry) * 100
+                    if sl_hit:
+                        profit_pct = _profit_pct(current_price)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_stock_notification(
@@ -573,11 +601,11 @@ async def check_stock_tp_sl(app):
 
                     # === CHECK TP (only if SL not hit) ===
                     # Check TP1 hit
-                    if not tp_hit.get('tp1') and current_price >= tp1 > 0:
+                    if not tp_hit.get('tp1') and _is_tp_hit(tp1):
                         tp_hit['tp1'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp1')
-                        profit_pct = ((tp1 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp1)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_stock_notification(
@@ -596,11 +624,11 @@ async def check_stock_tp_sl(app):
                         logger.info(f"TP1 hit: {ticker} at {current_price}")
 
                     # Check TP2 hit
-                    if not tp_hit.get('tp2') and current_price >= tp2 > 0:
+                    if not tp_hit.get('tp2') and _is_tp_hit(tp2):
                         tp_hit['tp2'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp2')
-                        profit_pct = ((tp2 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp2)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_stock_notification(
@@ -619,11 +647,11 @@ async def check_stock_tp_sl(app):
                         logger.info(f"TP2 hit: {ticker} at {current_price}")
 
                     # Check TP3 hit
-                    if not tp_hit.get('tp3') and current_price >= tp3 > 0:
+                    if not tp_hit.get('tp3') and _is_tp_hit(tp3):
                         tp_hit['tp3'] = True
                         signals[key]['tp_hit'] = tp_hit
                         db.save_signal_outcome(key, 'tp3', closed_price=current_price)
-                        profit_pct = ((tp3 - entry) / entry) * 100
+                        profit_pct = _profit_pct(tp3)
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_stock_notification(
@@ -645,7 +673,7 @@ async def check_stock_tp_sl(app):
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
 
-                        # Trigger a fresh signal scan within ~60s so user gets a new BUY quickly
+                        # Trigger a fresh signal scan within ~60s for fresh entry
                         _schedule_followup_scan(app, 'stock', delay=60)
                         continue  # Skip remaining checks for this signal
 
