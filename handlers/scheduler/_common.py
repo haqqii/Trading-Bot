@@ -8,6 +8,7 @@ Includes:
 - signal retention (cleanup_old_signals, SIGNAL_MAX_*)
 - cross-job scheduling (_schedule_followup_scan) — uses lazy imports to avoid cycles.
 - bot send-with-retry helper (_send_bot_with_retry)
+- signal metadata helpers (compute_trend, compute_reliability)
 """
 import asyncio
 import logging
@@ -213,6 +214,71 @@ def _remove_signal(key: str):
     if key in ch.last_buy_signals:
         del ch.last_buy_signals[key]
         logger.debug(f"Signal removed from storage: {key}")
+
+
+# Quality base for reliability scoring
+_QUALITY_BASE = {
+    'STRONG':   50,
+    'MODERATE': 35,
+    'WEAK':     20,
+    'EARLY':    15,  # crypto-only
+}
+
+
+def compute_reliability(
+    quality: str,
+    reasons: list,
+    patterns: list,
+    volume_ratio: float,
+) -> int:
+    """Compute a dynamic reliability score (0-95) for a signal.
+
+    Combines:
+    - Base score from signal quality (STRONG/MODERATE/WEAK/EARLY)
+    - +5 per indicator confirmation (capped at +30)
+    - +15 if a chart pattern was detected
+    - +5 if volume confirms the move (ratio > 1.5)
+
+    Result is clamped to [15, 95].
+    """
+    base = _QUALITY_BASE.get(quality, 20)
+    confirmations = min(len(reasons or []) * 5, 30)
+    pattern_bonus = 15 if patterns else 0
+    volume_bonus = 5 if volume_ratio and volume_ratio > 1.5 else 0
+    score = base + confirmations + pattern_bonus + volume_bonus
+    return max(15, min(score, 95))
+
+
+def compute_trend(d: dict, s: dict, change_threshold: float = 1.5) -> str:
+    """Classify the current chart trend from signal + market data.
+
+    Priority (most actionable first):
+    1. BREAKOUT  — recent change > +change_threshold %
+    2. PULLBACK  — recent change < -change_threshold %
+    3. UPTREND   — MACD histogram positive AND fast MA above slow MA
+    4. DOWNTREND — MACD histogram negative AND fast MA below slow MA
+    5. NEUTRAL   — anything else (mixed signals)
+
+    The MA-cross fallback replaces the old "macd_hist > 0 AND rsi < 50"
+    rule, which rarely fired because momentum and oversold rarely
+    coincide.
+    """
+    change = d.get('change', 0)
+    if change > change_threshold:
+        return 'BREAKOUT'
+    if change < -change_threshold:
+        return 'PULLBACK'
+
+    macd_hist = s.get('macd_hist', 0)
+    ma_fast = d.get('ma_fast', 0)
+    ma_slow = d.get('ma_slow', 0)
+
+    if macd_hist > 0 and ma_fast > ma_slow:
+        return 'UPTREND'
+    if macd_hist < 0 and ma_fast < ma_slow:
+        return 'DOWNTREND'
+
+    return 'NEUTRAL'
 
 
 def _schedule_followup_scan(app, kind: str, delay: int = 60):

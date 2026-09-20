@@ -31,6 +31,8 @@ from handlers.scheduler._common import (
     _get_last_buy_signals,
     _remove_signal,
     _schedule_followup_scan,
+    compute_reliability,
+    compute_trend,
 )
 from handlers.scheduler._state import ALL_STOCKS
 from utils.cache import _price_cache
@@ -342,22 +344,9 @@ async def check_stock_signals(app):
                         logger.info(f"[STOCK] Using cached data for {ticker}: {entry_price:,.0f} ({direction})")
 
                         quality = s.get('quality', 'WEAK')
-                        quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45}.get(quality, 50)
-
-                        # Determine trend
-                        trend = 'NEUTRAL'
-                        if s.get('macd_hist', 0) > 0 and d.get('rsi', 50) < 50:
-                            trend = 'UPTREND'
-                        elif s.get('macd_hist', 0) < 0 and d.get('rsi', 50) > 50:
-                            trend = 'DOWNTREND'
-                        elif d.get('change', 0) > 2:
-                            trend = 'BREAKOUT'
-                        elif d.get('change', 0) < -2:
-                            trend = 'PULLBACK'
 
                         # Build reasons
                         reasons = []
-                        patterns_detected = []
                         if d.get('rsi', 50) < 40:
                             reasons.append(f"RSI Oversold ({d.get('rsi', 0):.0f})")
                         if d.get('ma_fast', 0) > d.get('ma_slow', 0):
@@ -372,6 +361,7 @@ async def check_stock_signals(app):
                             reasons.append("Near Bollinger Lower")
 
                         # Detect patterns
+                        patterns_detected = []
                         try:
                             from utils.patterns import detect_all_patterns
                             if d.get('candles', 0) >= 20 and 'raw_df' in d:
@@ -386,6 +376,15 @@ async def check_stock_signals(app):
                                         })
                         except Exception as e:
                             logger.debug(f"Pattern detection failed: {e}")
+
+                        # Dynamic reliability and trend (uses reasons + patterns)
+                        quality_reliability = compute_reliability(
+                            quality=quality,
+                            reasons=reasons,
+                            patterns=patterns_detected,
+                            volume_ratio=d.get('volume_ratio', 1),
+                        )
+                        trend = compute_trend(d, s)
 
                         analysis_data = {
                             'pattern': {'type': trend, 'reliability': quality_reliability},

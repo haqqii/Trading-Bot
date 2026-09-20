@@ -24,6 +24,8 @@ from handlers.scheduler._common import (
     _get_last_buy_signals,
     _remove_signal,
     _schedule_followup_scan,
+    compute_reliability,
+    compute_trend,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,17 +164,29 @@ async def check_crypto_signals(app):
                             continue
 
                         quality = s.get('quality', 'WEAK')
-                        quality_reliability = {'STRONG': 75, 'MODERATE': 60, 'WEAK': 45, 'EARLY': 35}.get(quality, 50)
 
-                        trend = 'NEUTRAL'
-                        if s.get('macd_hist', 0) > 0 and d.get('rsi', 50) < 50:
-                            trend = 'UPTREND'
-                        elif s.get('macd_hist', 0) < 0 and d.get('rsi', 50) > 50:
-                            trend = 'DOWNTREND'
-                        elif d.get('change', 0) > 2:
-                            trend = 'BREAKOUT'
-                        elif d.get('change', 0) < -2:
-                            trend = 'PULLBACK'
+                        # Build reasons list (drives dynamic reliability)
+                        crypto_reasons = []
+                        if d.get('rsi', 50) < 35:
+                            crypto_reasons.append(f"RSI Oversold ({d.get('rsi', 0):.0f})")
+                        elif d.get('rsi', 50) > 65:
+                            crypto_reasons.append(f"RSI Overbought ({d.get('rsi', 0):.0f})")
+                        if d.get('ma_fast', 0) > d.get('ma_slow', 0):
+                            crypto_reasons.append("MA Golden Cross")
+                        elif d.get('ma_fast', 0) < d.get('ma_slow', 0):
+                            crypto_reasons.append("MA Death Cross")
+                        if s.get('macd_hist', 0) > 0:
+                            crypto_reasons.append("MACD Bullish")
+                        elif s.get('macd_hist', 0) < 0:
+                            crypto_reasons.append("MACD Bearish")
+                        if d.get('volume_ratio', 1) > 1.5:
+                            crypto_reasons.append(f"Volume Spike ({d.get('volume_ratio', 1):.1f}x)")
+                        if d.get('adx', 0) > 25:
+                            crypto_reasons.append(f"ADX Strong ({d.get('adx', 0):.0f})")
+                        if d.get('stoch_k', 50) < 20:
+                            crypto_reasons.append("Stochastic Oversold")
+                        elif d.get('stoch_k', 50) > 80:
+                            crypto_reasons.append("Stochastic Overbought")
 
                         # Detect chart patterns
                         crypto_patterns = []
@@ -192,6 +206,15 @@ async def check_crypto_signals(app):
                                             })
                         except Exception as e:
                             logger.debug(f"Pattern detection failed: {e}")
+
+                        # Dynamic reliability and trend (crypto uses wider ±2% for change threshold)
+                        quality_reliability = compute_reliability(
+                            quality=quality,
+                            reasons=crypto_reasons,
+                            patterns=crypto_patterns,
+                            volume_ratio=d.get('volume_ratio', 1),
+                        )
+                        trend = compute_trend(d, s, change_threshold=2.0)
 
                         notif_type = direction if direction == 'SELL' else ('REVERSAL' if s.get('is_reversal', False) else 'BUY')
 
