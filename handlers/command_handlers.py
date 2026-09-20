@@ -88,6 +88,27 @@ async def _safe_query_answer(query, retries=2, delay=0.5):
     return False
 
 
+def _schedule_answer(query):
+    """Fire-and-forget query.answer() — non-blocking ack.
+
+    Schedules query.answer() as an asyncio task so the handler can move on
+    immediately and respond with edit_message_text/send_message. Telegram
+    dismisses the button spinner as soon as either answer() OR any message
+    edit happens, so the user sees a snappy response even if Telegram's
+    answer endpoint is slow.
+
+    Safe to call from any callback handler — failures are logged but never
+    raised into the handler.
+    """
+    from telegram.error import TelegramError
+    async def _ack():
+        try:
+            await asyncio.wait_for(query.answer(), timeout=5)
+        except (asyncio.TimeoutError, TelegramError) as e:
+            logger.debug(f"fire-and-forget query.answer() skipped: {e}")
+    asyncio.create_task(_ack())
+
+
 # Global state
 ALL_STOCKS = ALL_IDX_STOCKS
 user_data_db: dict[str, dict[str, Any]] = {}
@@ -248,36 +269,52 @@ def _atomic_write(filepath: str, data: dict):
         return False
 
 
+def save_user(uid_str: str) -> bool:
+    """Save a single user's data to SQLite.
+
+    Hot-path counterpart to save_user_data() — used by command handlers
+    that just toggled one user's setting. Saves only that user instead of
+    iterating every user in memory, so the response latency scales with
+    O(1) writes regardless of bot size.
+    """
+    if uid_str not in user_data_db:
+        return False
+    try:
+        user_id = int(uid_str)
+    except (ValueError, TypeError):
+        return False
+    user_info = user_data_db[uid_str]
+    db.initialize()
+    db.upsert_user(
+        user_id=user_id,
+        username=user_info.get('username'),
+        first_name=user_info.get('first_name'),
+        timeframe=user_info.get('timeframe'),
+    )
+    notif_settings = {
+        k: bool(user_info.get(k, False))
+        for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
+                  'notif_morning', 'notif_alert_favorit']
+    }
+    db.update_notifications(user_id, **notif_settings)
+    favorit = user_info.get('favorit') or {}
+    db.replace_user_favorites(user_id, favorit, asset_type='stock')
+    crypto_favorit = user_info.get('crypto_favorit') or {}
+    db.replace_user_favorites(user_id, crypto_favorit, asset_type='crypto')
+    return True
+
+
 def save_user_data():
-    """Save user data and signals to SQLite (atomic, crash-safe)."""
+    """Save user data and signals to SQLite (atomic, crash-safe).
+
+    Iterates every user; intended for the periodic auto-save job, not
+    interactive command handlers (use save_user(uid) for those).
+    """
     db.initialize()
 
     # Save user data (legacy cache → DB)
-    for user_id_str, user_info in user_data_db.items():
-        try:
-            user_id = int(user_id_str)
-        except (ValueError, TypeError):
-            continue
-        # Upsert user (includes username, first_name, timeframe)
-        db.upsert_user(
-            user_id=user_id,
-            username=user_info.get('username'),
-            first_name=user_info.get('first_name'),
-            timeframe=user_info.get('timeframe'),
-        )
-        # Update notifications
-        notif_settings = {
-            k: bool(user_info.get(k, False))
-            for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
-                      'notif_morning', 'notif_alert_favorit']
-        }
-        db.update_notifications(user_id, **notif_settings)
-        # Sync favorit dict (ticker → target_price) for stocks
-        favorit = user_info.get('favorit') or {}
-        db.replace_user_favorites(user_id, favorit, asset_type='stock')
-        # Sync favorit dict for crypto
-        crypto_favorit = user_info.get('crypto_favorit') or {}
-        db.replace_user_favorites(user_id, crypto_favorit, asset_type='crypto')
+    for user_id_str in list(user_data_db.keys()):
+        save_user(user_id_str)
 
     # Save signals
     for key, val in last_buy_signals.items():
@@ -497,7 +534,7 @@ async def analisa_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Handle inline button callbacks from analisa results."""
     query = update.callback_query
     assert query is not None
-    await query.answer()
+    _schedule_answer(query)
 
     data = query.data
     assert data is not None

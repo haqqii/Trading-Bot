@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from utils.formatters import TIMEFRAMES
 from config.settings import INTERVAL_TO_KEY, VALID_INTERVALS
-from ._shared import get_user, save_user_data, _safe_query_answer
+from ._shared import get_user, save_user, _schedule_answer
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ async def tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         tf_key = INTERVAL_TO_KEY.get(raw)
         if tf_key:
             u['timeframe'] = tf_key
-            save_user_data()
+            save_user(uid)
             name = TIMEFRAMES[tf_key]['name']
             _, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (name, ''))
             await update.message.reply_text(
@@ -124,7 +124,7 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     assert query is not None
     assert query.data is not None
-    await _safe_query_answer(query)
+    _schedule_answer(query)
     cat_key = query.data.replace('tfcat_', '')
     uid = str(query.from_user.id)
     u = get_user(uid)
@@ -167,11 +167,11 @@ async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     assert query is not None
     assert query.data is not None
-    await _safe_query_answer(query)
+    _schedule_answer(query)
     tf_key = query.data.replace('tf_', '')
     uid = str(query.from_user.id)
     get_user(uid)['timeframe'] = tf_key
-    save_user_data()
+    save_user(uid)
     name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
     cat_key = _get_category_for_key(tf_key)
     cat_name = TF_CATEGORIES[cat_key]['name']

@@ -3,7 +3,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from ._shared import get_user, save_user_data, _safe_query_answer
+from ._shared import get_user, save_user, _schedule_answer
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     assert query is not None
     assert query.data is not None
-    await _safe_query_answer(query)
+    _schedule_answer(query)
     # Use count=1 to only remove the FIRST 'notif_' prefix
     # (callback_data is 'notif_notif_saham', so without count=1 we get 'saham')
     notif_key = query.data.replace('notif_', '', 1)
@@ -62,7 +62,7 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     u[notif_key] = not u.get(notif_key, False)
-    save_user_data()
+    save_user(uid)
 
     notif_keys = [
         ('notif_saham', '📈 Sinyal Saham'),

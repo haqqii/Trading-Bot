@@ -229,7 +229,7 @@ def main():
             app.run_polling(
                 allowed_updates=Update.ALL_TYPES if 'Update' in dir() else None,
                 drop_pending_updates=False,
-                poll_interval=1.0,
+                poll_interval=0.3,
             )
 
     except Exception as e:

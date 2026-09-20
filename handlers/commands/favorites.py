@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from services.crypto_service import crypto_service
-from ._shared import get_user, save_user_data
+from ._shared import get_user, save_user
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             u['crypto_favorit'] = {}
 
         u['crypto_favorit'][ticker] = target_price
-        save_user_data()
+        save_user(uid)
 
         if target_price:
             await update.message.reply_text(f"✅ *{ticker}* ditambahkan ke alert\nTarget: ${target_price:,.2f}", parse_mode='Markdown')
@@ -93,7 +93,7 @@ async def add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             u['favorit'] = {}
 
         u['favorit'][ticker] = target_price
-        save_user_data()
+        save_user(uid)
 
         if target_price:
             await update.message.reply_text(f"✅ *{ticker}* ditambahkan ke favorit\nTarget: Rp {target_price:,.0f}", parse_mode='Markdown')
@@ -125,7 +125,7 @@ async def remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         removed = True
 
     if removed:
-        save_user_data()
+        save_user(uid)
         await update.message.reply_text(f"✅ *{ticker}* dihapus dari favorit", parse_mode='Markdown')
     else:
         await update.message.reply_text(f"⚠️ *{ticker}* tidak ada di favorit", parse_mode='Markdown')
