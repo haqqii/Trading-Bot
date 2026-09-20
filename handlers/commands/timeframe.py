@@ -1,6 +1,7 @@
 """Timeframe menu - /tf command and category/sub-category callbacks."""
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from utils.formatters import TIMEFRAMES
@@ -160,7 +161,12 @@ async def tf_cat_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         marker = '✅' if tf_key == curr else '⚪'
         msg += f"{marker} *{name}* - {desc}\n"
 
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    try:
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            return
+        raise
 
 
 async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -175,9 +181,14 @@ async def tf_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name, desc = TIMEFRAME_DESCRIPTIONS.get(tf_key, (TIMEFRAMES[tf_key]['name'], ''))
     cat_key = _get_category_for_key(tf_key)
     cat_name = TF_CATEGORIES[cat_key]['name']
-    await query.edit_message_text(
-        f"✅ Timeframe diubah ke: *{name}*\n\n"
-        f"📂 Kategori: {cat_name}\n\n"
-        f"_{desc}_",
-        parse_mode='Markdown'
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ Timeframe diubah ke: *{name}*\n\n"
+            f"📂 Kategori: {cat_name}\n\n"
+            f"_{desc}_",
+            parse_mode='Markdown'
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            return
+        raise

@@ -182,6 +182,17 @@ def main():
         register_handlers(app)
         register_jobs(app)
 
+        # Global error handler: swallow benign "Message is not modified" from
+        # no-op edits (e.g. user clicks the already-selected timeframe button).
+        from telegram.error import BadRequest
+        async def _on_error(update, context):
+            err = context.error
+            if isinstance(err, BadRequest) and "Message is not modified" in str(err):
+                logger.debug(f"Suppressed no-op edit: {err}")
+                return
+            logger.exception("Unhandled exception in handler:", exc_info=err)
+        app.add_error_handler(_on_error)
+
         # Setup Telegram admin alert handler
         admin_chat_id = os.getenv('ADMIN_CHAT_ID')
         if admin_chat_id:
