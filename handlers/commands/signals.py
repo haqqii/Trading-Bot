@@ -26,7 +26,8 @@ async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     async def fetch_crypto(ticker):
         try:
-            d = crypto_service.get_crypto_data_combined(ticker)
+            # Run sync fetch in thread so the event loop stays free
+            d = await asyncio.to_thread(crypto_service.get_crypto_data_combined, ticker)
             if d:
                 s = signal_service.generate_crypto_signal(d)
                 if s.get('entry') and s['entry'] > 0:
@@ -62,7 +63,10 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     async def analyze_stock(ticker):
         try:
-            result = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            # Run sync fetch in thread so the event loop stays free
+            result = await asyncio.to_thread(
+                stock_service.get_stock_data_combined, ticker + ".JK", '1h', '3d'
+            )
             d1h = result.data if result and result.success else None
             if not d1h or d1h.get('candles', 0) < 10:
                 return None
@@ -128,7 +132,10 @@ async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     async def analyze_stock(ticker):
         try:
-            result = stock_service.get_stock_data_combined(ticker + ".JK", '1h', '3d')
+            # Run sync fetch in thread so the event loop stays free
+            result = await asyncio.to_thread(
+                stock_service.get_stock_data_combined, ticker + ".JK", '1h', '3d'
+            )
             d = result.data if result and result.success else None
             if not d or d.get('candles', 0) < 10:
                 return None

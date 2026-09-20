@@ -3,7 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ._shared import get_user, save_user_data
+from ._shared import get_user, save_user
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         'buy_date': datetime.now().strftime('%Y-%m-%d %H:%M')
     }
     u['portfolio'].append(position)
-    save_user_data()
+    save_user(uid)
 
     total = buy_price * lot * 100
     await update.message.reply_text(
@@ -137,7 +137,7 @@ async def sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             remaining.append(pos)
 
     u['portfolio'] = remaining
-    save_user_data()
+    save_user(uid)
 
     if sell_price > 0:
         await update.message.reply_text(

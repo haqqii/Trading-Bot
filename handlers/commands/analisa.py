@@ -108,7 +108,10 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         yahoo_probe = None
         if not is_crypto and len(ticker) <= 12 and ticker not in ALL_STOCKS:
             try:
-                probe = crypto_service.get_crypto_data(ticker_upper + '-USD', '1h', '1d')
+                # Run sync fetch in thread so the event loop stays free
+                probe = await asyncio.to_thread(
+                    crypto_service.get_crypto_data, ticker_upper + '-USD', '1h', '1d'
+                )
                 if probe and probe.get('candles', 0) >= 5:
                     rsi = probe.get('rsi', float('nan'))
                     import math as _math
