@@ -33,8 +33,12 @@ data/ochobot.db-journal
 data/ochobot.db-wal
 data/ochobot.db-shm
 data/ochobot_backup_*.db
-data/stocks_cache.json  # Auto-refreshed from TradingView
-data/health_state.json   # Health check consecutive-failure state
+
+# Auto-refreshed from TradingView
+data/stocks_cache.json
+
+# Health check consecutive-failure state
+data/health_state.json
 
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
