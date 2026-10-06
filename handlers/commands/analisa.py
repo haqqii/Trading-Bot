@@ -11,7 +11,9 @@ from services.signal_service import signal_service
 from services.news_service import news_service
 from utils.formatters import format_analisa_simple, format_analisa_pemula
 from utils.cache import _price_cache
-from ._shared import _strip_markdown_chars, _send_with_retry, ALL_STOCKS
+from config.settings import TIMEFRAMES
+from handlers.scheduler._common import CRYPTO_TF_TO_INTERVAL
+from ._shared import _strip_markdown_chars, _send_with_retry, ALL_STOCKS, get_user
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,20 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     ticker = args[0].upper()
-    logger.info(f"[ANALISA] Replying immediately for {ticker}")
+
+    # Analyse on the timeframe the user picked via /tf, so /analisa matches the
+    # signals the scheduler pushes for them.
+    tf_key = '5'
+    if update.effective_user is not None:
+        tf_key = get_user(str(update.effective_user.id)).get('timeframe') or '5'
+    if tf_key not in TIMEFRAMES:
+        tf_key = '5'
+    tf_name = TIMEFRAMES[tf_key]['name']
+    # Crypto trades 24/7, so it uses its own period map (same one the crypto
+    # scheduler scans with) — otherwise the candle count here wouldn't match the
+    # signal the user actually received.
+    tf_crypto = CRYPTO_TF_TO_INTERVAL.get(tf_key, ('1h', '5d'))
+    logger.info(f"[ANALISA] Replying immediately for {ticker} (tf={tf_key})")
 
     # Step 1: Send "Menganalisis..." message FIRST (fire and forget)
     async def send_immediate_reply():
@@ -143,7 +158,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 or yahoo_probe is not None
             )
 
-            cache_key = f"crypto_{full_ticker}_1h_5d"
+            cache_key = f"crypto_{full_ticker}_{tf_crypto[0]}_{tf_crypto[1]}"
             used_stale_cache = False
 
             # Step 1: Check cache first (instant, no API call)
@@ -157,7 +172,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, '1h', '5d'),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, tf_crypto[0], tf_crypto[1]),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -178,7 +193,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     alt_ticker = full_ticker.replace('-USD', '')
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1]),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -190,7 +205,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     alt_ticker = full_ticker.replace('-USD', '-USDT')
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, '1h', '5d'),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1]),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -256,7 +271,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 signal=s,
                 sentiment=sentiment,
                 is_crypto=True,
-                usd_idr_rate=crypto_service.get_usd_idr_rate()
+                usd_idr_rate=crypto_service.get_usd_idr_rate(),
+                timeframe=tf_name
             )
 
             # Add note if using stale cache
@@ -267,7 +283,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # Stock analysis path
             full_ticker = ticker + ".JK"
             ticker_known = ticker in ALL_STOCKS
-            cache_key = f"stock_{ticker}_5m_1d"
+            cache_key = f"stock_{ticker}_{TIMEFRAMES[tf_key]['interval']}_{TIMEFRAMES[tf_key]['period']}"
 
             d, sentiment = None, None
             used_stale_cache = False
@@ -282,7 +298,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # Step 2: Try fresh fetch from API
                 def fetch_stock_data():
                     try:
-                        return stock_service.get_stock_data_combined(full_ticker, '5m', '1d')
+                        tfv = TIMEFRAMES[tf_key]
+                        return stock_service.get_stock_data_combined(full_ticker, tfv['interval'], tfv['period'])
                     except Exception as e:
                         logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
                         return StockDataResult(success=False, error=str(e), source='exception')
@@ -396,7 +413,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 data=d,
                 signal=s,
                 sentiment=sentiment,
-                timeframe='5 Menit',
+                timeframe=tf_name,
             )
 
             # Add note if using stale cache

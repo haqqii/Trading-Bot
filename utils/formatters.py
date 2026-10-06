@@ -772,7 +772,8 @@ def format_analisa_simple(
     signal: Optional[Dict[str, Any]],
     sentiment: Optional[Dict[str, Any]] = None,
     is_crypto: bool = False,
-    usd_idr_rate: float = 0.0
+    usd_idr_rate: float = 0.0,
+    timeframe: str = '5 Menit'
 ) -> str:
     """
     Clean, readable analisa output format.
@@ -826,7 +827,7 @@ def format_analisa_simple(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"📊 *Analisa {escape_md(name)} ({escape_md(ticker)})*")
     lines.append(f"{header_emoji} Signal: *{escape_md(signal_type)}* | {curr_price} ({change:+.2f}%)")
-    lines.append(f"⏱️ Timeframe: 5 Menit | Candles: {candles}")
+    lines.append(f"⏱️ Timeframe: {timeframe} | Candles: {candles}")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # === TREND & INDICATORS ===
