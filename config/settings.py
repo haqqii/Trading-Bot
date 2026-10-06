@@ -6,9 +6,10 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Timeframes
+# Timeframes. IDX only trades ~7h/day, so intraday intervals need a multi-day
+# period to clear the 30-candle minimum in stock_service.
 TIMEFRAMES = {
-    '1':   {'name': '1 Menit',  'interval': '1m',  'period': '1d'},
+    '1':   {'name': '1 Menit',  'interval': '1m',  'period': '5d'},
     '5':   {'name': '5 Menit',  'interval': '5m',  'period': '5d'},
     '15':  {'name': '15 Menit', 'interval': '15m', 'period': '5d'},
     '30':  {'name': '30 Menit', 'interval': '30m', 'period': '5d'},

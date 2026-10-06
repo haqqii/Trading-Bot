@@ -101,7 +101,7 @@ async def check_favorit_alerts(app):
                     continue
 
                 try:
-                    result = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '1d')
+                    result = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '5d')
                     d = _unwrap_stock_result(result)
                     if not d:
                         continue
@@ -482,7 +482,7 @@ async def check_stock_signals(app):
 
         # Cooldown check
         timeout_pct = _stock_timeout_count[0] / len(all_tickers) * 100 if all_tickers else 0
-        if _stock_timeout_count[0] >= len(all_tickers) // 2:
+        if all_tickers and _stock_timeout_count[0] >= len(all_tickers) // 2:
             _yahoo_stock_cooldown = 3
             logger.warning(f"[STOCK] High timeout rate ({_stock_timeout_count[0]}/{len(all_tickers)} = {timeout_pct:.0f}%) - enabling cooldown")
 
@@ -700,7 +700,7 @@ async def check_alerts(app):
 
             for ticker, a in list(alerts.items()):
                 try:
-                    result = stock_service.get_stock_data_combined(ticker + ".JK", '1m', '1d')
+                    result = stock_service.get_stock_data_combined(ticker + ".JK", '5m', '5d')
                     d = _unwrap_stock_result(result)
                     if not d:
                         continue

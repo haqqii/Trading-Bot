@@ -25,9 +25,11 @@ logger = logging.getLogger(__name__)
 # WIB timezone (UTC+7)
 WIB = timezone(timedelta(hours=7))
 
-# Timeframe key -> (interval, period) mapping for stock data fetch
+# Timeframe key -> (interval, period) mapping for stock data fetch.
+# IDX only trades ~7h/day, so an intraday interval needs a multi-day period to
+# clear the 30-candle minimum in stock_service. Crypto is exempt (24/7).
 TF_TO_INTERVAL = {
-    '1': ('1m', '1d'),
+    '1': ('1m', '5d'),
     '5': ('5m', '5d'),
     '15': ('15m', '5d'),
     '30': ('30m', '5d'),

@@ -21,8 +21,12 @@ ALL_STOCKS: dict[str, str] = {}
 
 def set_all_stocks(stocks):
     """Set stocks reference (called by main.py during startup)."""
-    global ALL_STOCKS
-    ALL_STOCKS = stocks
+    # Mutate in place: jobs do `from ._state import ALL_STOCKS`, which binds the
+    # dict object at import time. Rebinding here would leave them holding the
+    # original empty dict forever.
+    ALL_STOCKS.clear()
+    ALL_STOCKS.update(stocks or {})
+    logger.info(f"[SCHEDULER] set_all_stocks called with {len(ALL_STOCKS)} stocks")
 
 
 def set_user_db(db):
