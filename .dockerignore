@@ -1,0 +1,57 @@
+# Repo ini dipakai sebagai build context kedua ("trading") untuk image
+# ochobot. Yang masuk ke image cuma kode yang perlu jalan — bukan runtime
+# state, bukan secret, bukan histori git.
+
+# Git
+.git/
+.github/
+.gitignore
+.dockerignore
+
+# Secrets
+.env
+*.env.local
+
+# Runtime state
+logs/
+*.log
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/stocks_cache.json
+data/health_state.json
+data/bot.lock
+data/bsjp_sent.txt
+data/morning_sent.txt
+data/ochobot_backup_*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+.playwright-mcp/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing artifacts
+tests/
+requirements-test.txt
+smoke_test.py
+pytest.ini
+mypy.ini
+
+# Dokumentasi deploy — tidak dipakai di runtime
+deploy/
+docs/
