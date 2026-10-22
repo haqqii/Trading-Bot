@@ -1,12 +1,13 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Deploy bot trading ke container ochobot.
+    Deploy bot trading ke container ochobot-trading.
 
 .DESCRIPTION
-    Bot trading (Telegram) jalan di container ochobot yang sama dengan bot
-    Aimapps. Kode trading disalin ke image lewat build context kedua, jadi
-    setiap perubahan kode butuh rebuild image, bukan cuma restart.
+    Bot trading (Telegram) jalan di container "ochobot-trading", terpisah
+    dari bot Aimapps ("ochobot") tapi satu project compose. Kode trading
+    disalin ke image lewat build context kedua, jadi setiap perubahan kode
+    butuh rebuild image, bukan cuma restart.
 
     Script ini:
       1. Cek token Telegram ada di .env repo ini.
@@ -79,9 +80,9 @@ Write-Host 'Status container:'
 & docker ps --filter name=ochobot --format 'table {{.Names}}\t{{.Status}}'
 
 Write-Host ''
-Write-Host 'Bot Aimapps (Zulip):'
+Write-Host 'Bot Aimapps (Zulip) - container ochobot:'
 & docker logs ochobot --tail 5
 
 Write-Host ''
-Write-Host 'Bot trading (Telegram):'
-& docker exec ochobot tail -n 15 /trading/logs/console.log
+Write-Host 'Bot trading (Telegram) - container ochobot-trading:'
+& docker logs ochobot-trading --tail 15
