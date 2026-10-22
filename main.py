@@ -69,6 +69,13 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[file_handler, error_handler, console_handler]
 )
+
+# Dua bot jalan di container yang sama dan lognya bercampur di stdout.
+# Prefix di depan nama logger (field "Object") supaya jelas baris itu
+# ditulis bot mana: "trading.<logger>" vs "aimapps.<logger>".
+from utils.log_tag import install as install_log_tag
+install_log_tag('trading')
+
 logger = logging.getLogger(__name__)
 
 # Single instance lock - prevent multiple bot instances
