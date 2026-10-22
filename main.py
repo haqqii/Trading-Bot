@@ -111,6 +111,8 @@ from handlers.scheduler import register_jobs, set_user_db, set_all_stocks
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('yfinance').setLevel(logging.WARNING)
 logging.getLogger('pandas').setLevel(logging.WARNING)
+# httpx menulis URL lengkap ke log, dan URL Telegram memuat token bot.
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
 def main():
