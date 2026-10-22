@@ -335,7 +335,14 @@ def save_user_data():
             asset_type=asset_type,
             signal_type=signal_type,
             price=val.get('price') or val.get('entry'),
-            target_price=val.get('tp') or val.get('tp1') or val.get('target_price'),
+            # target_price = TP3 (target akhir), sama seperti yang ditulis
+            # save_active_signal(). Kalau diisi tp1, nilainya jadi tidak
+            # konsisten antara baris yang baru dibuat dan baris yang
+            # ditulis ulang auto-save. Fallback dipakai kalau TP3 belum
+            # ada (sinyal lama).
+            target_price=(val.get('tp3') or val.get('tp')
+                          or val.get('target_price')
+                          or val.get('tp1') or val.get('tp2')),
             stop_loss=val.get('sl') or val.get('stop_loss'),
             score=val.get('score'),
             quality=val.get('quality'),
@@ -344,7 +351,8 @@ def save_user_data():
                         if k not in ['ticker', 'signal_type', 'asset_type',
                                       'price', 'target_price', 'stop_loss',
                                       'score', 'quality', 'reason',
-                                      'entry', 'tp', 'tp1', 'sl', 'time']}
+                                      'entry', 'tp', 'tp1', 'tp2', 'tp3',
+                                      'sl', 'time']}
         )
 
 

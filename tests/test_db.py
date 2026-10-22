@@ -298,6 +298,19 @@ class TestSignalOperations:
         signal = db.get_signal('NONEXIST')
         assert signal is None
 
+    def test_save_signal_update_keeps_target_price(self, temp_db):
+        """Target price yang sudah tersimpan tidak boleh dihapus kalau nilai baru kosong."""
+        db, _ = temp_db
+        db.save_signal(
+            key='KEEP_TP', ticker='BBCA', asset_type='stock',
+            signal_type='BUY', price=8500, target_price=8670
+        )
+        db.save_signal(
+            key='KEEP_TP', ticker='BBCA', asset_type='stock',
+            signal_type='BUY', price=8600
+        )
+        assert db.get_signal('KEEP_TP')['target_price'] == 8670
+
     def test_get_signal_with_extra_data(self, temp_db):
         """Should parse extra_data as JSON."""
         db, _ = temp_db
@@ -486,6 +499,36 @@ class TestMigration:
         # Check favorites
         favorites = db.get_favorites(12345)
         assert len(favorites) == 2
+
+    def test_migration_signal_target_price_is_tp3(self, tmp_path, temp_db):
+        """target_price hasil migrasi harus TP3, sama seperti save_active_signal()."""
+        db, db_path = temp_db
+        signals_json = {
+            'STOCK_TOWR_7730539872': {
+                'ticker_raw': 'TOWR',
+                'entry': 420, 'tp1': 371.43, 'tp2': 322.86, 'tp3': 250.0,
+                'sl': 492.86, 'signal_type': 'SELL', 'asset_type': 'stock',
+            },
+        }
+        signals_path = tmp_path / 'last_signals.json'
+        with open(signals_path, 'w') as f:
+            json.dump(signals_json, f)
+
+        import db as db_module
+        original_db = db_module.db
+        db_module.db = db
+        try:
+            db_module.migrate_from_json(
+                user_data_file=str(tmp_path / 'nonexistent.json'),
+                signals_file=str(signals_path)
+            )
+        finally:
+            db_module.db = original_db
+
+        row = db.get_signal('STOCK_TOWR_7730539872')
+        assert row is not None
+        assert row['ticker'] == 'TOWR'
+        assert row['target_price'] == 250.0
 
 
 class TestEdgeCases:

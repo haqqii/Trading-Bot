@@ -474,10 +474,14 @@ class Database:
                 )
                 return True
             except sqlite3.IntegrityError:
-                # Key exists, update it
+                # Key exists, update it.
+                # target_price pakai COALESCE: kalau nilai baru kosong
+                # (mis. sinyal lama yang belum punya kolom TP), nilai yang
+                # sudah tersimpan jangan dihapus.
                 conn.execute(
                     """UPDATE signals SET ticker = ?, asset_type = ?,
-                       signal_type = ?, price = ?, target_price = ?,
+                       signal_type = ?, price = ?,
+                       target_price = COALESCE(?, target_price),
                        stop_loss = ?, score = ?, quality = ?, reason = ?,
                        extra_data = ?, created_at = CURRENT_TIMESTAMP
                        WHERE key = ?""",
@@ -928,7 +932,11 @@ def migrate_from_json(user_data_file: str = 'user_data.json',
                     asset_type=asset_type,
                     signal_type=signal_type,
                     price=signal_data.get('price') or signal_data.get('entry'),
-                    target_price=signal_data.get('target_price') or signal_data.get('tp'),
+                    # target_price = TP3 (target akhir), konsisten dengan
+                    # save_active_signal() dan save_user_data().
+                    target_price=(signal_data.get('tp3')
+                                  or signal_data.get('target_price')
+                                  or signal_data.get('tp')),
                     stop_loss=signal_data.get('stop_loss') or signal_data.get('sl'),
                     score=signal_data.get('score'),
                     quality=signal_data.get('quality'),

@@ -75,6 +75,52 @@ class TestSaveUserDataTicker:
         assert fake_db.saved[0]['ticker'] != 'UNKNOWN'
         assert fake_db.saved[0]['ticker'] == 'TOWR'
 
+    def test_target_price_is_tp3(self, fake_db, monkeypatch):
+        """target_price harus TP3 (target akhir), sama seperti save_active_signal()."""
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'STOCK_TOWR_1': {
+                'ticker_raw': 'TOWR', 'entry': 420,
+                'tp1': 371.43, 'tp2': 322.86, 'tp3': 250.0,
+                'sl': 492.86,
+            },
+        })
+        ch.save_user_data()
+        assert fake_db.saved[0]['target_price'] == 250.0
+
+    def test_target_price_falls_back_to_tp(self, fake_db, monkeypatch):
+        """Format lama (hanya ada 'tp') tetap dipakai."""
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'STOCK_BBCA_1': {'ticker_raw': 'BBCA', 'entry': 100, 'tp': 115.0},
+        })
+        ch.save_user_data()
+        assert fake_db.saved[0]['target_price'] == 115.0
+
+    def test_target_price_falls_back_to_tp1_when_no_tp3(self, fake_db, monkeypatch):
+        """Sinyal lama tanpa TP3 tidak boleh ditulis kosong."""
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'STOCK_BBCA_1': {'ticker_raw': 'BBCA', 'entry': 100,
+                             'tp1': 105.0, 'tp2': 110.0},
+        })
+        ch.save_user_data()
+        assert fake_db.saved[0]['target_price'] == 105.0
+
+    def test_tp_values_not_duplicated_into_extra_data(self, fake_db, monkeypatch):
+        """TP1/TP2/TP3 disimpan di kolomnya, tidak di extra_data."""
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'STOCK_TOWR_1': {
+                'ticker_raw': 'TOWR', 'entry': 420,
+                'tp1': 371.43, 'tp2': 322.86, 'tp3': 250.0, 'sl': 492.86,
+            },
+        })
+        ch.save_user_data()
+        extra = fake_db.saved[0]['extra_data'] or {}
+        for k in ('tp1', 'tp2', 'tp3'):
+            assert k not in extra
+
 
 class TestPlaceholderTickers:
     """Placeholder bukan ticker sungguhan — jangan pernah ditandai."""
