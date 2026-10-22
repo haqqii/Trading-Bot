@@ -56,6 +56,11 @@ def _is_noise(record: logging.LogRecord) -> bool:
     if "failed to send message" in text:
         return True
 
+    # Ticker yang tidak punya data harga. Bukan bug: bot sudah menandainya
+    # dan melewatinya, jadi tidak perlu bother admin.
+    if "no price data found" in text or "possibly delisted" in text:
+        return True
+
     # BadRequest checked dulu: di PTB, BadRequest anak dari NetworkError,
     # jadi kalau NetworkError dicek lebih dulu, semua BadRequest ikut
     # tersaring — termasuk bug parse Markdown yang justru perlu dilaporkan.

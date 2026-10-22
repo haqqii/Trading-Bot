@@ -18,6 +18,7 @@ import logging
 from services.stock_service import stock_service
 from services.signal_service import calc_tPSL
 from services.crypto_service import crypto_service
+from services import ticker_health
 from utils.formatters import format_unified_stock_notification, escape_md
 from db import db
 
@@ -183,7 +184,17 @@ async def check_stock_signals(app):
         logger.info(f"[STOCK SIGNALS] {total_users} users in {len(tf_groups)} TF groups")
 
         # Limit scan to top 30 most liquid stocks - reduced for rate limit
-        all_tickers = list(ALL_STOCKS.keys())[:30]
+        # Ticker yang tidak punya data harga dilewati: request-nya sia-sia
+        # dan yfinance menulis error "no price data found" yang naik jadi
+        # alert. Kalau ada yang dilewati, ticker pengganti diambil supaya
+        # jumlah pindai tetap 30.
+        top_30 = list(ALL_STOCKS.keys())[:30]
+        skipped = [t for t in top_30 if ticker_health.is_unavailable(t)]
+        all_tickers = [t for t in ALL_STOCKS.keys()
+                       if not ticker_health.is_unavailable(t)][:30]
+        if skipped:
+            logger.info(f"[STOCK] Melewati {len(skipped)} ticker tanpa data harga: "
+                        f"{', '.join(skipped[:5])}")
         _stock_timeout_count[0] = 0
 
         # === PHASE 1: Dedup scan per UNIQUE (interval, period) ===
@@ -755,7 +766,10 @@ async def prefetch_stock_cache(app):
             return
 
         # Get top 30 most traded stocks for faster user response
-        top_stocks = list(ALL_STOCKS.keys())[:30]
+        # Ticker tanpa data harga dilewati, dan digantikan ticker berikutnya
+        # supaya cache tetap terpanas 30 saham.
+        top_stocks = [t for t in ALL_STOCKS.keys()
+                      if not ticker_health.is_unavailable(t)][:30]
 
         def prefetch_ticker(ticker):
             """Prefetch single ticker data."""

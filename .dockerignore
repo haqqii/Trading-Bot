@@ -25,6 +25,7 @@ data/bot.lock
 data/bsjp_sent.txt
 data/morning_sent.txt
 data/ochobot_backup_*.db
+data/ticker_unavailable.json
 
 # Python
 __pycache__/

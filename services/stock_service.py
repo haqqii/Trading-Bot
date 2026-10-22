@@ -4,6 +4,7 @@ Stock data fetching service using Yahoo Finance, TradingView, and Finnhub.
 import os
 import time
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import requests
@@ -16,8 +17,50 @@ from urllib3.util.retry import Retry
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
 from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
+from services import ticker_health
 
 logger = logging.getLogger(__name__)
+
+
+class _DropNoPriceData(logging.Filter):
+    """Buang log yfinance yang cuma mengatakan "ticker ini tidak ada datanya".
+
+    yfinance menulis ticker yang tidak punya candles sebagai ERROR, dan
+    error itu naik jadi alert ke admin. Padahal ini bukan bug: ticker-nya
+    memang tidak ada datanya, dan bot sudah tahu cara menanganinya (tandai
+    di ticker_health lalu lewati). Log lain dari yfinance — rate limit,
+    error server — tetap diteruskan.
+
+    Pesan yang dibuang:
+      - "... possibly delisted; no price data found" — jalur utama gagal,
+        tapi sumber lain (v8/TradingView) masih bisa jawab.
+      - "... No data found, symbol may be delisted" — ticker memang tidak ada.
+      - "HTTP Error 404 ... Quote not found for symbol" — request gagal 404
+        karena ticker tidak ada.
+    """
+
+    _DROP = (
+        'no price data found',
+        'no data found, symbol may be delisted',
+        'quote not found for symbol',
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage().lower()
+        except Exception:
+            return True
+        return not any(marker in message for marker in self._DROP)
+
+
+# Status fetch terakhir per thread, supaya "Yahoo tidak punya data" bisa
+# dibedakan dari "jaringan putus". Kalau jaringan putus, ticker tidak boleh
+# ditandai tidak tersedia.
+_fetch_state = threading.local()
+
+
+def _yahoo_had_no_data() -> bool:
+    return getattr(_fetch_state, 'yahoo_no_data', False)
 
 
 @dataclass
@@ -95,14 +138,31 @@ class StockService:
 
         for attempt in range(retry):
             try:
+                # Status "Yahoo tidak punya data" direset tiap percobaan,
+                # supaya tidak bocor ke ticker berikutnya.
+                _fetch_state.yahoo_no_data = False
                 _yahoo_limiter.wait_if_needed()
 
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
 
                 stock = yf.Ticker(ticker)
-                hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
+                # yfinance menulis "no price data found" sebagai ERROR kalau
+                # ticker-nya memang tidak ada datanya. Log itu dibuang di
+                # sini; ticker-nya yang ditandai di ticker_health.
+                yf_logger = logging.getLogger('yfinance')
+                drop_filter = _DropNoPriceData()
+                yf_logger.addFilter(drop_filter)
+                try:
+                    hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
+                finally:
+                    yf_logger.removeFilter(drop_filter)
 
+                if hist.empty:
+                    # Benar-benar tidak ada baris: ticker tidak punya data.
+                    # (len < 30 bukan berarti tidak ada — ticker baru listing
+                    #  masih sedikit.)
+                    _fetch_state.yahoo_no_data = True
                 if hist.empty or len(hist) < 30:
                     if attempt < retry - 1:
                         time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
@@ -468,6 +528,17 @@ class StockService:
         # All sources failed - check circuit breakers for rate limit info
         yahoo_breaker = _circuit_breakers.get('yahoo')
         tv_breaker = _circuit_breakers.get('tradingview')
+
+        # Kalau bukan karena rate limit, dan Yahoo memang tidak punya data
+        # untuk ticker ini, tandai ticker-nya supaya jalur background
+        # berhenti mencarinya. Ticker yang ditandai tidak dilatedif user
+        # (mis. /analisa), jadi kalau datanya muncul lagi, user tetap bisa
+        # memakainya.
+        if (_yahoo_had_no_data()
+                and not (yahoo_breaker and yahoo_breaker.state.name == 'OPEN')
+                and not (tv_breaker and tv_breaker.state.name == 'OPEN')):
+            ticker_health.mark_unavailable(
+                base_ticker, reason='tidak ada data harga di sumber data manapun')
 
         retry_after = 30  # Default retry
         if yahoo_breaker and yahoo_breaker.state.name == 'OPEN':
