@@ -12,6 +12,9 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from telegram import Bot
+from telegram.error import BadRequest, NetworkError
+
 WIB = timezone(timedelta(hours=7))
 
 # Deduplication: key -> last_alert_timestamp (UTC)
@@ -20,30 +23,97 @@ _alert_lock = threading.Lock()
 _alert_queue: queue.Queue = queue.Queue()
 _dedup_window = timedelta(minutes=30)
 
+# BadRequest yang wajar dan tidak perlu bother admin.
+_BENIGN_BAD_REQUEST = (
+    "message is not modified",
+    "query is too old",
+    "message to edit not found",
+    "message identifier is not specified",
+)
 
-def _alert_worker(bot_ref, admin_chat_id: int):
-    """Background worker that sends Telegram messages from queue."""
-    while True:
-        try:
-            msg = _alert_queue.get(timeout=1.0)
+
+def _is_noise(record: logging.LogRecord) -> bool:
+    """True kalau error ini tidak perlu dikirim ke admin.
+
+    Yang disaring:
+      - masalah transport (jaringan, timeout, event loop closed). Alert-nya
+        dikirim lewat jalur yang sama, jadi tidak akan menolong.
+      - kegagalan kirim pesan. Kalau sinyal gagal terkirim ke user, itu
+        penting — tapi bukan lewat alert yang bocor ke semua orang.
+      - BadRequest yang wajar (pesan tidak berubah, tombol sudah lewat).
+
+    Semuanya tetap ditulis ke error.log, cuma tidak dikirimi alert.
+    """
+    exc_type = record.exc_info[0] if record.exc_info else None
+    if record.exc_info:
+        exc_text = logging.Formatter().formatException(record.exc_info)
+    else:
+        exc_text = ''
+    text = f"{record.getMessage()}\n{exc_text}".lower()
+
+    # Kegagalan kirim pesan. Kalau sinyal gagal terkirim ke user, itu
+    # penting — tapi bukan lewat alert yang bocor ke semua orang.
+    if "failed to send message" in text:
+        return True
+
+    # BadRequest checked dulu: di PTB, BadRequest anak dari NetworkError,
+    # jadi kalau NetworkError dicek lebih dulu, semua BadRequest ikut
+    # tersaring — termasuk bug parse Markdown yang justru perlu dilaporkan.
+    if exc_type is not None and issubclass(exc_type, BadRequest):
+        return any(marker in text for marker in _BENIGN_BAD_REQUEST)
+
+    # Masalah transport: jaringan, timeout, atau event loop closed. Alert-nya
+    # dikirim lewat jalur yang sama, jadi tidak akan menolong.
+    if exc_type is not None and issubclass(exc_type, NetworkError):
+        return True
+
+    return False
+
+
+def _alert_worker(token: str, admin_chat_id: int):
+    """Background worker that sends Telegram messages from queue.
+
+    Worker ini memakai Bot sendiri dan satu event loop yang hidup selama
+    worker berjalan. Bot aplikasi TIDAK boleh dipakai di sini: httpx
+    mengikat connection pool ke event loop tempat client dibuat, jadi
+    memakai client yang sama dari loop lain membuat connection pool ikut
+    mati begitu loop itu ditutup. Request berikutnya dari loop aplikasi
+    gagal dengan "Event loop is closed" — artinya sinyal ke user ikut
+    gagal terkirim.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    bot = Bot(token=token)
+    try:
+        loop.run_until_complete(bot.initialize())
+        while True:
+            try:
+                msg = _alert_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
             if msg is None:
                 break
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(bot_ref.bot.send_message(
+                loop.run_until_complete(bot.send_message(
                     chat_id=admin_chat_id,
                     text=msg,
                     read_timeout=10,
                     connect_timeout=10,
                 ))
-                loop.close()
-            except Exception:
-                pass  # Silently skip send failures — log already captured in error.log
+            except Exception as e:
+                # Kegagalan kirim alert dicatat, bukan ditelan. Sebelumnya
+                # error ini hilang tanpa jejak, jadi tidak ada yang tahu
+                # kalau jalur alertnya sendiri rusak.
+                logging.getLogger(__name__).warning(
+                    f"Gagal kirim alert ke admin: {type(e).__name__}: {e}")
             finally:
                 _alert_queue.task_done()
-        except queue.Empty:
-            continue
+    finally:
+        try:
+            loop.run_until_complete(bot.shutdown())
+        except Exception:
+            pass
+        loop.close()
 
 
 class TelegramLogHandler(logging.Handler):
@@ -64,7 +134,7 @@ class TelegramLogHandler(logging.Handler):
         if admin_chat_id and not TelegramLogHandler._worker_started:
             t = threading.Thread(
                 target=_alert_worker,
-                args=(app, admin_chat_id),
+                args=(app.bot.token, admin_chat_id),
                 daemon=True,
                 name='TelegramAlertWorker'
             )
@@ -73,6 +143,12 @@ class TelegramLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord):
         if not self.admin_chat_id:
+            return
+
+        # Error transport/jaringan tidak dikirim ke admin: alert-nya dikirim
+        # lewat koneksi yang sama, jadi kalau koneksi itu yang bermasalah,
+        # alert hanya menambah derau. Semuanya tetap ada di error.log.
+        if _is_noise(record):
             return
 
         # Build dedup key from logger name + short error fingerprint
