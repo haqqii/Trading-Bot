@@ -917,7 +917,9 @@ def migrate_from_json(user_data_file: str = 'user_data.json',
             with open(signals_file, 'r', encoding='utf-8') as f:
                 signals = json.load(f)
             for key, signal_data in signals.items():
-                ticker = signal_data.get('ticker', 'UNKNOWN')
+                # Format lama pakai 'ticker', format yang sekarang pakai
+                # 'ticker_raw' — terima keduanya.
+                ticker = signal_data.get('ticker_raw') or signal_data.get('ticker') or 'UNKNOWN'
                 signal_type = signal_data.get('signal_type', 'BUY')
                 asset_type = signal_data.get('asset_type', 'stock')
                 db.save_signal(

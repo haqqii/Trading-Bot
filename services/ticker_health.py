@@ -48,12 +48,20 @@ _entries: Dict[str, dict] = {}
 _loaded = False
 _warned_bulk_at = 0.0
 
+# Placeholder, bukan ticker sungguhan. Jangan pernah ditandai.
+_PLACEHOLDERS = {'', 'UNKNOWN', 'NONE', 'NULL', 'N/A', '-'}
+
 
 def _normalize(ticker: Optional[str]) -> str:
     """Kunci registry: huruf besar tanpa suffix .JK."""
     if not ticker:
         return ''
     return str(ticker).upper().replace('.JK', '').strip()
+
+
+def _is_placeholder(key: str) -> bool:
+    """True kalau ini cuma placeholder, bukan ticker sungguhan."""
+    return key in _PLACEHOLDERS
 
 
 def _load() -> None:
@@ -92,7 +100,7 @@ def _save() -> None:
 def is_unavailable(ticker: str, now: Optional[float] = None) -> bool:
     """True kalau ticker sedang ditandai tidak punya data harga."""
     key = _normalize(ticker)
-    if not key:
+    if not key or _is_placeholder(key):
         return False
     with _lock:
         _load()
@@ -125,7 +133,7 @@ def mark_unavailable(ticker: str, reason: str = '',
     """
     global _warned_bulk_at
     key = _normalize(ticker)
-    if not key:
+    if not key or _is_placeholder(key):
         return False
     until = time.time() + max(1, int(ttl))
     with _lock:

@@ -318,7 +318,12 @@ def save_user_data():
 
     # Save signals
     for key, val in last_buy_signals.items():
-        ticker = val.get('ticker', 'UNKNOWN')
+        # Ticker signal disimpan di 'ticker_raw' (lihat jobs_stocks.py &
+        # jobs_crypto.py). Kalau pakai 'ticker', nilainya fallback 'UNKNOWN'
+        # dan auto-save menimpa ticker yang benar di database — akibatnya
+        # setelah restart, TP/SL tidak pernah bisa dicek karena yang dicari
+        # ticker "UNKNOWN".
+        ticker = val.get('ticker_raw') or val.get('ticker') or 'UNKNOWN'
         signal_type = val.get('signal_type', val.get('signal', 'BUY'))
         # Bug fix: signal dict uses 'type' not 'asset_type'. Fall back to key prefix.
         asset_type = val.get('asset_type') or val.get('type')
