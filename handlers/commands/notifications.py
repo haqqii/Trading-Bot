@@ -4,6 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from ._shared import get_user, save_user, _schedule_answer
+from utils.formatters import escape_md
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,11 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             callback_data=f"notif_{key}"
         )])
 
-    msg += f"\n_Update: {notif_key} = {'ON' if u[notif_key] else 'OFF'}_"
+    # notif_key mengandung underscore (mis. notif_alert_favorit). Di legacy
+    # Markdown underscore dianggap penanda italic, jadi harus di-escape —
+    # kalau tidak, Telegram menolak pesan dengan "can't find end of the entity"
+    # dan tombol toggle tidak pernah kelar.
+    msg += f"\n_Update: {escape_md(notif_key)} = {'ON' if u[notif_key] else 'OFF'}_"
 
     await query.edit_message_text(
         msg,
