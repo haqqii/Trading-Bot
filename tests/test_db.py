@@ -298,8 +298,54 @@ class TestSignalOperations:
         restored = db.load_active_signals()
         assert restored['CRYPTO_JUP-USD_123']['name'] == 'Jupiter'
 
+    def test_save_signal_writes_name(self, temp_db):
+        """save_signal() harus menulis kolom name.
+
+        Auto-save (job tiap 5 menit) menulis ulang baris yang sama lewat
+        save_signal(). Kalau kolom name tidak ikut ditulis, baris yang
+        dibuat scanner (yang punya nama) kehilangan namanya.
+        """
+        db, _ = temp_db
+        db.save_signal(
+            key='CRYPTO_AERO-USD_123', ticker='AERO-USD', asset_type='crypto',
+            signal_type='BUY', price=0.72, name='Aerodrome Finance'
+        )
+        assert db.get_signal('CRYPTO_AERO-USD_123')['name'] == 'Aerodrome Finance'
+
+    def test_save_signal_update_keeps_existing_name(self, temp_db):
+        """Auto-save tanpa nama tidak boleh menghapus nama yang tersimpan."""
+        db, _ = temp_db
+        db.save_signal(
+            key='CRYPTO_AERO-USD_123', ticker='AERO-USD', asset_type='crypto',
+            signal_type='BUY', price=0.72, name='Aerodrome Finance'
+        )
+        db.save_signal(
+            key='CRYPTO_AERO-USD_123', ticker='AERO-USD', asset_type='crypto',
+            signal_type='BUY', price=0.73
+        )
+        assert db.get_signal('CRYPTO_AERO-USD_123')['name'] == 'Aerodrome Finance'
+
+    def test_save_signal_update_keeps_created_at(self, temp_db):
+        """Auto-save tidak boleh mengubah waktu pembuatan sinyal.
+
+        Kalau created_at di-update tiap 5 menit, sinyal lama tidak pernah
+        dibersihkan oleh cleanup_old_signals().
+        """
+        db, _ = temp_db
+        db.save_signal(
+            key='STOCK_BBCA_123', ticker='BBCA', asset_type='stock',
+            signal_type='BUY', price=8500
+        )
+        first = db.get_signal('STOCK_BBCA_123')['created_at']
+        db.save_signal(
+            key='STOCK_BBCA_123', ticker='BBCA', asset_type='stock',
+            signal_type='BUY', price=8600
+        )
+        assert db.get_signal('STOCK_BBCA_123')['created_at'] == first
+
     def test_save_signal_new(self, temp_db):
         """Should save new signal."""
+
         db, _ = temp_db
         result = db.save_signal(
             key='BBCA_BUY_123',

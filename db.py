@@ -456,19 +456,24 @@ class Database:
                     signal_type: str, price: float | None = None,
                     target_price: float | None = None, stop_loss: float | None = None,
                     score: float | None = None, quality: str | None = None,
-                    reason: str | None = None, extra_data: dict | None = None) -> bool:
-        """Save or update a signal."""
+                    reason: str | None = None, extra_data: dict | None = None,
+                    name: str | None = None) -> bool:
+        """Save or update a signal.
+
+        `name` = nama aset yang ditampilkan (mis. "Jupiter" untuk JUP-USD).
+        Kalau nilainya kosong, kolom yang sudah tersimpan tidak ditimpa.
+        """
         self.initialize()
         extra_json = json.dumps(extra_data) if extra_data else None
         with self._get_conn() as conn:
             try:
                 conn.execute(
                     """INSERT INTO signals
-                       (key, ticker, asset_type, signal_type, price,
+                       (key, ticker, name, asset_type, signal_type, price,
                         target_price, stop_loss, score, quality, reason,
                         extra_data)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (key, ticker.upper(), asset_type, signal_type, price,
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (key, ticker.upper(), name or None, asset_type, signal_type, price,
                      target_price, stop_loss, score, quality, reason,
                      extra_json)
                 )
@@ -478,16 +483,23 @@ class Database:
                 # target_price pakai COALESCE: kalau nilai baru kosong
                 # (mis. sinyal lama yang belum punya kolom TP), nilai yang
                 # sudah tersimpan jangan dihapus.
+                # name diperlakukan sama: auto-save yang tidak tahu nama
+                # aset tidak boleh menghapus nama yang sudah tersimpan.
+                # created_at sengaja tidak di-update: auto-save cuma menyalin
+                # state sinyal yang sama ke DB, bukan membuat sinyal baru.
+                # Kalau di-update, waktu pembuatan sinyal jadi hilang dan
+                # cleanup_old_signals() tidak pernah membersihkan sinyal lama.
                 conn.execute(
                     """UPDATE signals SET ticker = ?, asset_type = ?,
                        signal_type = ?, price = ?,
                        target_price = COALESCE(?, target_price),
                        stop_loss = ?, score = ?, quality = ?, reason = ?,
-                       extra_data = ?, created_at = CURRENT_TIMESTAMP
+                       extra_data = ?,
+                       name = COALESCE(NULLIF(?, ''), name)
                        WHERE key = ?""",
                     (ticker.upper(), asset_type, signal_type, price,
                      target_price, stop_loss, score, quality, reason,
-                     extra_json, key)
+                     extra_json, name or '', key)
                 )
                 return True
 
@@ -948,6 +960,7 @@ def migrate_from_json(user_data_file: str = 'user_data.json',
                     score=signal_data.get('score'),
                     quality=signal_data.get('quality'),
                     reason=signal_data.get('reason'),
+                    name=signal_data.get('name') or '',
                     extra_data={k: v for k, v in signal_data.items()
                                 if k not in ['ticker', 'signal_type', 'asset_type',
                                               'price', 'target_price', 'stop_loss',

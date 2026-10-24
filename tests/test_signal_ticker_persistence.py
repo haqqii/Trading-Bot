@@ -121,6 +121,32 @@ class TestSaveUserDataTicker:
         for k in ('tp1', 'tp2', 'tp3'):
             assert k not in extra
 
+    def test_writes_asset_name(self, fake_db, monkeypatch):
+        """Nama aset ikut ditulis ke kolom name.
+
+        Auto-save menulis ulang baris yang sama dengan scanner. Kalau nama
+        tidak ikut, kolom name jadi kosong dan notifikasi menampilkan
+        ticker mentah ("AERO-USD") bukan nama aset ("Aerodrome Finance").
+        """
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'CRYPTO_AERO-USD_1': {
+                'ticker_raw': 'AERO-USD', 'entry': 0.72,
+                'name': 'Aerodrome Finance',
+            },
+        })
+        ch.save_user_data()
+        assert fake_db.saved[0]['name'] == 'Aerodrome Finance'
+
+    def test_name_falls_back_to_empty(self, fake_db, monkeypatch):
+        """Sinyal tanpa nama tidak boleh error."""
+        import handlers.command_handlers as ch
+        monkeypatch.setattr(ch, 'last_buy_signals', {
+            'STOCK_BBCA_1': {'ticker_raw': 'BBCA', 'entry': 100},
+        })
+        ch.save_user_data()
+        assert fake_db.saved[0]['name'] == ''
+
 
 class TestPlaceholderTickers:
     """Placeholder bukan ticker sungguhan — jangan pernah ditandai."""

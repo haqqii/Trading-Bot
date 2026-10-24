@@ -347,6 +347,10 @@ def save_user_data():
             score=val.get('score'),
             quality=val.get('quality'),
             reason=val.get('reason'),
+            # Nama aset ikut ditulis: kalau tidak, auto-save (yang berjalan
+            # tiap 5 menit) menimpa baris yang sama tanpa nama sehingga kolom
+            # 'name' kosong.
+            name=val.get('name') or '',
             extra_data={k: v for k, v in val.items()
                         if k not in ['ticker', 'signal_type', 'asset_type',
                                       'price', 'target_price', 'stop_loss',
@@ -360,7 +364,8 @@ def save_signal(key: str, ticker: str, signal_type: str,
                 asset_type: str = 'stock', price: float | None = None,
                 target_price: float | None = None, stop_loss: float | None = None,
                 score: float | None = None, quality: str | None = None,
-                reason: str | None = None, extra_data: dict | None = None):
+                reason: str | None = None, extra_data: dict | None = None,
+                name: str | None = None):
     """Convenience function to save a single signal."""
     db.initialize()
     db.save_signal(
@@ -374,7 +379,8 @@ def save_signal(key: str, ticker: str, signal_type: str,
         score=score,
         quality=quality,
         reason=reason,
-        extra_data=extra_data
+        extra_data=extra_data,
+        name=name
     )
 
 
