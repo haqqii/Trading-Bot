@@ -4,7 +4,7 @@ Message formatters for Telegram bot.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from utils.time_utils import wib_strftime
 from config.settings import TIMEFRAMES
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:
     tf_name = TIMEFRAMES[tf]['name']
     msg = f"🎯 *SINYAL TRADING {tf_name}*\n"
     msg += "═" * 40 + "\n"
-    msg += f"📅 {datetime.now().strftime('%d %b %Y • %H:%M')}\n\n"
+    msg += f"📅 {wib_strftime('%d %b %Y • %H:%M')}\n\n"
 
     buy = [s for s in signals if s[3]['signal'] == 'BUY'][:10]
     sell = [s for s in signals if s[3]['signal'] == 'SELL'][:10]
@@ -114,13 +114,13 @@ def format_crypto_msg(signals: List) -> str:
 💡 Sinyal membutuhkan konfirmasi dari:
 • RSI + MACD + Stochastic + ADX + VWAP + Ichimoku
 
-⏰ {datetime.now().strftime('%d %b %Y • %H:%M')}
+⏰ {wib_strftime('%d %b %Y • %H:%M')}
 
 ⚠️ Crypto volatil, risiko tinggi"""
 
     msg = "₿ *CRYPTO SIGNALS*\n"
     msg += "═" * 40 + "\n"
-    msg += f"📅 {datetime.now().strftime('%d %b %Y • %H:%M')}\n"
+    msg += f"📅 {wib_strftime('%d %b %Y • %H:%M')}\n"
     msg += f"📊 Monitoring: {len(signals)} crypto\n\n"
 
     buy = [s for s in signals if s[2]['signal'] == 'BUY'][:10]
@@ -195,7 +195,7 @@ def format_bsjp_msg(signals: List) -> str:
     msg = f"""🌙 *BSJP - BELI SORE JUAL PAGI*
 
 {SEP}
-📅 {datetime.now().strftime('%d %b %Y • %H:%M')}
+📅 {wib_strftime('%d %b %Y • %H:%M')}
 
 🎯 Rekomendasi untuk besok pagi:
 
@@ -241,7 +241,7 @@ def format_morning_msg(signals: List) -> str:
     msg = f"""☀️ *REKOMENDASI PAGI*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-📅 {datetime.now().strftime('%d %b %Y')}
+📅 {wib_strftime('%d %b %Y')}
 
 🎯 Saham Potensi Naik Hari Ini:
 
@@ -418,7 +418,7 @@ def format_unified_crypto_notification(
         return f"⚠️ Invalid data for {name} ({ticker})"
 
     sym = ticker.replace('-USD', '').replace('-USDT', '')
-    ts = datetime.now().strftime('%d %b %Y pukul %H:%M WIB')
+    ts = wib_strftime('%d %b %Y pukul %H:%M WIB')
 
     # Calculate gain display
     ind = analysis_data.get('indicators') or {}
@@ -625,7 +625,7 @@ def format_unified_stock_notification(
     else:
         header = f"📊 *SAHAM SIGNAL - {notif_type}*"
 
-    ts = datetime.now().strftime('%d %b %Y pukul %H:%M WIB')
+    ts = wib_strftime('%d %b %Y pukul %H:%M WIB')
 
     # Gain display
     ind = analysis_data.get('indicators') or {}
@@ -1055,7 +1055,7 @@ def format_analisa_simple(
         lines.append(f"  • Perhatikan area support di {fp(support_level)} dan resistance di {fp(resistance_level)}")
 
     # === FOOTER ===
-    ts = datetime.now().strftime('%d %b %Y %H:%M')
+    ts = wib_strftime('%d %b %Y %H:%M')
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")
@@ -1482,7 +1482,7 @@ def format_analisa_pemula(
     lines.append(_intinya_pemula(signal_type, data, sentiment or {}))
 
     # === FOOTER ===
-    ts = datetime.now().strftime('%d %b %Y %H:%M')
+    ts = wib_strftime('%d %b %Y %H:%M')
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ Analisa otomatis berdasarkan indikator teknikal dan sentimen berita. Bukan rekomendasi investasi. Selalu lakukan DYOR.")

@@ -79,12 +79,12 @@ async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if 'portfolio' not in u:
         u['portfolio'] = []
 
-    from datetime import datetime
+    from utils.time_utils import wib_strftime
     position = {
         'ticker': ticker,
         'buy_price': buy_price,
         'lot': lot,
-        'buy_date': datetime.now().strftime('%Y-%m-%d %H:%M')
+        'buy_date': wib_strftime('%Y-%m-%d %H:%M')
     }
     u['portfolio'].append(position)
     save_user(uid)

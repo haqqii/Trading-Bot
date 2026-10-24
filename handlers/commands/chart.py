@@ -1,6 +1,6 @@
 """Chart command - generate price chart for stocks/crypto."""
 import logging
-from datetime import datetime
+from utils.time_utils import wib_strftime
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -69,7 +69,7 @@ async def chart_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(
             photo=img_buf,
             caption=f"📊 *{ticker}* | {period} ({interval})\n"
-                    f"🕐 {datetime.now().strftime('%d %b %Y %H:%M')}",
+                    f"🕐 {wib_strftime('%d %b %Y %H:%M')}",
             parse_mode='Markdown'
         )
     except Exception as e:

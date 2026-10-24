@@ -12,18 +12,19 @@ Includes:
 """
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import Any, cast
 
 from services.stock_service import stock_service, StockDataResult
 from services.crypto_service import crypto_service
 from services.signal_service import calc_tPSL
 from utils.cache import _price_cache
+from utils.time_utils import WIB, now_wib as _now_wib
 
 logger = logging.getLogger(__name__)
 
-# WIB timezone (UTC+7)
-WIB = timezone(timedelta(hours=7))
+# WIB timezone (UTC+7) — re-exported from utils.time_utils so every part of
+# the bot converts from UTC explicitly instead of trusting the container clock.
 
 # Timeframe key -> (interval, period) mapping for stock data fetch.
 # IDX only trades ~7h/day, so an intraday interval needs a multi-day period to
@@ -58,9 +59,9 @@ def now_wib():
     """Get current time in WIB timezone (UTC+7).
 
     Always converts from UTC to ensure correct WIB time regardless of
-    system timezone setting.
+    system timezone setting (the container usually runs on UTC).
     """
-    return datetime.now(timezone.utc).astimezone(WIB)
+    return _now_wib()
 
 
 def _safe_time_diff(t1, t2):

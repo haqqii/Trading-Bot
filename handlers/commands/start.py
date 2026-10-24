@@ -1,6 +1,6 @@
 """Start command and main menu buttons."""
 import logging
-from datetime import datetime
+from utils.time_utils import wib_strftime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -132,7 +132,7 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         msg += f"   📈 {sign}{d['change']:.2f}%\n\n"
 
     msg += "═" * 40 + "\n"
-    msg += f"📅 {datetime.now().strftime('%d %b %Y %H:%M')}"
+    msg += f"📅 {wib_strftime('%d %b %Y %H:%M')}"
 
     await update.message.reply_text(msg, parse_mode='Markdown')
 
