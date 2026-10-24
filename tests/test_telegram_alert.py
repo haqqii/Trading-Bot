@@ -270,3 +270,61 @@ class TestProviderServiceFailures:
         # tapi kalau sampai, tetap bukan alert.
         assert rec.levelno == logging.ERROR
         assert _is_noise(rec) is True
+
+
+class TestSendPathFailures:
+    """Kegagalan kirim pesan ke user bukan bug bot.
+
+    Alert-nya dikirim lewat koneksi yang sama, jadi kalau koneksi itu
+    yang bermasalah, alert hanya menambah derau. Yang tetap dilaporkan
+    adalah bug kode di jalur kirim (TypeError, KeyError, dst).
+    """
+
+    def test_send_failed_network_error_is_noise(self):
+        """Kegagalan kirim karena jaringan putus = noise."""
+        rec = make_record(
+            'Send failed: NetworkError: httpx.ConnectError: '
+            'All connection attempts failed',
+            name='trading.handlers.command_handlers',
+        )
+        assert _is_noise(rec) is True
+
+    def test_send_failed_after_retries_is_noise(self):
+        """Kirim gagal setelah semua percobaan = noise."""
+        rec = make_record(
+            'Send failed after 3 attempts',
+            name='trading.handlers.command_handlers',
+        )
+        assert _is_noise(rec) is True
+
+    def test_send_error_with_network_error_is_noise(self):
+        """'Send error' dengan NetworkError juga noise."""
+        rec = make_record(
+            'Send error: NetworkError: Timed out',
+            name='trading.handlers.scheduler._common',
+        )
+        assert _is_noise(rec) is True
+
+    def test_send_failed_with_code_bug_is_reported(self):
+        """Bug kode di jalur kirim tetap dilaporkan."""
+        rec = make_record(
+            'Send failed: TypeError: expected str, got None',
+            name='trading.handlers.command_handlers',
+        )
+        assert _is_noise(rec) is False
+
+    def test_failed_to_send_message_with_code_bug_is_reported(self):
+        """'Failed to send message' dengan bug kode tetap dilaporkan."""
+        rec = make_record(
+            'Failed to send message for BTCUSDT: KeyError: close',
+            name='trading.handlers.scheduler.jobs_crypto',
+        )
+        assert _is_noise(rec) is False
+
+    def test_no_data_with_code_bug_is_reported(self):
+        """'No price data' yang menutupi bug kode tidak boleh ikut tersaring."""
+        rec = make_record(
+            "no price data found: TypeError: 'NoneType' object is not subscriptable",
+            name='trading.services.crypto_service',
+        )
+        assert _is_noise(rec) is False

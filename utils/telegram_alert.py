@@ -53,6 +53,18 @@ _TRANSPORT_NOISE_MARKERS = (
     "remote end closed connection",
     "incomplete read",
     "event loop is closed",
+    # PTB/httpx menulis nama exception-nya sebagai teks kalau di-log
+    # dengan f-string (tanpa exc_info), jadi tipenya tidak pernah dicek.
+    # "Send failed: NetworkError: httpx.ConnectError: ..." ikut terfilter
+    # lewat "failed to send message" hanya kalau pesannya persis.
+    "networkerror",
+    "connecterror",
+    # Kegagalan kirim pesan Whatever pun NETWORK-nya. Kalau pesannya
+    # nama exception Python, itu bug kode dan tetap dikirimi alert
+    # (lihat _mentions_code_bug).
+    "send failed",
+    "send timeout",
+    "send error",
 )
 
 # Log dari library pihak ketiga bukan bug bot: yang rusak adalah providernya,
@@ -142,6 +154,17 @@ def _is_third_party(record: logging.LogRecord) -> bool:
     return any(part in _THIRD_PARTY_LOGGERS for part in record.name.split('.'))
 
 
+def _mentions_code_bug(text: str) -> bool:
+    """True kalau pesan menyebut nama exception yang menandakan bug kode.
+
+    Nama exception seperti TypeError/KeyError berarti ada yang salah di
+    kode kita, bukan masalah jaringan atau provider. Record seperti ini
+    harus tetap dikirimi alert, walau pesannya juga mengandung kata
+    transport ("timeout", "send failed", dst).
+    """
+    return any(exc in text for exc in _CODE_BUG_EXCEPTIONS)
+
+
 def _is_provider_failure(record: logging.LogRecord, text: str) -> bool:
     """True kalau error ini adalah kegagalan provider data, bukan bug bot.
 
@@ -159,7 +182,7 @@ def _is_provider_failure(record: logging.LogRecord, text: str) -> bool:
     if not any(marker in text for marker in _PROVIDER_FAILURE_MARKERS):
         return False
     # Ada exception Python di dalamnya = bug kode, bukan masalah provider.
-    return not any(exc in text for exc in _CODE_BUG_EXCEPTIONS)
+    return not _mentions_code_bug(text)
 
 
 def _is_noise(record: logging.LogRecord) -> bool:
@@ -172,6 +195,10 @@ def _is_noise(record: logging.LogRecord) -> bool:
         penting — tapi bukan lewat alert yang bocor ke semua orang.
       - BadRequest yang wajar (pesan tidak berubah, tombol sudah lewat).
 
+    Pengecualian: kalau pesannya menyebut nama exception Python (TypeError,
+    KeyError, dst), itu bug di kode kita dan tetap dikirimi alert, walau
+    pesannya juga mengandung kata-kata transport.
+
     Semuanya tetap ditulis ke error.log, cuma tidak dikirimi alert.
     """
     exc_type = record.exc_info[0] if record.exc_info else None
@@ -180,15 +207,16 @@ def _is_noise(record: logging.LogRecord) -> bool:
     else:
         exc_text = ''
     text = f"{record.getMessage()}\n{exc_text}".lower()
+    code_bug = _mentions_code_bug(text)
 
     # Kegagalan kirim pesan. Kalau sinyal gagal terkirim ke user, itu
     # penting — tapi bukan lewat alert yang bocor ke semua orang.
-    if "failed to send message" in text:
+    if "failed to send message" in text and not code_bug:
         return True
 
     # Ticker yang tidak punya data harga. Bukan bug: bot sudah menandainya
     # dan melewatinya, jadi tidak perlu bother admin.
-    if any(marker in text for marker in _NO_DATA_MARKERS):
+    if any(marker in text for marker in _NO_DATA_MARKERS) and not code_bug:
         return True
 
     # Error dari library pihak ketiga (yfinance, urllib3, ...). Yang rusak
@@ -209,7 +237,7 @@ def _is_noise(record: logging.LogRecord) -> bool:
 
     # Error transport yang tertulis sebagai teks di dalam pesan log (tanpa
     # exc_info). Tetap masuk error.log, tapi tidak dikirimi alert.
-    if any(marker in text for marker in _TRANSPORT_NOISE_MARKERS):
+    if any(marker in text for marker in _TRANSPORT_NOISE_MARKERS) and not code_bug:
         return True
 
     # Kegagalan provider data (Yahoo, CoinGecko, TradingView, Finnhub)
