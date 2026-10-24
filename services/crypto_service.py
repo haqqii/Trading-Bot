@@ -188,6 +188,21 @@ class CryptoService:
                         return None
 
                     df = hist.copy()
+
+                    # Ticker {SYM}-USD di Yahoo bisa milik aset yang sama
+                    # sekali berbeda dari CoinGecko yang jadi sumber daftar
+                    # pair. Contoh nyata: AERO-USD di Yahoo = "Aerovek
+                    # Aviation" (token mati, harga ~$0.000025, volume 0),
+                    # bukan Aerodrome Finance (~$0.78). Angka seperti ini
+                    # lolos semua validasi harga/RSI karena "valid" —
+                    # satu-satunya penanda adalah volume nol. Tolak supaya
+                    # yang dipakai fallback CoinGecko (id yang benar).
+                    if float(df['Volume'].tail(20).sum()) <= 0:
+                        logger.warning(
+                            f"Yahoo data for {ticker} has zero volume in the "
+                            f"last 20 candles - dead/mismatched asset, rejecting")
+                        return None
+
                     df['MA_FAST'] = df['Close'].rolling(8).mean()
                     df['MA_SLOW'] = df['Close'].rolling(21).mean()
                     df['RSI'] = calculate_rsi(df['Close'])
@@ -382,9 +397,15 @@ class CryptoService:
                         continue
                     return None
 
-                change_24h = data['market_data']['price_change_percentage_24h']
-                volume = data['market_data']['total_volume']['usd']
-                sparkline = data['market_data']['sparkline_7d']['price']
+                # Some tokens (e.g. FIGR_HELOC / Figure Heloc) return null for
+                # price_change_percentage_24h — normalize so downstream numeric
+                # comparisons never hit None.
+                change_24h = data['market_data'].get('price_change_percentage_24h')
+                change_24h = float(change_24h) if change_24h is not None else 0.0
+                total_volume = data['market_data'].get('total_volume') or {}
+                volume = total_volume.get('usd')
+                volume = float(volume) if volume is not None else 0.0
+                sparkline = (data['market_data'].get('sparkline_7d') or {}).get('price')
 
                 if not sparkline or len(sparkline) < 20:
                     if attempt < retry - 1:

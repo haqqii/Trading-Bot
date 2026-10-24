@@ -57,6 +57,23 @@ def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5') -> Di
 # === Shared Scoring Helpers ===
 
 
+def _safe_num(value: Any, default: float) -> float:
+    """Return a numeric value, falling back to ``default`` when value is None.
+
+    Upstream APIs can legitimately return ``null`` for a field (e.g. CoinGecko
+    ``price_change_percentage_24h`` for yield-bearing tokens such as
+    FIGR_HELOC).  When such a None is stored in the data dict, ``dict.get(key, default)``
+    no longer helps because the key exists — the comparison blows up with
+    ``TypeError: '>=' not supported between instances of 'NoneType' and 'int'``.
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def score_rsi(
     rsi: float,
     buy_thresholds: tuple[float, float] = (30, 40),
@@ -238,16 +255,16 @@ class SignalService:
             return {'signal': 'HOLD', 'reason': 'No data'}
 
         price = data['price']
-        rsi = data.get('rsi', 50)
+        rsi = _safe_num(data.get('rsi'), 50)
         ma_f = cast(float, data.get('ma_fast')) if data.get('ma_fast') is not None else cast(float, price)
         ma_s = cast(float, data.get('ma_slow')) if data.get('ma_slow') is not None else cast(float, price)
-        atr = data.get('atr', price * 0.015)
-        macd = data.get('macd', 0)
-        macd_signal = data.get('macd_signal', 0)
-        macd_hist = data.get('macd_hist', 0)
-        bb_upper = data.get('bb_upper', price * 1.05)
-        bb_lower = data.get('bb_lower', price * 0.95)
-        volume_ratio = data.get('volume_ratio', 1.0)
+        atr = _safe_num(data.get('atr'), price * 0.015)
+        macd = _safe_num(data.get('macd'), 0)
+        macd_signal = _safe_num(data.get('macd_signal'), 0)
+        macd_hist = _safe_num(data.get('macd_hist'), 0)
+        bb_upper = _safe_num(data.get('bb_upper'), price * 1.05)
+        bb_lower = _safe_num(data.get('bb_lower'), price * 0.95)
+        volume_ratio = _safe_num(data.get('volume_ratio'), 1.0)
 
         buy_score = 0
         sell_score = 0
@@ -303,26 +320,26 @@ class SignalService:
             return {'signal': 'HOLD', 'reason': 'No data'}
 
         price = data['price']
-        rsi = data.get('rsi', 50)
+        rsi = _safe_num(data.get('rsi'), 50)
         ma_f = cast(float, data.get('ma_fast')) if data.get('ma_fast') is not None else cast(float, price)
         ma_s = cast(float, data.get('ma_slow')) if data.get('ma_slow') is not None else cast(float, price)
-        atr = data.get('atr', price * 0.025)
-        change = data.get('change', 0)
+        atr = _safe_num(data.get('atr'), price * 0.025)
+        change = _safe_num(data.get('change'), 0)
 
-        macd = data.get('macd', 0)
-        macd_signal = data.get('macd_signal', 0)
-        macd_hist = data.get('macd_hist', 0)
-        bb_upper = data.get('bb_upper', price * 1.05)
-        bb_lower = data.get('bb_lower', price * 0.95)
-        volume_ratio = data.get('volume_ratio', 1.0)
-        vwap = data.get('vwap', price)
-        stoch_k = data.get('stoch_k', 50)
+        macd = _safe_num(data.get('macd'), 0)
+        macd_signal = _safe_num(data.get('macd_signal'), 0)
+        macd_hist = _safe_num(data.get('macd_hist'), 0)
+        bb_upper = _safe_num(data.get('bb_upper'), price * 1.05)
+        bb_lower = _safe_num(data.get('bb_lower'), price * 0.95)
+        volume_ratio = _safe_num(data.get('volume_ratio'), 1.0)
+        vwap = _safe_num(data.get('vwap'), price)
+        stoch_k = _safe_num(data.get('stoch_k'), 50)
         stoch_oversold = data.get('stoch_oversold', False)
         stoch_overbought = data.get('stoch_overbought', False)
         stoch_bullish_cross = data.get('stoch_bullish_cross', False)
-        adx = data.get('adx', 25)
-        plus_di = data.get('plus_di', 25)
-        minus_di = data.get('minus_di', 25)
+        adx = _safe_num(data.get('adx'), 25)
+        plus_di = _safe_num(data.get('plus_di'), 25)
+        minus_di = _safe_num(data.get('minus_di'), 25)
         adx_strong = data.get('adx_strong', False)
         ichi_bullish = data.get('ichi_bullish', False)
         ichi_bearish = data.get('ichi_bearish', False)

@@ -387,3 +387,134 @@ class TestCombined:
                             'load_crypto_pairs', 'get_usd_idr_rate']:
             method = getattr(service, method_name)
             assert method.__doc__ is not None
+
+
+class TestCoinGeckoNullFields:
+    """Regression tests for CoinGecko returning null on some fields.
+
+    Real case: FIGR_HELOC (Figure Heloc, CoinGecko id ``figure-heloc``) returns
+    ``price_change_percentage_24h: null``.  Stored as-is it reached
+    ``generate_crypto_signal()`` and blew up on ``if change >= 3:`` with
+    ``TypeError: '>=' not supported between instances of 'NoneType' and 'int'``.
+    """
+
+    @staticmethod
+    def _payload(change_24h=None, total_volume=142865686.0):
+        return {
+            'name': 'Null Change Token',
+            'symbol': 'nullchg',
+            'market_data': {
+                'current_price': {'usd': 1.0084},
+                'total_volume': {'usd': total_volume} if total_volume is not None else None,
+                'price_change_percentage_24h': change_24h,
+                'sparkline_7d': {'price': [1.0 + i * 0.001 for i in range(60)]},
+            },
+        }
+
+    @staticmethod
+    def _fetch(payload, ticker='NULLCHG-USD'):
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        service.coingecko_ids = {ticker: 'null-change-token'}
+
+        fake_resp = MagicMock()
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = payload
+
+        with patch.object(cs_mod, '_cg_session') as mock_session:
+            mock_session.get.return_value = fake_resp
+            return service.get_crypto_data_coingecko(ticker)
+
+    def test_null_24h_change_becomes_zero(self):
+        """Null price_change_percentage_24h should be normalized to 0.0."""
+        result = self._fetch(self._payload(), ticker='NULLCHG-A-USD')
+        assert result is not None
+        assert result['change'] == 0.0
+        assert isinstance(result['change'], float)
+
+    def test_null_total_volume_becomes_zero(self):
+        """Null total_volume should be normalized to 0.0."""
+        result = self._fetch(self._payload(total_volume=None), ticker='NULLCHG-B-USD')
+        assert result is not None
+        assert result['volume'] == 0.0
+
+    def test_valid_24h_change_is_preserved(self):
+        """A real 24h change value should pass through untouched."""
+        result = self._fetch(self._payload(change_24h=-3.25), ticker='NULLCHG-C-USD')
+        assert result is not None
+        assert result['change'] == pytest.approx(-3.25)
+
+    def test_null_change_does_not_break_signal_generation(self):
+        """generate_crypto_signal must not raise on a null change value."""
+        from services.signal_service import SignalService
+        result = self._fetch(self._payload(), ticker='NULLCHG-D-USD')
+        signal = SignalService.generate_crypto_signal(result)
+        assert signal['signal'] in ('BUY', 'SELL', 'REVERSAL', 'HOLD')
+        assert signal['entry'] == pytest.approx(1.0084)
+
+
+class TestZeroVolumeRejection:
+    """Regression: Yahoo {SYM}-USD can belong to a different asset entirely.
+
+    Real case: AERO-USD on Yahoo is "Aerovek Aviation" (dead token, price
+    ~$0.000025, zero volume) while CoinGecko's AERO is Aerodrome Finance
+    (~$0.78).  The bot lists pairs from CoinGecko but fetches data from
+    Yahoo first — so a signal was generated with entry $0.0000253 and the
+    notification rendered every price as "$0.00 | Rp 0".  Numbers like this
+    pass the price/RSI validation; zero volume is the only tell.
+    """
+
+    @staticmethod
+    def _hist_df(volumes):
+        """Build a synthetic OHLCV frame like yfinance returns."""
+        import numpy as np
+        import pandas as pd
+        n = 80
+        idx = pd.date_range('2026-01-01', periods=n, freq='1h')
+        rng = np.random.default_rng(42)
+        close = pd.Series(100 + np.cumsum(rng.normal(0, 0.5, n)), index=idx)
+        return pd.DataFrame({
+            'Open': close,
+            'High': close * 1.01,
+            'Low': close * 0.99,
+            'Close': close,
+            'Volume': volumes,
+        })
+
+    @staticmethod
+    def _fetch_with_hist(hist):
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value.history.return_value = hist
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            return service.get_crypto_data('AERO-USD', '4h', '1mo', use_cache=False)
+
+    def test_zero_volume_data_is_rejected(self):
+        """All-zero volume (dead/mismatched asset) must yield None."""
+        import numpy as np
+        hist = self._hist_df(np.zeros(80))
+        assert self._fetch_with_hist(hist) is None
+
+    def test_nonzero_volume_data_is_accepted(self):
+        """Live data with real volume must still be used."""
+        import numpy as np
+        rng = np.random.default_rng(7)
+        hist = self._hist_df(rng.uniform(1_000, 50_000, 80))
+        result = self._fetch_with_hist(hist)
+        assert result is not None
+        assert result['price'] > 0
+        assert result['candles'] == 80
+
+    def test_recent_volume_zero_only_rejects_when_all_zero(self):
+        """One quiet candle among active ones must not trigger rejection."""
+        import numpy as np
+        volumes = np.full(80, 10_000.0)
+        volumes[-1] = 0  # candle terakhir kosong, sisanya aktif
+        hist = self._hist_df(volumes)
+        assert self._fetch_with_hist(hist) is not None
+

@@ -600,3 +600,52 @@ class TestEdgeCases:
         result = SignalService.generate_stock_signal(data)
         # No MA bonus added
         assert result['buy_score'] == 0 or result['sell_score'] == 0
+
+
+# === Null Numeric Field Tests ===
+
+class TestNullNumericFields:
+    """Regression: API fields arriving as None must not break scoring.
+
+    CoinGecko returns ``price_change_percentage_24h: null`` for some tokens
+    (e.g. FIGR_HELOC / Figure Heloc).  ``dict.get(key, default)`` does not help
+    when the key exists with a None value — the comparison then raises
+    ``TypeError: '>=' not supported between instances of 'NoneType' and 'int'``.
+    """
+
+    def test_crypto_signal_with_null_change(self):
+        """Null change should not raise and should be treated as 0%."""
+        data = make_crypto_data(change=None)
+        result = SignalService.generate_crypto_signal(data)
+        assert result is not None
+        assert result['signal'] in ('BUY', 'SELL', 'REVERSAL', 'HOLD')
+
+    def test_crypto_signal_with_null_rsi(self):
+        """Null RSI should fall back to neutral 50."""
+        data = make_crypto_data(rsi=None)
+        result = SignalService.generate_crypto_signal(data)
+        assert result['rsi'] == 50
+
+    def test_crypto_signal_with_null_volume_ratio(self):
+        """Null volume_ratio should fall back to 1.0."""
+        data = make_crypto_data(volume_ratio=None)
+        result = SignalService.generate_crypto_signal(data)
+        assert result is not None
+
+    def test_crypto_signal_with_null_indicator_batch(self):
+        """Several null indicator fields at once should still work."""
+        data = make_crypto_data(
+            change=None, rsi=None, atr=None, macd=None, macd_signal=None,
+            macd_hist=None, bb_upper=None, bb_lower=None, volume_ratio=None,
+            vwap=None, stoch_k=None, adx=None, plus_di=None, minus_di=None,
+        )
+        result = SignalService.generate_crypto_signal(data)
+        assert result is not None
+        assert result['entry'] == 100
+
+    def test_stock_signal_with_null_indicators(self):
+        """Stock signal should also tolerate null indicator fields."""
+        data = make_stock_data(rsi=None, atr=None, macd=None, volume_ratio=None)
+        result = SignalService.generate_stock_signal(data)
+        assert result is not None
+        assert result['signal'] in ('BUY', 'SELL', 'HOLD')
