@@ -17,19 +17,10 @@ from urllib3.util.retry import Retry
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
 from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
-from utils.log_filters import DropNoPriceData, install_provider_filters
+from utils.log_filters import install_provider_filters
 from services import ticker_health
 
 logger = logging.getLogger(__name__)
-
-
-class _DropNoPriceData(DropNoPriceData):
-    """Buang log yfinance yang cuma mengatakan "ticker ini tidak ada datanya".
-
-    Sekarang filter-nya tinggal di utils/log_filters.py, jadi semua jalur
-    yang pakai yfinance (saham, crypto, chart) memakai filter yang sama.
-    Log lain dari yfinance — rate limit, error server — tetap diteruskan.
-    """
 
 
 # Status fetch terakhir per thread, supaya "Yahoo tidak punya data" bisa
@@ -127,15 +118,11 @@ class StockService:
 
                 stock = yf.Ticker(ticker)
                 # yfinance menulis "no price data found" sebagai ERROR kalau
-                # ticker-nya memang tidak ada datanya. Log itu dibuang di
-                # sini; ticker-nya yang ditandai di ticker_health.
-                yf_logger = logging.getLogger('yfinance')
-                drop_filter = _DropNoPriceData()
-                yf_logger.addFilter(drop_filter)
-                try:
-                    hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
-                finally:
-                    yf_logger.removeFilter(drop_filter)
+                # ticker-nya memang tidak ada datanya. Log itu dibuang oleh
+                # filter yang dipasang di startup (utils/log_filters.py);
+                # ticker-nya yang ditandai di ticker_health.
+                install_provider_filters()
+                hist = stock.history(interval=interval, period=period, timeout=8)  # Reduced from 10s
 
                 if hist.empty:
                     # Benar-benar tidak ada baris: ticker tidak punya data.

@@ -5,6 +5,7 @@ Tests crypto data fetching service structure and utility functions.
 import sys
 import os
 import time
+import logging
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -637,7 +638,39 @@ class TestYahooMissingFilter:
         return reg
 
     def test_empty_history_marks_ticker_missing(self, registry):
-        """Yahoo kosong (404) -> ticker dicatat sebagai tidak ada di Yahoo."""
+        """Yahoo bilang ticker ini tidak ada -> dicatat sebagai hilang.
+
+        yfinance menulis ERROR "$UNI-USD: No data found, symbol may be
+        delisted" waktu Yahoo membalas 404. Itu bukti ticker memang tidak
+        ada di Yahoo, jadi boleh dicatat dan dilewati di scan berikutnya.
+        """
+        import pandas as pd
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        mock_yf = MagicMock()
+
+        def fake_history(*args, **kwargs):
+            logging.getLogger('yfinance').error(
+                '$UNI-USD: No data found, symbol may be delisted')
+            return pd.DataFrame()
+
+        mock_yf.Ticker.return_value.history.side_effect = fake_history
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            result = service.get_crypto_data('UNI-USD', '15m', '3d',
+                                             retry=1, use_cache=False)
+
+        assert result is None
+        assert registry.is_missing('UNI-USD', '15m') is True
+
+    def test_failed_request_does_not_mark_ticker(self, registry):
+        """Request yang gagal (timeout, rate limit) bukan ticker hilang.
+
+        Frame kosong tanpa pesan "symbol may be delisted" berarti request-nya
+        yang bermasalah. Ticker ini masih sah, jadi tidak boleh dicatat -
+        kalau dicatat, bot tidak akan coba Yahoo lagi selama 6 jam.
+        """
         import pandas as pd
         from services import crypto_service as cs_mod
         from services.crypto_service import CryptoService
@@ -650,7 +683,7 @@ class TestYahooMissingFilter:
                                              retry=1, use_cache=False)
 
         assert result is None
-        assert registry.is_missing('UNI-USD', '15m') is True
+        assert registry.is_missing('UNI-USD', '15m') is False
 
     def test_marked_ticker_is_skipped_without_request(self, registry):
         """Ticker yang ditandai: tidak ada request ke Yahoo sama sekali."""

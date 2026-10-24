@@ -13,7 +13,7 @@ from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache, _usd_cache
 from utils.rate_limiter import _yahoo_limiter, _coingecko_limiter, _circuit_breakers, exponential_backoff
-from utils.log_filters import DropNoPriceData, install_provider_filters
+from utils.log_filters import install_provider_filters, no_data_reported
 from services import crypto_yahoo_missing
 from utils.indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
@@ -285,191 +285,198 @@ class CryptoService:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
 
-                import logging as _yf_logging
-                yf_logger = _yf_logging.getLogger('yfinance')
                 # Buang log "ticker ini tidak punya data" dari yfinance.
                 # Dulu logger yfinance diturunkan levelnya (CRITICAL+1) lalu
                 # dikembalikan lagi setelah fetch - kalau ada thread lain yang
                 # fetch bersamaan, levelnya bisa ter-restore duluan dan log
                 # yfinance bocor lagi ke alert admin.
-                drop_filter = DropNoPriceData()
-                yf_logger.addFilter(drop_filter)
+                # Filter-nya dipasang sekali di startup (utils/log_filters.py),
+                # jadi tidak ada balapan pasang-lepas tiap request.
+                install_provider_filters()
+                since = time.time()
 
-                try:
-                    stock = yf.Ticker(ticker)
-                    hist = stock.history(interval=interval, period=period, timeout=15)
+                stock = yf.Ticker(ticker)
+                hist = stock.history(interval=interval, period=period, timeout=15)
 
-                    if hist.empty:
-                        # Yahoo tidak punya ticker ini sama sekali (404).
-                        # Dicatat, supaya scan berikutnya tidak menebak
-                        # lagi - datanya tetap diambil dari CoinGecko.
-                        if attempt < retry - 1:
-                            time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                            continue
+                if hist.empty:
+                    # Frame kosong dua arti: ticker memang tidak ada di
+                    # Yahoo, atau request-nya gagal (timeout, rate limit).
+                    # Yang boleh dicatat hanya yang pertama - kalau request
+                    # yang gagal, ticker-nya tetap sah dan harus dicoba lagi
+                    # di scan berikutnya.
+                    if attempt < retry - 1:
+                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                        continue
+                    if no_data_reported(ticker, since):
+                        # Yahoo sendiri yang bilang ticker ini tidak ada
+                        # datanya. Dicatat, supaya scan berikutnya tidak
+                        # menebak lagi - datanya tetap dari CoinGecko.
                         crypto_yahoo_missing.mark_missing(
                             ticker, interval,
                             reason=f'Yahoo tidak punya data untuk {ticker}')
                         logger.warning(
                             f"Yahoo tidak punya data untuk {ticker} ({interval}) "
                             f"- pakai fallback CoinGecko")
-                        return None
-
-                    if len(hist) < 50:
-                        # Candle-nya ada tapi kurang dari 50 - ticker baru
-                        # listing, bukan ticker yang hilang. Tidak ditandai.
-                        if attempt < retry - 1:
-                            time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                            continue
+                    else:
                         logger.warning(
-                            f"Yahoo cuma punya {len(hist)} candle untuk {ticker} "
-                            f"({interval}) - pakai fallback")
-                        return None
+                            f"Yahoo tidak mengembalikan data untuk {ticker} "
+                            f"({interval}) - pakai fallback CoinGecko")
+                    return None
 
-                    df = hist.copy()
+                if len(hist) < 50:
+                    # Candle-nya ada tapi kurang dari 50 - ticker baru
+                    # listing, bukan ticker yang hilang. Tidak ditandai.
+                    if attempt < retry - 1:
+                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                        continue
+                    logger.warning(
+                        f"Yahoo cuma punya {len(hist)} candle untuk {ticker} "
+                        f"({interval}) - pakai fallback")
+                    return None
 
-                    # Ticker {SYM}-USD di Yahoo bisa milik aset yang sama
-                    # sekali berbeda dari CoinGecko yang jadi sumber daftar
-                    # pair. Contoh nyata: AERO-USD di Yahoo = "Aerovek
-                    # Aviation" (token mati, harga ~$0.000025, volume 0),
-                    # bukan Aerodrome Finance (~$0.78). Angka seperti ini
-                    # lolos semua validasi harga/RSI karena "valid" —
-                    # satu-satunya penanda adalah volume nol. Tolak supaya
-                    # yang dipakai fallback CoinGecko (id yang benar).
-                    if float(df['Volume'].tail(20).sum()) <= 0:
+                df = hist.copy()
+
+                # Ticker {SYM}-USD di Yahoo bisa milik aset yang sama
+                # sekali berbeda dari CoinGecko yang jadi sumber daftar
+                # pair. Contoh nyata: AERO-USD di Yahoo = "Aerovek
+                # Aviation" (token mati, harga ~$0.000025, volume 0),
+                # bukan Aerodrome Finance (~$0.78). Angka seperti ini
+                # lolos semua validasi harga/RSI karena "valid" —
+                # satu-satunya penanda adalah volume nol. Tolak supaya
+                # yang dipakai fallback CoinGecko (id yang benar).
+                if float(df['Volume'].tail(20).sum()) <= 0:
+                    logger.warning(
+                        f"Yahoo data for {ticker} has zero volume in the "
+                        f"last 20 candles - dead/mismatched asset, rejecting")
+                    return None
+
+                df['MA_FAST'] = df['Close'].rolling(8).mean()
+                df['MA_SLOW'] = df['Close'].rolling(21).mean()
+                df['RSI'] = calculate_rsi(df['Close'])
+
+                macd_data = calculate_macd(df['Close'])
+                df['MACD'] = macd_data['macd']
+                df['MACD_SIGNAL'] = macd_data['signal']
+                df['MACD_HIST'] = macd_data['histogram']
+
+                bb_data = calculate_bollinger_bands(df['Close'])
+                df['BB_UPPER'] = bb_data['upper']
+                df['BB_MIDDLE'] = bb_data['middle']
+                df['BB_LOWER'] = bb_data['lower']
+
+                volume_data = calculate_volume_metrics(df['Volume'])
+                df['VOLUME_MA'] = volume_data['ma']
+                df['VOLUME_RATIO'] = volume_data['ratio']
+
+                vwap_data = calculate_vwap(df['High'], df['Low'], df['Close'], df['Volume'])
+                df['VWAP'] = vwap_data['vwap']
+                df['VWAP_CURRENT'] = vwap_data['current']
+
+                stoch_data = calculate_stochastic(df['High'], df['Low'], df['Close'])
+                df['STOCH_K'] = stoch_data['k']
+                df['STOCH_D'] = stoch_data['d']
+
+                adx_data = calculate_adx(df['High'], df['Low'], df['Close'])
+                df['ADX'] = adx_data['adx']
+                df['PLUS_DI'] = adx_data['plus_di']
+                df['MINUS_DI'] = adx_data['minus_di']
+
+                ichimoku_data = calculate_ichimoku(df['High'], df['Low'], df['Close'])
+                fib_data = calculate_fibonacci_retracement(df['High'], df['Low'])
+
+                # Calculate Support & Resistance
+                try:
+                    sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
+                except Exception as e:
+                    logger.debug(f"S/R calculation failed for {ticker}: {e}")
+                    sr_data = {}
+
+                latest = df.iloc[-1]
+                price = latest['Close']
+
+                if price is None or price <= 0 or price > 1000000:
+                    if attempt < retry - 1:
+                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                        continue
+                    return None
+
+                # Cocokkan harga Yahoo dengan acuan CoinGecko. Namespace
+                # ticker Yahoo ({SYM}-USD) tidak sama dengan CoinGecko,
+                # jadi simbol yang cocok belum tentu aset yang cocok
+                # (JUP-USD di Yahoo = aset lain, bukan Jupiter). Kalau
+                # harga beda jauh, datanya milik aset yang salah - tolak
+                # supaya fallback CoinGecko yang dipakai.
+                ref = self._ensure_price_reference().get(ticker)
+                if ref and ref > 0:
+                    ratio = price / ref
+                    if ratio < (1 / _PRICE_MISMATCH_RATIO) or ratio > _PRICE_MISMATCH_RATIO:
                         logger.warning(
-                            f"Yahoo data for {ticker} has zero volume in the "
-                            f"last 20 candles - dead/mismatched asset, rejecting")
+                            f"Yahoo price for {ticker} ({price:.8f}) differs from "
+                            f"CoinGecko reference ({ref:.8f}) by {ratio:.1f}x - "
+                            f"likely a different asset, rejecting")
                         return None
 
-                    df['MA_FAST'] = df['Close'].rolling(8).mean()
-                    df['MA_SLOW'] = df['Close'].rolling(21).mean()
-                    df['RSI'] = calculate_rsi(df['Close'])
+                rsi = latest['RSI']
+                if rsi is None or rsi <= 0 or rsi > 100 or (rsi != rsi):
+                    if attempt < retry - 1:
+                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                        continue
+                    return None
 
-                    macd_data = calculate_macd(df['Close'])
-                    df['MACD'] = macd_data['macd']
-                    df['MACD_SIGNAL'] = macd_data['signal']
-                    df['MACD_HIST'] = macd_data['histogram']
+                atr_val = df['High'].diff().abs().rolling(14).mean().iloc[-1]
+                if atr_val is None or atr_val <= 0:
+                    atr_val = price * 0.025
 
-                    bb_data = calculate_bollinger_bands(df['Close'])
-                    df['BB_UPPER'] = bb_data['upper']
-                    df['BB_MIDDLE'] = bb_data['middle']
-                    df['BB_LOWER'] = bb_data['lower']
+                if breaker:
+                    breaker.record_success()
 
-                    volume_data = calculate_volume_metrics(df['Volume'])
-                    df['VOLUME_MA'] = volume_data['ma']
-                    df['VOLUME_RATIO'] = volume_data['ratio']
+                result = {
+                    'ticker': ticker,
+                    'name': self.crypto_pairs.get(ticker, ticker),
+                    'price': price,
+                    'change': ((latest['Close'] - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100,
+                    'ma_fast': latest['MA_FAST'],
+                    'ma_slow': latest['MA_SLOW'],
+                    'rsi': rsi,
+                    'volume': latest['Volume'],
+                    'atr': atr_val,
+                    'candles': len(df),
+                    'macd': latest['MACD'],
+                    'macd_signal': latest['MACD_SIGNAL'],
+                    'macd_hist': latest['MACD_HIST'],
+                    'bb_upper': latest['BB_UPPER'],
+                    'bb_middle': latest['BB_MIDDLE'],
+                    'bb_lower': latest['BB_LOWER'],
+                    'volume_ma': latest['VOLUME_MA'],
+                    'volume_ratio': latest['VOLUME_RATIO'],
+                    'vwap': vwap_data['current'],
+                    'vwap_above': vwap_data['above'],
+                    'stoch_k': stoch_data['k_current'],
+                    'stoch_d': stoch_data['d_current'],
+                    'stoch_oversold': stoch_data['oversold'],
+                    'stoch_overbought': stoch_data['overbought'],
+                    'stoch_bullish_cross': stoch_data['bullish_cross'],
+                    'adx': adx_data['adx_current'],
+                    'plus_di': adx_data['plus_di_current'],
+                    'minus_di': adx_data['minus_di_current'],
+                    'adx_strong': adx_data['strong_trend'],
+                    'ichi_bullish': ichimoku_data['bullish_cloud'],
+                    'ichi_bearish': ichimoku_data['bearish_cloud'],
+                    'ichi_cloud_above': ichimoku_data['cloud_above'],
+                    'ichi_tenkan': ichimoku_data['tenkan_current'],
+                    'ichi_kijun': ichimoku_data['kijun_current'],
+                    'fib_levels': fib_data['levels'],
+                    'raw_df': df,  # For pattern detection
+                    # Support & Resistance
+                    'sr': sr_data or {},
+                    'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
+                    'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
+                }
 
-                    vwap_data = calculate_vwap(df['High'], df['Low'], df['Close'], df['Volume'])
-                    df['VWAP'] = vwap_data['vwap']
-                    df['VWAP_CURRENT'] = vwap_data['current']
+                if use_cache:
+                    self.cache.set(cache_key, result, ttl=60)
 
-                    stoch_data = calculate_stochastic(df['High'], df['Low'], df['Close'])
-                    df['STOCH_K'] = stoch_data['k']
-                    df['STOCH_D'] = stoch_data['d']
-
-                    adx_data = calculate_adx(df['High'], df['Low'], df['Close'])
-                    df['ADX'] = adx_data['adx']
-                    df['PLUS_DI'] = adx_data['plus_di']
-                    df['MINUS_DI'] = adx_data['minus_di']
-
-                    ichimoku_data = calculate_ichimoku(df['High'], df['Low'], df['Close'])
-                    fib_data = calculate_fibonacci_retracement(df['High'], df['Low'])
-
-                    # Calculate Support & Resistance
-                    try:
-                        sr_data = calculate_sr_levels(df['High'], df['Low'], df['Close'], df['Volume'])
-                    except Exception as e:
-                        logger.debug(f"S/R calculation failed for {ticker}: {e}")
-                        sr_data = {}
-
-                    latest = df.iloc[-1]
-                    price = latest['Close']
-
-                    if price is None or price <= 0 or price > 1000000:
-                        if attempt < retry - 1:
-                            time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                            continue
-                        return None
-
-                    # Cocokkan harga Yahoo dengan acuan CoinGecko. Namespace
-                    # ticker Yahoo ({SYM}-USD) tidak sama dengan CoinGecko,
-                    # jadi simbol yang cocok belum tentu aset yang cocok
-                    # (JUP-USD di Yahoo = aset lain, bukan Jupiter). Kalau
-                    # harga beda jauh, datanya milik aset yang salah - tolak
-                    # supaya fallback CoinGecko yang dipakai.
-                    ref = self._ensure_price_reference().get(ticker)
-                    if ref and ref > 0:
-                        ratio = price / ref
-                        if ratio < (1 / _PRICE_MISMATCH_RATIO) or ratio > _PRICE_MISMATCH_RATIO:
-                            logger.warning(
-                                f"Yahoo price for {ticker} ({price:.8f}) differs from "
-                                f"CoinGecko reference ({ref:.8f}) by {ratio:.1f}x - "
-                                f"likely a different asset, rejecting")
-                            return None
-
-                    rsi = latest['RSI']
-                    if rsi is None or rsi <= 0 or rsi > 100 or (rsi != rsi):
-                        if attempt < retry - 1:
-                            time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                            continue
-                        return None
-
-                    atr_val = df['High'].diff().abs().rolling(14).mean().iloc[-1]
-                    if atr_val is None or atr_val <= 0:
-                        atr_val = price * 0.025
-
-                    if breaker:
-                        breaker.record_success()
-
-                    result = {
-                        'ticker': ticker,
-                        'name': self.crypto_pairs.get(ticker, ticker),
-                        'price': price,
-                        'change': ((latest['Close'] - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100,
-                        'ma_fast': latest['MA_FAST'],
-                        'ma_slow': latest['MA_SLOW'],
-                        'rsi': rsi,
-                        'volume': latest['Volume'],
-                        'atr': atr_val,
-                        'candles': len(df),
-                        'macd': latest['MACD'],
-                        'macd_signal': latest['MACD_SIGNAL'],
-                        'macd_hist': latest['MACD_HIST'],
-                        'bb_upper': latest['BB_UPPER'],
-                        'bb_middle': latest['BB_MIDDLE'],
-                        'bb_lower': latest['BB_LOWER'],
-                        'volume_ma': latest['VOLUME_MA'],
-                        'volume_ratio': latest['VOLUME_RATIO'],
-                        'vwap': vwap_data['current'],
-                        'vwap_above': vwap_data['above'],
-                        'stoch_k': stoch_data['k_current'],
-                        'stoch_d': stoch_data['d_current'],
-                        'stoch_oversold': stoch_data['oversold'],
-                        'stoch_overbought': stoch_data['overbought'],
-                        'stoch_bullish_cross': stoch_data['bullish_cross'],
-                        'adx': adx_data['adx_current'],
-                        'plus_di': adx_data['plus_di_current'],
-                        'minus_di': adx_data['minus_di_current'],
-                        'adx_strong': adx_data['strong_trend'],
-                        'ichi_bullish': ichimoku_data['bullish_cloud'],
-                        'ichi_bearish': ichimoku_data['bearish_cloud'],
-                        'ichi_cloud_above': ichimoku_data['cloud_above'],
-                        'ichi_tenkan': ichimoku_data['tenkan_current'],
-                        'ichi_kijun': ichimoku_data['kijun_current'],
-                        'fib_levels': fib_data['levels'],
-                        'raw_df': df,  # For pattern detection
-                        # Support & Resistance
-                        'sr': sr_data or {},
-                        'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
-                        'resistance': sr_data.get('nearest_resistance', {}).get('level') if sr_data and sr_data.get('nearest_resistance') else None,
-                    }
-
-                    if use_cache:
-                        self.cache.set(cache_key, result, ttl=60)
-
-                    return result
-                finally:
-                    yf_logger.removeFilter(drop_filter)
+                return result
 
             except Exception as e:
                 logger.warning(f"Yahoo attempt {attempt+1} failed for {ticker}: {e}")

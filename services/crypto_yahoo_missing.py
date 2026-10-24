@@ -42,7 +42,10 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 # besar Yahoo yang bermasalah (format respons berubah), bukan puluhan ticker
 # yang hilang. Kalau dibiarkan, semua ticker ditandai dan jalur Yahoo mati
 # selama berjam-jam. Jadi setelah ambang ini penandaan dihentikan.
-MAX_MARKS_PER_HOUR = 15
+# Tick yang memang hilang saja yang dicatat (hanya kalau Yahoo sendiri yang
+# bilang "symbol may be delisted"), dan dalam satu jam bisa ada puluhan
+# ticker crypto yang memang tidak ada di Yahoo - jadi ambangnya longgar.
+MAX_MARKS_PER_HOUR = 60
 
 _lock = threading.Lock()
 _entries: Dict[str, dict] = {}

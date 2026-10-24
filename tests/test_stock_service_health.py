@@ -60,22 +60,22 @@ class TestDropNoPriceDataFilter:
 
     def test_drops_no_price_data(self):
         """Log 'no price data found' dibuang."""
-        from services.stock_service import _DropNoPriceData
+        from utils.log_filters import DropNoPriceData
         rec = self._record('$BIKE.JK: possibly delisted; no price data found  (period=3d)')
-        assert _DropNoPriceData().filter(rec) is False
+        assert DropNoPriceData().filter(rec) is False
 
     def test_keeps_other_yfinance_errors(self):
         """Error lain dari yfinance tetap diteruskan."""
-        from services.stock_service import _DropNoPriceData
+        from utils.log_filters import DropNoPriceData
         rec = self._record('Too Many Requests. Rate limited. Try after a while.')
-        assert _DropNoPriceData().filter(rec) is True
+        assert DropNoPriceData().filter(rec) is True
 
     def test_drops_message_at_any_level(self):
         """Filter berlaku pada pesannya, bukan pada level log."""
-        from services.stock_service import _DropNoPriceData
+        from utils.log_filters import DropNoPriceData
         rec = self._record('$BBCA.JK: no price data found')
         rec.levelno = logging.INFO
-        assert _DropNoPriceData().filter(rec) is False
+        assert DropNoPriceData().filter(rec) is False
 
 
 class TestFetchState:

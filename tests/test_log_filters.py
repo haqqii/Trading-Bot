@@ -108,12 +108,67 @@ class TestInstallProviderFilters:
 class TestStockServiceUsesSharedFilter:
     """stock_service harus pakai filter yang sama."""
 
-    def test_stock_service_filter_is_shared(self):
-        from services.stock_service import _DropNoPriceData
-        from utils.log_filters import DropNoPriceData
-        assert issubclass(_DropNoPriceData, DropNoPriceData)
+    def test_stock_service_uses_shared_filter(self):
+        """stock_service tidak punya filter sendiri lagi.
 
-    def test_stock_service_filter_drops_no_data(self):
-        from services.stock_service import _DropNoPriceData
+        Filter dipasang di startup (utils/log_filters.py) untuk semua jalur
+        yang pakai yfinance - saham, crypto, chart.
+        """
+        import services.stock_service as ss
+        assert hasattr(ss, 'install_provider_filters')
+
+    def test_no_data_message_is_dropped_for_stock_path(self):
+        """Pesan 'tidak ada datanya' tetap dibuang di jalur saham."""
+        from utils.log_filters import DropNoPriceData
         rec = make_record('$HYPE-USD: No data found, symbol may be delisted')
-        assert _DropNoPriceData().filter(rec) is False
+        assert DropNoPriceData().filter(rec) is False
+
+
+class TestNoDataReported:
+    """Pencatatan pesan 'ticker ini tidak ada di Yahoo'.
+
+    Crypto service butuh ini untuk bedakan:
+      - ticker memang tidak ada di Yahoo -> boleh dicatat, dilewati nanti
+      - request yang gagal (timeout, rate limit) -> bukan ticker hilang
+    """
+
+    def _emit(self, message):
+        """Pemicu pesan error dari logger yfinance."""
+        from utils.log_filters import install_provider_filters
+        install_provider_filters()
+        logging.getLogger('yfinance').error(message)
+
+    def test_explicit_absence_is_reported(self):
+        """Yahoo bilang 'symbol may be delisted' -> dilaporkan."""
+        import time
+        from utils.log_filters import no_data_reported
+        since = time.time()
+        self._emit('$SUI-USD: No data found, symbol may be delisted')
+        assert no_data_reported('SUI-USD', since) is True
+
+    def test_generic_no_price_data_is_not_reported(self):
+        """'no price data found' generik belum tentu ticker hilang.
+
+        Pesan yang sama muncul kalau request-nya gagal (timeout, koneksi
+        putus) - itu bukan bukti ticker hilang, jadi tidak boleh dilaporkan.
+        """
+        import time
+        from utils.log_filters import no_data_reported
+        since = time.time()
+        self._emit('$SUI-USD: possibly delisted; no price data found  (period=1mo)')
+        assert no_data_reported('SUI-USD', since) is False
+
+    def test_other_ticker_not_counted(self):
+        """Laporan ticker lain tidak boleh ikut dihitung."""
+        import time
+        from utils.log_filters import no_data_reported
+        since = time.time()
+        self._emit('$PEPE-USD: No data found, symbol may be delisted')
+        assert no_data_reported('SUI-USD', since) is False
+
+    def test_message_before_window_ignored(self):
+        """Pesan lama tidak boleh dihitung untuk request baru."""
+        import time
+        from utils.log_filters import no_data_reported
+        self._emit('$SUI-USD: No data found, symbol may be delisted')
+        assert no_data_reported('SUI-USD', time.time() + 60) is False
