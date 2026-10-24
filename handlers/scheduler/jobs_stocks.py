@@ -466,6 +466,7 @@ async def check_stock_signals(app):
                             db.save_active_signal(
                                 key=key,
                                 ticker=ticker,
+                                name=name,
                                 asset_type='stock',
                                 signal_type=signal_type,
                                 price=s['entry'],

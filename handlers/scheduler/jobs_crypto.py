@@ -280,6 +280,7 @@ async def check_crypto_signals(app):
                             db.save_active_signal(
                                 key=key,
                                 ticker=ticker,
+                                name=name,
                                 asset_type='crypto',
                                 signal_type=signal_type,
                                 price=s['entry'],

@@ -584,11 +584,16 @@ class Database:
                            signal_type: str, price: float, tp1: float,
                            tp2: float, tp3: float, sl: float,
                            score: float, quality: str, reason: str,
-                           extra_data: Dict | None = None) -> bool:
+                           extra_data: Dict | None = None,
+                           name: str = '') -> bool:
         """Save or update an active signal for TP/SL tracking.
 
         Persists the signal to DB so it survives bot restarts.
         Uses INSERT OR REPLACE to handle updates.
+
+        ``name`` disimpan terpisah supaya sinyal yang dipulihkan setelah
+        restart masih menampilkan nama aset (mis. "Aerodrome Finance"), bukan
+        cuma ticker-nya.
         """
         self.initialize()
         import json
@@ -597,13 +602,13 @@ class Database:
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO signals
-                (key, ticker, asset_type, signal_type, price,
+                (key, ticker, name, asset_type, signal_type, price,
                  target_price, tp1, tp2, tp3, stop_loss,
                  score, quality, reason, extra_data, outcome,
                  tp1_hit_at, tp2_hit_at, tp3_hit_at, sl_hit_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open',
                         NULL, NULL, NULL, NULL)
-            """, (key, ticker, asset_type, signal_type, price,
+            """, (key, ticker, name, asset_type, signal_type, price,
                   tp3, tp1, tp2, tp3, sl,
                   score, quality, reason, extra_json))
             return True

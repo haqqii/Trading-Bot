@@ -253,6 +253,51 @@ class TestPortfolioOperations:
 class TestSignalOperations:
     """Tests for signal CRUD."""
 
+    def test_active_signal_persists_name(self, temp_db):
+        """Kolom name harus tersimpan, bukan cuma di extra_data.
+
+        Sinyal yang dipulihkan setelah restart membaca kolom name. Kalau
+        kolomnya kosong, notifikasi TP/SL menampilkan ticker ("AERO-USD")
+       instead of nama aset ("Aerodrome Finance").
+        """
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_AERO-USD_123',
+            ticker='AERO-USD',
+            asset_type='crypto',
+            signal_type='BUY',
+            price=0.72,
+            tp1=0.75, tp2=0.78, tp3=0.81,
+            sl=0.69,
+            score=70.0,
+            quality='STRONG',
+            reason='RSI oversold',
+            extra_data={'user_id': '123'},
+            name='Aerodrome Finance',
+        )
+        stored = db.get_signal('CRYPTO_AERO-USD_123')
+        assert stored['name'] == 'Aerodrome Finance'
+
+    def test_active_signal_name_restored_after_reload(self, temp_db):
+        """load_active_signals harus mengembalikan nama yang tersimpan."""
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_JUP-USD_123',
+            ticker='JUP-USD',
+            asset_type='crypto',
+            signal_type='BUY',
+            price=0.30,
+            tp1=0.32, tp2=0.34, tp3=0.36,
+            sl=0.29,
+            score=70.0,
+            quality='STRONG',
+            reason='MACD cross',
+            extra_data={'user_id': '123'},
+            name='Jupiter',
+        )
+        restored = db.load_active_signals()
+        assert restored['CRYPTO_JUP-USD_123']['name'] == 'Jupiter'
+
     def test_save_signal_new(self, temp_db):
         """Should save new signal."""
         db, _ = temp_db
