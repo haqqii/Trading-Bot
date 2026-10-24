@@ -313,7 +313,8 @@ class CryptoService:
                         # menebak lagi - datanya tetap dari CoinGecko.
                         crypto_yahoo_missing.mark_missing(
                             ticker, interval,
-                            reason=f'Yahoo tidak punya data untuk {ticker}')
+                            reason=f'Yahoo tidak punya data untuk {ticker}',
+                            universe_size=len(self.crypto_pairs))
                         logger.warning(
                             f"Yahoo tidak punya data untuk {ticker} ({interval}) "
                             f"- pakai fallback CoinGecko")
@@ -649,7 +650,7 @@ class CryptoService:
                     logger.warning(f"CoinGecko error for {ticker}: {e}, retry {attempt + 1}/{retry}")
                     time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
                     continue
-                logger.error(f"CoinGecko failed for {ticker} after {retry} attempts: {e}")
+                logger.error(f"CoinGecko failed for {ticker} after {retry} attempts: {type(e).__name__}: {e}")
                 return None
 
         return None

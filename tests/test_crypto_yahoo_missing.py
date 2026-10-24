@@ -105,6 +105,75 @@ class TestBulkGuard:
         assert registry.is_missing('COIN999-USD', '15m') is False
 
 
+class TestBulkGuardRelative:
+    """Ambang harus relatif terhadap jumlah pair yang dipantau.
+
+    Angka Yahoo tidak lengkap untuk crypto: dari 250 pair yang dipantau,
+    dozens benar-benar tidak ada di Yahoo (stablecoin, token obscure).
+    Ambang absolut yang kecil bikin guard salah menyala saat kondisinya
+    normal - itu yang memunculkan alert "60+ ticker hilang dari Yahoo".
+    """
+
+    def test_limit_scales_with_universe(self, registry):
+        """Universe besar = ambang ikut besar."""
+        limit = max(registry.MAX_MARKS_PER_HOUR,
+                    int(250 * registry.BULK_RATIO))
+        for i in range(limit):
+            assert registry.mark_missing(f'COIN{i}-USD', '15m',
+                                         universe_size=250) is True
+        assert registry.mark_missing('COIN999-USD', '15m',
+                                     universe_size=250) is False
+
+    def test_small_universe_keeps_absolute_floor(self, registry):
+        """Universe kecil tetap pakai lantai absolut."""
+        for i in range(registry.MAX_MARKS_PER_HOUR):
+            assert registry.mark_missing(f'COIN{i}-USD', '15m',
+                                         universe_size=10) is True
+        assert registry.mark_missing('COIN999-USD', '15m',
+                                     universe_size=10) is False
+
+    def test_normal_absence_does_not_trip_guard(self, registry):
+        """~70 ticker yang memang tidak ada di Yahoo bukan kondisi abnormal."""
+        for i in range(70):
+            assert registry.mark_missing(f'COIN{i}-USD', '4h',
+                                         universe_size=250) is True
+
+
+class TestBulkWarningLevel:
+    """Kondisi provider bukan bug bot, jadi tidak boleh jadi alert admin."""
+
+    @staticmethod
+    def _trip_guard(registry, extra=0):
+        """Isi registry sampai ambang relatif, lalu lewati ambang."""
+        limit = max(registry.MAX_MARKS_PER_HOUR, int(250 * registry.BULK_RATIO))
+        for i in range(limit):
+            registry.mark_missing(f'COIN{i}-USD', '15m', universe_size=250)
+        for i in range(limit, limit + extra):
+            registry.mark_missing(f'COIN{i}-USD', '15m', universe_size=250)
+
+    def test_bulk_message_is_warning_not_error(self, registry, caplog):
+        """Pesan 'ticker sekaligus hilang' dicatat sebagai WARNING."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
+            self._trip_guard(registry, extra=1)
+
+        bulk = [r for r in caplog.records
+                if 'sekaligus hilang dari Yahoo' in r.getMessage()]
+        assert bulk, "pesan bulk harus tetap tercatat"
+        assert bulk[0].levelno == logging.WARNING
+        assert bulk[0].levelno < logging.ERROR
+
+    def test_bulk_message_not_repeated_within_hour(self, registry, caplog):
+        """Pesan bulk tidak diulang tiap menit dalam satu jam."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger=registry.logger.name):
+            self._trip_guard(registry, extra=5)
+
+        bulk = [r for r in caplog.records
+                if 'sekaligus hilang dari Yahoo' in r.getMessage()]
+        assert len(bulk) == 1
+
+
 class TestPersistence:
     """Status harus bertahan antar restart."""
 

@@ -41,15 +41,24 @@ class TestBulkGuard:
         assert registry.mark_unavailable('LEBIH') is False
         assert registry.is_unavailable('LEBIH') is False
 
-    def test_bulk_event_is_reported_as_error(self, registry, caplog):
-        """Kejadiannya dilaporkan sebagai error, bukan Info."""
+    def test_bulk_event_is_reported_as_warning(self, registry, caplog):
+        """Kejadiannya dilaporkan sebagai WARNING, bukan ERROR.
+
+        Ini kondisi sumber data yang bermasalah, bukan bug bot. Kalau
+        di-log sebagai ERROR, handler alert admin (level ERROR) akan
+        mengirimnya ke chat admin padahal tidak ada yang bisa diperbaiki
+        dari sisi bot.
+        """
+        import logging
         for i in range(registry.MAX_MARKS_PER_HOUR):
             registry.mark_unavailable(f'T{i}')
-        with caplog.at_level('ERROR'):
+        with caplog.at_level(logging.DEBUG):
             registry.mark_unavailable('LEBIH')
+        warnings = [r for r in caplog.records if r.levelname == 'WARNING']
+        assert len(warnings) == 1
+        assert 'sumber data' in warnings[0].getMessage()
         errors = [r for r in caplog.records if r.levelname == 'ERROR']
-        assert len(errors) == 1
-        assert 'sumber data' in errors[0].getMessage()
+        assert not errors, "bulk event tidak boleh jadi ERROR"
 
     def test_guard_resets_after_an_hour(self, registry):
         """Setelah satu jam, penandaan boleh lagi."""
@@ -63,11 +72,12 @@ class TestBulkGuard:
 
     def test_bulk_warning_not_repeated_every_call(self, registry, caplog):
         """Peringatan tidak diulang tiap pemanggilan."""
+        import logging
         for i in range(registry.MAX_MARKS_PER_HOUR):
             registry.mark_unavailable(f'T{i}')
-        with caplog.at_level('ERROR'):
+        with caplog.at_level(logging.DEBUG):
             registry.mark_unavailable('A')
             registry.mark_unavailable('B')
             registry.mark_unavailable('C')
-        errors = [r for r in caplog.records if r.levelname == 'ERROR']
-        assert len(errors) == 1
+        warnings = [r for r in caplog.records if r.levelname == 'WARNING']
+        assert len(warnings) == 1

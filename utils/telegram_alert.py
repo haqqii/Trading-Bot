@@ -86,6 +86,52 @@ _NO_DATA_MARKERS = (
     "quote not found for symbol",
 )
 
+# Service kita yang bicara dengan provider data (Yahoo, CoinGecko,
+# TradingView, Finnhub). Kegagalan provider di service-service ini
+# dicatat sebagai ERROR, tapi yang rusak adalah providernya - bot sudah
+# punya fallback (tandai ticker, lewati, atau ambil dari sumber lain).
+# Jadi tidak perlu alert ke admin; cukup di error.log.
+_PROVIDER_SERVICE_LOGGERS = frozenset({
+    "crypto_service",
+    "stock_service",
+    "chart_service",
+    "crypto_yahoo_missing",
+    "ticker_health",
+})
+
+# Pola pesan yang menandakan kegagalan provider.
+_PROVIDER_FAILURE_MARKERS = (
+    "failed for",
+    "error for",
+    "error getting stock data",
+    "fetch timeout",
+    "fetch exception",
+    "fetch error",
+    "sekaligus hilang dari yahoo",
+    "sekaligus tidak punya data harga",
+)
+
+# Nama exception Python = bug di kode kita, bukan masalah provider.
+# Kalau muncul, tetap dikirimi alert.
+_CODE_BUG_EXCEPTIONS = (
+    "typeerror",
+    "attributeerror",
+    "keyerror",
+    "valueerror",
+    "nameerror",
+    "indexerror",
+    "zerodivisionerror",
+    "assertionerror",
+    "unboundlocalerror",
+    "importerror",
+    "modulenotfounderror",
+    "syntaxerror",
+    "recursionerror",
+    "memoryerror",
+    "stopiteration",
+    "referenceerror",
+)
+
 
 def _is_third_party(record: logging.LogRecord) -> bool:
     """True kalau record ini datang dari library pihak ketiga.
@@ -94,6 +140,26 @@ def _is_third_party(record: logging.LogRecord) -> bool:
     ('trading.yfinance'), jadi dicocokkan ke setiap bagiannya.
     """
     return any(part in _THIRD_PARTY_LOGGERS for part in record.name.split('.'))
+
+
+def _is_provider_failure(record: logging.LogRecord, text: str) -> bool:
+    """True kalau error ini adalah kegagalan provider data, bukan bug bot.
+
+    Service-service yang talked ke Yahoo/CoinGecko/TradingView/Finnhub
+    me-log kegagalan provider sebagai ERROR. Yang rusak adalah providernya
+    - bot sudah punya jalur lain (tandai ticker, lewati, fallback ke sumber
+    lain), jadi tidak ada yang bisa diperbaiki dari sisi bot dan tidak
+    perlu alert ke admin. Tetap masuk error.log.
+
+    Kalau pesannya mengandung nama exception Python, itu berarti ada bug
+    di kode kita (misal NoneType tidak punya atribut), jadi tetap alert.
+    """
+    if not any(part in _PROVIDER_SERVICE_LOGGERS for part in record.name.split('.')):
+        return False
+    if not any(marker in text for marker in _PROVIDER_FAILURE_MARKERS):
+        return False
+    # Ada exception Python di dalamnya = bug kode, bukan masalah provider.
+    return not any(exc in text for exc in _CODE_BUG_EXCEPTIONS)
 
 
 def _is_noise(record: logging.LogRecord) -> bool:
@@ -144,6 +210,12 @@ def _is_noise(record: logging.LogRecord) -> bool:
     # Error transport yang tertulis sebagai teks di dalam pesan log (tanpa
     # exc_info). Tetap masuk error.log, tapi tidak dikirimi alert.
     if any(marker in text for marker in _TRANSPORT_NOISE_MARKERS):
+        return True
+
+    # Kegagalan provider data (Yahoo, CoinGecko, TradingView, Finnhub)
+    # yang dilaporkan service kita sendiri. Bukan bug bot - bot sudah punya
+    # fallback. Tetap masuk error.log, tapi tidak dikirimi alert.
+    if _is_provider_failure(record, text):
         return True
 
     return False

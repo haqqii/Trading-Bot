@@ -199,7 +199,7 @@ class ChartService:
             return buf
 
         except Exception as e:
-            logger.error(f"Chart error for {ticker}: {e}")
+            logger.error(f"Chart error for {ticker}: {type(e).__name__}: {e}")
             try:
                 plt.close()
             except Exception as cleanup_err:

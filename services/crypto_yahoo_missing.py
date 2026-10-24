@@ -47,6 +47,12 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 # ticker crypto yang memang tidak ada di Yahoo - jadi ambangnya longgar.
 MAX_MARKS_PER_HOUR = 60
 
+# Pengaman yang lebih akurat: kalau lebih dari setengah pair yang dipantau
+# sekaligus hilang, itu baru masuk akal sebagai masalah Yahoo. Banyak ticker
+# crypto yang memang tidak ada di Yahoo (stablecoin, token obscure), jadi
+# jumlah yang "normal" itu besar - angka absolut tidak bisa dipakai.
+BULK_RATIO = 0.5
+
 _lock = threading.Lock()
 _entries: Dict[str, dict] = {}
 _loaded = False
@@ -120,13 +126,18 @@ def _marks_in_last_hour(now: float) -> int:
 
 
 def mark_missing(ticker: str, interval: str = '15m', reason: str = '',
-                 ttl: int = DEFAULT_TTL_SECONDS) -> bool:
+                 ttl: int = DEFAULT_TTL_SECONDS,
+                 universe_size: int = 0) -> bool:
     """Tandai ticker crypto sebagai tidak punya data di Yahoo.
 
     Dipanggil hanya kalau Yahoo memang tidak punya candle untuk ticker itu
     (respons 404 / data kosong), bukan kalau jaringannya yang putus. Kalau
     jaringan putus, semua ticker akan ditandai dan jalur Yahoo mati
     berbulan-bulan.
+
+    universe_size: jumlah pair crypto yang dipantau bot. Dipakai untuk
+    menentukan ambang "Yahoo bermasalah" (lihat BULK_RATIO) - tanpa ini
+    ambangnya terlalu kecil untuk daftar pair yang besar.
 
     Returns True kalau ticker ditandai.
     """
@@ -142,16 +153,23 @@ def mark_missing(ticker: str, interval: str = '15m', reason: str = '',
             return True  # Sudah lebih lama, jangan pendekkan.
 
         now = time.time()
-        if _marks_in_last_hour(now) >= MAX_MARKS_PER_HOUR:
+        limit = MAX_MARKS_PER_HOUR
+        if universe_size > 0:
+            limit = max(limit, int(universe_size * BULK_RATIO))
+        if _marks_in_last_hour(now) >= limit:
             # Terlalu banyak sekaligus: kemungkinan besar Yahoo yang
             # bermasalah, bukan ticker-nya. Yang ditandai tidak ditambah,
             # supaya jalur Yahoo tetap dicoba.
+            #
+            # Level WARNING, bukan ERROR: ini kondisi provider, bukan bug
+            # bot - tidak ada yang bisa diperbaiki dari sisi bot, jadi
+            # tidak perlu jadi alert ke admin.
             if now - _warned_bulk_at > 3600:
                 _warned_bulk_at = now
-                logger.error(
-                    f"{MAX_MARKS_PER_HOUR}+ ticker crypto sekaligus hilang dari "
-                    f"Yahoo (terakhir: {key}). Kemungkinan masalah Yahoo, "
-                    f"bukan ticker-nya. Penandaan dihentikan sementara supaya "
+                logger.warning(
+                    f"{limit}+ ticker crypto sekaligus hilang dari Yahoo "
+                    f"(terakhir: {key}). Kemungkinan masalah Yahoo, bukan "
+                    f"ticker-nya. Penandaan dihentikan sementara supaya "
                     f"jalur Yahoo tetap dicoba.")
             return False
 

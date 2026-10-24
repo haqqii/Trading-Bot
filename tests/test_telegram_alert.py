@@ -195,3 +195,78 @@ class TestThirdPartyLoggers:
             name='trading.handlers.scheduler.jobs_crypto',
         )
         assert _is_noise(rec) is False
+
+
+class TestProviderServiceFailures:
+    """Kegagalan provider yang dilaporkan service kita sendiri.
+
+    Service yang bicara dengan Yahoo/CoinGecko/TradingView/Finnhub me-log
+    kegagalan provider sebagai ERROR. Yang rusak adalah providernya -
+    bot sudah punya fallback (tandai ticker, lewati, ambil dari sumber
+    lain), jadi tidak ada yang bisa diperbaiki dari sisi bot dan tidak
+    perlu alert ke admin. Tetap masuk error.log.
+    """
+
+    def test_coingecko_failure_in_crypto_service_is_noise(self):
+        """CoinGecko gagal setelah semua percobaan = noise."""
+        rec = make_record(
+            'CoinGecko failed for BTC-USD after 3 attempts: HTTP 429 rate limit',
+            name='trading.services.crypto_service',
+        )
+        assert _is_noise(rec) is True
+
+    def test_yahoo_failure_in_stock_service_is_noise(self):
+        """Yahoo gagal ambil data saham = noise."""
+        rec = make_record(
+            'Yahoo v8 error for BBCA.JK: HTTP 502 Bad Gateway',
+            name='trading.services.stock_service',
+        )
+        assert _is_noise(rec) is True
+
+    def test_chart_service_failure_is_noise(self):
+        """Kegagalan ambil chart = noise."""
+        rec = make_record(
+            'Chart error for BBCA.JK: failed to get candles',
+            name='trading.services.chart_service',
+        )
+        assert _is_noise(rec) is True
+
+    def test_provider_failure_with_code_bug_is_reported(self):
+        """Kalau ada exception Python di dalamnya, itu bug kode kita.
+
+        Nama exception tetap harus dikirimi alert, walau pesannya juga
+        cocok dengan pola kegagalan provider.
+        """
+        rec = make_record(
+            "CoinGecko failed for BTC-USD after 3 attempts: "
+            "'NoneType' object has no attribute 'get'",
+            TypeError("'NoneType' object has no attribute 'get'"),
+        )
+        assert _is_noise(rec) is False
+
+    def test_provider_failure_in_other_module_is_reported(self):
+        """Service lain yang bukan jembatan provider tetap dilaporkan."""
+        rec = make_record(
+            'CoinGecko failed for BTC-USD after 3 attempts: boom',
+            name='trading.handlers.scheduler.jobs_crypto',
+        )
+        assert _is_noise(rec) is False
+
+    def test_bulk_yahoo_missing_message_is_not_an_alert(self):
+        """Pesan 'ticker sekaligus hilang dari Yahoo' bukan bug bot.
+
+        Dulu di-log sebagai ERROR, jadi naik jadi alert padahal isinya
+        cuma kondisi provider yang tidak bisa diperbaiki dari sisi bot.
+        """
+        from utils.telegram_alert import TelegramLogHandler
+        import logging
+        assert TelegramLogHandler.__init__ is not None
+        rec = make_record(
+            '125+ ticker crypto sekaligus hilang dari Yahoo '
+            '(terakhir: SENT-USD@4h). Kemungkinan masalah Yahoo.',
+            name='trading.services.crypto_yahoo_missing',
+        )
+        # Level WARNING sudah tidak sampai ke handler (level ERROR),
+        # tapi kalau sampai, tetap bukan alert.
+        assert rec.levelno == logging.ERROR
+        assert _is_noise(rec) is True

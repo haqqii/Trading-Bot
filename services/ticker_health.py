@@ -147,9 +147,13 @@ def mark_unavailable(ticker: str, reason: str = '',
             # Terlalu banyak sekaligus: kemungkinan besar sumber datanya
             # yang bermasalah, bukan tickernya. Bot harus tetap mencoba
             # semua ticker, jadi yang ditandai tidak ditambah.
+            #
+            # Level WARNING, bukan ERROR: ini kondisi provider, bukan bug
+            # bot - tidak ada yang bisa diperbaiki dari sisi bot, jadi
+            # tidak perlu jadi alert ke admin.
             if now - _warned_bulk_at > 3600:
                 _warned_bulk_at = now
-                logger.error(
+                logger.warning(
                     f"{MAX_MARKS_PER_HOUR}+ ticker sekaligus tidak punya data "
                     f"harga (terakhir: {key}). Kemungkinan masalah sumber data, "
                     f"bukan ticker mati. Penandaan dihentikan sementara supaya "

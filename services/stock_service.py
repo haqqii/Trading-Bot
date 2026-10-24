@@ -207,7 +207,7 @@ class StockService:
             except Exception as e:
                 if breaker:
                     breaker.record_failure()
-                logger.error(f"Error getting stock data for {ticker}: {e}")
+                logger.error(f"Error getting stock data for {ticker}: {type(e).__name__}: {e}")
                 if attempt < retry - 1:
                     time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
                     continue
@@ -291,7 +291,7 @@ class StockService:
             except Exception as e:
                 if breaker:
                     breaker.record_failure()
-                logger.error(f"TradingView error for {ticker}: {e}")
+                logger.error(f"TradingView error for {ticker}: {type(e).__name__}: {e}")
                 if attempt < retry - 1:
                     time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=10))
                     continue
@@ -433,7 +433,7 @@ class StockService:
             }
 
         except Exception as e:
-            logger.error(f"Yahoo v8 error for {ticker}: {e}")
+            logger.error(f"Yahoo v8 error for {ticker}: {type(e).__name__}: {e}")
             return None
 
     def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d') -> StockDataResult:
@@ -606,7 +606,7 @@ class StockService:
                     }
 
             except Exception as e:
-                logger.error(f"Finnhub error for {ticker}: {e}")
+                logger.error(f"Finnhub error for {ticker}: {type(e).__name__}: {e}")
                 if attempt < retry - 1:
                     time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=10))
                     continue
