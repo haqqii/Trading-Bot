@@ -31,6 +31,30 @@ _BENIGN_BAD_REQUEST = (
     "message identifier is not specified",
 )
 
+# Error transport yang muncul sebagai TEKS di dalam pesan log, bukan sebagai
+# exception PTB. Filter berbasis tipe (exc_info) tidak bisa menangkapnya:
+# service me-log error Yahoo/CoinGecko/TradingView dengan f-string tanpa
+# exc_info, jadi record.exc_info kosong dan tipenya tidak pernah dicek.
+# Contoh: "Yahoo v8 error for RDTX.JK: HTTPSConnectionPool(...): Read timed out."
+_TRANSPORT_NOISE_MARKERS = (
+    "timed out",
+    "timeout",
+    "connection aborted",
+    "connection refused",
+    "connection reset",
+    "connection error",
+    "failed to establish a new connection",
+    "max retries exceeded",
+    "newconnectionerror",
+    "protocolerror",
+    "sslerror",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "remote end closed connection",
+    "incomplete read",
+    "event loop is closed",
+)
+
 
 def _is_noise(record: logging.LogRecord) -> bool:
     """True kalau error ini tidak perlu dikirim ke admin.
@@ -70,6 +94,11 @@ def _is_noise(record: logging.LogRecord) -> bool:
     # Masalah transport: jaringan, timeout, atau event loop closed. Alert-nya
     # dikirim lewat jalur yang sama, jadi tidak akan menolong.
     if exc_type is not None and issubclass(exc_type, NetworkError):
+        return True
+
+    # Error transport yang tertulis sebagai teks di dalam pesan log (tanpa
+    # exc_info). Tetap masuk error.log, tapi tidak dikirimi alert.
+    if any(marker in text for marker in _TRANSPORT_NOISE_MARKERS):
         return True
 
     return False
