@@ -26,6 +26,7 @@ from handlers.scheduler._common import (
     _schedule_followup_scan,
     compute_reliability,
     compute_trend,
+    entry_price_is_trustworthy,
 )
 
 logger = logging.getLogger(__name__)
@@ -359,6 +360,24 @@ async def check_crypto_tp_sl(app):
                     tp_hit = signal_data.get('tp_hit', {'tp1': False, 'tp2': False, 'tp3': False})
 
                     if entry <= 0:
+                        continue
+
+                    # Harga sekarang harusnya dekat dengan harga entry. Kalau
+                    # jauh berbeda, entry sinyal ini tidak bisa dipercaya -
+                    # biasanya entry dihitung dari data provider lain (Yahoo)
+                    # sementara harga sekarang dari CoinGecko, dan ticker-nya
+                    # sebenarnya aset yang berbeda. Tanpa guard ini, sinyal
+                    # langsung kena TP dengan profit fantastis. Tutup tanpa
+                    # notifikasi.
+                    if not entry_price_is_trustworthy(entry, current_price):
+                        logger.warning(
+                            f"Signal {key} for {ticker}: entry {entry:.8f} vs "
+                            f"current {current_price:.8f} - entry not trustworthy, "
+                            f"closing without notification")
+                        db.save_signal_outcome(key, 'invalid',
+                                               closed_price=current_price)
+                        del signals[key]
+                        _remove_signal(key)
                         continue
 
                     # Build analysis_data for TP/SL notifications

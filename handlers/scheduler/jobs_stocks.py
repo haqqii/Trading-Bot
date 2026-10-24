@@ -34,6 +34,7 @@ from handlers.scheduler._common import (
     _schedule_followup_scan,
     compute_reliability,
     compute_trend,
+    entry_price_is_trustworthy,
 )
 from handlers.scheduler._state import ALL_STOCKS
 from utils.cache import _price_cache
@@ -561,6 +562,23 @@ async def check_stock_tp_sl(app):
                     tp_hit = signal_data.get('tp_hit', {'tp1': False, 'tp2': False, 'tp3': False})
 
                     if entry <= 0:
+                        continue
+
+                    # Harga sekarang harusnya dekat dengan harga entry. Kalau
+                    # jauh berbeda, entry sinyal ini tidak bisa dipercaya
+                    # (mis. aksi korporasi bikin harga melonjak, atau entry
+                    # dihitung dari sumber data yang lain). Tanpa guard ini,
+                    # sinyal langsung kena TP dengan profit fantastis. Tutup
+                    # tanpa notifikasi.
+                    if not entry_price_is_trustworthy(entry, current_price):
+                        logger.warning(
+                            f"Signal {key} for {ticker}: entry {entry:.4f} vs "
+                            f"current {current_price:.4f} - entry not trustworthy, "
+                            f"closing without notification")
+                        db.save_signal_outcome(key, 'invalid',
+                                               closed_price=current_price)
+                        del signals[key]
+                        _remove_signal(key)
                         continue
 
                     tp_analysis = {

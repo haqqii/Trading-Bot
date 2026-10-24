@@ -235,3 +235,42 @@ class TestIntegration:
         assert _check_sent_today('file_a.txt') is True
         # file_b should be False
         assert _check_sent_today('file_b.txt') is False
+
+
+class TestEntryPriceTrustworthy:
+    """Guard harga entry sebelum TP/SL dihitung.
+
+    Kasus nyata: sinyal M-USD/JUP-USD punya entry dari Yahoo yang sebenarnya
+    aset lain ($0.00026), lalu harga sekarang diambil dari CoinGecko yang
+    benar ($0.30). Tanpa guard, sinyal langsung kena TP1/TP2/TP3 dengan
+    profit fantastis dan notifikasi dikirim ke user.
+    """
+
+    def test_normal_movement_is_trustworthy(self):
+        """Harga bergerak wajar tetap dipakai."""
+        from handlers.scheduler._common import entry_price_is_trustworthy
+        assert entry_price_is_trustworthy(0.30, 0.33) is True
+        assert entry_price_is_trustworthy(0.30, 0.27) is True
+
+    def test_wildly_different_price_is_not_trustworthy(self):
+        """Harga jauh dari entry berarti entry salah."""
+        from handlers.scheduler._common import entry_price_is_trustworthy
+        assert entry_price_is_trustworthy(0.00025933, 0.30) is False
+        assert entry_price_is_trustworthy(0.30, 0.00025933) is False
+
+    def test_zero_or_missing_price_is_skipped(self):
+        """Data harga yang tidak ada tidak boleh dianggap tidak dipercaya."""
+        from handlers.scheduler._common import entry_price_is_trustworthy
+        assert entry_price_is_trustworthy(0, 0.30) is True
+        assert entry_price_is_trustworthy(0.30, 0) is True
+        assert entry_price_is_trustworthy(-1, 0.30) is True
+
+    def test_limit_boundary(self):
+        """Tepat di batas 10x masih diterima, di luar itu ditolak."""
+        from handlers.scheduler._common import (
+            MAX_ENTRY_PRICE_DEVIATION,
+            entry_price_is_trustworthy,
+        )
+        entry = 0.30
+        assert entry_price_is_trustworthy(entry, entry * MAX_ENTRY_PRICE_DEVIATION) is True
+        assert entry_price_is_trustworthy(entry, entry * MAX_ENTRY_PRICE_DEVIATION * 1.01) is False

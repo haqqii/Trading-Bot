@@ -54,6 +54,29 @@ CRYPTO_TF_TO_INTERVAL = {
 SIGNAL_MAX_AGE_DAYS = 7
 SIGNAL_MAX_PER_TYPE = 50  # Max signals per type (stock/crypto)
 
+# Berapa kali harga sekarang boleh berbeda dari harga entry sinyal sebelum
+# entry dianggap tidak bisa dipercaya. Kalau jauh berbeda, biasanya entry
+# dihitung dari data provider lain (Yahoo) sementara harga sekarang dari
+# CoinGecko, dan ticker-nya sebenarnya aset yang berbeda - tanpa guard ini
+# sinyal langsung kena TP dengan profit fantastis. Token asli jarang
+# bergerak 10x dalam beberapa menit, jadi batasnya longgar.
+MAX_ENTRY_PRICE_DEVIATION = 10.0
+
+
+def entry_price_is_trustworthy(entry: float, current_price: float) -> bool:
+    """True kalau harga entry sinyal masih bisa dipakai.
+
+    Kalau harga sekarang jauh dari harga entry, entry-nya tidak bisa
+    dipercaya - biasanya karena entry dihitung dari data provider lain
+    (Yahoo) sementara harga sekarang dari CoinGecko, dan ticker-nya
+    sebenarnya aset yang berbeda. Tanpa guard ini, sinyal langsung kena TP
+    dengan profit fantastis.
+    """
+    if entry <= 0 or current_price <= 0:
+        return True
+    deviation = current_price / entry
+    return (1 / MAX_ENTRY_PRICE_DEVIATION) <= deviation <= MAX_ENTRY_PRICE_DEVIATION
+
 
 def now_wib():
     """Get current time in WIB timezone (UTC+7).

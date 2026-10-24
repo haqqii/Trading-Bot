@@ -540,7 +540,9 @@ class Database:
 
         Args:
             key: Signal key (e.g. 'STOCK_BBCA')
-            outcome: 'open', 'tp1', 'tp2', 'tp3', or 'sl'
+            outcome: 'open', 'tp1', 'tp2', 'tp3', 'sl', atau 'invalid'
+                ('invalid' dipakai saat harga entry tidak bisa dipercaya,
+                jadi sinyal ditutup tanpa notifikasi TP/SL)
             hit_at: ISO datetime string when the outcome occurred
             closed_price: Price when signal was closed (TP3 or SL)
         """
@@ -559,7 +561,7 @@ class Database:
                 'sl': 'sl_hit_at',
             }
             col = col_map.get(outcome)
-            closed_at = hit_at if outcome in ('tp3', 'sl') else None
+            closed_at = hit_at if outcome in ('tp3', 'sl', 'invalid') else None
 
             if col:
                 conn.execute(
