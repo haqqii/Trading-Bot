@@ -615,3 +615,96 @@ class TestPriceReferenceCrossCheck:
             service._ensure_price_reference()
             assert mock_load.call_count == 0
 
+
+
+class TestYahooMissingFilter:
+    """Ticker crypto yang tidak ada di Yahoo tidak perlu di-request ulang.
+
+    Contoh nyata: UNI-USD, MATIC-USD, HYPE-USD tidak ada di Yahoo (404).
+    Tanpa registry, tiap ticker dicoba 3x per scan (scan tiap 15 menit) -
+    request sia-sia, boros rate limit, dan menghasilkan log ERROR yfinance
+    yang naik jadi alert ke admin.
+    """
+
+    @pytest.fixture
+    def registry(self, tmp_path, monkeypatch):
+        from services import crypto_yahoo_missing as reg
+        monkeypatch.setattr(reg, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(reg, 'STATE_FILE', str(tmp_path / 'crypto_yahoo_missing.json'))
+        monkeypatch.setattr(reg, '_entries', {})
+        monkeypatch.setattr(reg, '_loaded', False)
+        monkeypatch.setattr(reg, '_warned_bulk_at', 0.0)
+        return reg
+
+    def test_empty_history_marks_ticker_missing(self, registry):
+        """Yahoo kosong (404) -> ticker dicatat sebagai tidak ada di Yahoo."""
+        import pandas as pd
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value.history.return_value = pd.DataFrame()
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            result = service.get_crypto_data('UNI-USD', '15m', '3d',
+                                             retry=1, use_cache=False)
+
+        assert result is None
+        assert registry.is_missing('UNI-USD', '15m') is True
+
+    def test_marked_ticker_is_skipped_without_request(self, registry):
+        """Ticker yang ditandai: tidak ada request ke Yahoo sama sekali."""
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        registry.mark_missing('UNI-USD', '15m')
+        service = CryptoService()
+        mock_yf = MagicMock()
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            result = service.get_crypto_data('UNI-USD', '15m', '3d', retry=1,
+                                             use_cache=False, skip_if_missing=True)
+
+        assert result is None
+        assert mock_yf.Ticker.call_count == 0
+
+    def test_user_path_still_tries_yahoo(self, registry):
+        """Jalur yang dipicu user tetap mencoba Yahoo.
+
+        Ticker bisa saja muncul lagi di Yahoo; jalur user tidak boleh
+        bergantung pada TTL registry.
+        """
+        import pandas as pd
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        registry.mark_missing('UNI-USD', '15m')
+        service = CryptoService()
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value.history.return_value = pd.DataFrame()
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            service.get_crypto_data('UNI-USD', '15m', '3d', retry=1, use_cache=False)
+
+        assert mock_yf.Ticker.call_count == 1
+
+    def test_short_history_is_not_marked(self, registry):
+        """Ticker baru listing (candle kurang) bukan ticker yang hilang."""
+        import numpy as np
+        import pandas as pd
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        idx = pd.date_range('2026-01-01', periods=20, freq='1h')
+        close = pd.Series(np.linspace(100, 101, 20), index=idx)
+        hist = pd.DataFrame({
+            'Open': close, 'High': close * 1.01, 'Low': close * 0.99,
+            'Close': close, 'Volume': np.full(20, 1000.0),
+        })
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value.history.return_value = hist
+
+        with patch.object(cs_mod, 'yf', mock_yf):
+            result = service.get_crypto_data('BARU-USD', '15m', '3d',
+                                             retry=1, use_cache=False)
+
+        assert result is None  # candle kurang dari 50 -> dipakai fallback
+        assert registry.is_missing('BARU-USD', '15m') is False

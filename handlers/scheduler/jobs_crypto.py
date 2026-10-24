@@ -335,7 +335,8 @@ async def check_crypto_tp_sl(app):
                     # Get user's TF for per-user TP/SL calculation
                     user_tf = u.get('timeframe', '60')
                     interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
-                    d = crypto_service.get_crypto_data_combined(ticker, interval, period)
+                    d = crypto_service.get_crypto_data_combined(ticker, interval, period,
+                                                             skip_if_missing=True)
                     if not d:
                         continue
 
@@ -534,7 +535,8 @@ async def check_crypto_favorit_alerts(app):
                     continue
 
                 try:
-                    d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d')
+                    d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d',
+                                                             skip_if_missing=True)
                     if not d:
                         continue
 
@@ -590,7 +592,8 @@ async def prefetch_crypto_cache(app):
                     return None
 
                 # Fetch fresh data - this will auto-cache via crypto_service
-                d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d')
+                d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d',
+                                                             skip_if_missing=True)
                 if d and d.get('candles', 0) >= 5:
                     return ticker
             except Exception as e:

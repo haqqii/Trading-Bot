@@ -40,6 +40,9 @@ data/stocks_cache.json
 # Health check consecutive-failure state
 data/health_state.json
 
+# Registry ticker crypto yang tidak ada di Yahoo Finance
+data/crypto_yahoo_missing.json
+
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal

@@ -205,7 +205,11 @@ def get_crypto_data_with_fallback(ticker: str, interval: str = '1h', period: str
             return cached, False
 
     # Try fresh data
-    d = crypto_service.get_crypto_data_combined(ticker, interval, period)
+    # Jalur background: kalau ticker ini sudah diketahui tidak ada di Yahoo,
+    # lewati saja (tidak ada request sia-sia). Data tetap diambil dari
+    # CoinGecko di dalam get_crypto_data_combined().
+    d = crypto_service.get_crypto_data_combined(ticker, interval, period,
+                                                 skip_if_missing=True)
     if d and d.get('candles', 0) >= 5:
         _price_cache.set(cache_key, d, ttl=300)  # 5 min cache
         return d, False

@@ -14,6 +14,7 @@ from urllib3.util.retry import Retry
 from utils.cache import _price_cache, _usd_cache
 from utils.rate_limiter import _yahoo_limiter, _coingecko_limiter, _circuit_breakers, exponential_backoff
 from utils.log_filters import DropNoPriceData, install_provider_filters
+from services import crypto_yahoo_missing
 from utils.indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_volume_metrics, calculate_vwap, calculate_stochastic,
@@ -247,13 +248,27 @@ class CryptoService:
         return 16000
 
     def get_crypto_data(self, ticker: str, interval: str = '15m', period: str = '3d',
-                        retry: int = 3, use_cache: bool = True):
-        """Get crypto data from Yahoo Finance"""
+                        retry: int = 3, use_cache: bool = True,
+                        skip_if_missing: bool = False):
+        """Get crypto data from Yahoo Finance.
+
+        skip_if_missing=True: kalau ticker ini sudah diketahui tidak ada di
+        Yahoo (services/crypto_yahoo_missing.py), langsungreturn None tanpa
+        request. Dipakai jalur background (scan, TP/SL); jalur yang dipicu
+        user tetap mencoba, supaya ticker yang tadinya hilang bisa muncul
+        lagi tanpa perlu tunggu TTL.
+        """
         cache_key = f"{ticker}_{interval}_{period}"
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached:
                 return cached
+
+        if skip_if_missing and crypto_yahoo_missing.is_missing(ticker, interval):
+            logger.debug(
+                f"Yahoo dilewati untuk {ticker} ({interval}) - ticker ini "
+                f"tidak ada di Yahoo, pakai CoinGecko")
+            return None
 
         breaker = _circuit_breakers.get('yahoo')
 
@@ -282,13 +297,30 @@ class CryptoService:
                     stock = yf.Ticker(ticker)
                     hist = stock.history(interval=interval, period=period, timeout=15)
 
-                    if hist.empty or len(hist) < 50:
+                    if hist.empty:
+                        # Yahoo tidak punya ticker ini sama sekali (404).
+                        # Dicatat, supaya scan berikutnya tidak menebak
+                        # lagi - datanya tetap diambil dari CoinGecko.
+                        if attempt < retry - 1:
+                            time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                            continue
+                        crypto_yahoo_missing.mark_missing(
+                            ticker, interval,
+                            reason=f'Yahoo tidak punya data untuk {ticker}')
+                        logger.warning(
+                            f"Yahoo tidak punya data untuk {ticker} ({interval}) "
+                            f"- pakai fallback CoinGecko")
+                        return None
+
+                    if len(hist) < 50:
+                        # Candle-nya ada tapi kurang dari 50 - ticker baru
+                        # listing, bukan ticker yang hilang. Tidak ditandai.
                         if attempt < retry - 1:
                             time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
                             continue
                         logger.warning(
-                            f"Yahoo tidak punya data untuk {ticker} "
-                            f"setelah {retry} percobaan - pakai fallback")
+                            f"Yahoo cuma punya {len(hist)} candle untuk {ticker} "
+                            f"({interval}) - pakai fallback")
                         return None
 
                     df = hist.copy()
@@ -448,10 +480,16 @@ class CryptoService:
 
         return None
 
-    def get_crypto_data_combined(self, ticker: str, interval: str = '15m', period: str = '3d'):
-        """Get crypto data - try Yahoo Finance first, CoinGecko as fallback"""
+    def get_crypto_data_combined(self, ticker: str, interval: str = '15m', period: str = '3d',
+                                 skip_if_missing: bool = False):
+        """Get crypto data - try Yahoo Finance first, CoinGecko as fallback.
+
+        skip_if_missing=True: jalur Yahoo dilewati untuk ticker yang sudah
+        diketahui tidak ada di Yahoo (lihat services/crypto_yahoo_missing.py).
+        """
         # Try Yahoo Finance first (no rate limits)
-        data = self.get_crypto_data(ticker, interval, period)
+        data = self.get_crypto_data(ticker, interval, period,
+                                    skip_if_missing=skip_if_missing)
         if data and not math.isnan(data['rsi']) and data['rsi'] > 0:
             data['source'] = 'yahoo'
             return data
