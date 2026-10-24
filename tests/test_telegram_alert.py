@@ -156,3 +156,42 @@ class TestTransportNoiseAsPlainText:
             KeyError("'Close' is a required column"),
         )
         assert _is_noise(rec) is False
+
+
+class TestThirdPartyLoggers:
+    """Error dari library pihak ketiga bukan bug bot - jangan dikirimi alert.
+
+    yfinance menulis '$HYPE-USD: No data found, symbol may be delisted' sebagai
+    ERROR. Itu cuma informasi bahwa ticker tidak ada di Yahoo, dan bot sudah
+    tahu cara menanganinya. Kalau bocor, admin dapat alert yang tidak ada
+    yang bisa diperbaiki.
+    """
+
+    def test_yfinance_no_data_is_noise(self):
+        """Pesan yfinance versi sekarang harus tersaring."""
+        rec = make_record(
+            '$HYPE-USD: No data found, symbol may be delisted',
+            name='yfinance',
+        )
+        assert _is_noise(rec) is True
+
+    def test_yfinance_prefixed_is_noise(self):
+        """Di container nama loggernya ber-prefix: 'trading.yfinance'."""
+        rec = make_record(
+            '$HYPE-USD: No data found, symbol may be delisted',
+            name='trading.yfinance',
+        )
+        assert _is_noise(rec) is True
+
+    def test_any_third_party_error_is_noise(self):
+        """Error library pihak ketiga lain juga tidak dikirimi alert."""
+        rec = make_record('something exploded', name='trading.urllib3.connectionpool')
+        assert _is_noise(rec) is True
+
+    def test_our_own_error_is_reported(self):
+        """Error dari kode kita sendiri tetap dilaporkan."""
+        rec = make_record(
+            '[CRYPTO_SIGNAL] analyze failure for FIGR_HELOC-USD: boom',
+            name='trading.handlers.scheduler.jobs_crypto',
+        )
+        assert _is_noise(rec) is False

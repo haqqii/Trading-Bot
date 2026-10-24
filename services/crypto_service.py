@@ -13,6 +13,7 @@ from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache, _usd_cache
 from utils.rate_limiter import _yahoo_limiter, _coingecko_limiter, _circuit_breakers, exponential_backoff
+from utils.log_filters import DropNoPriceData, install_provider_filters
 from utils.indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_volume_metrics, calculate_vwap, calculate_stochastic,
@@ -269,8 +270,13 @@ class CryptoService:
 
                 import logging as _yf_logging
                 yf_logger = _yf_logging.getLogger('yfinance')
-                _yf_old = yf_logger.level
-                yf_logger.setLevel(_yf_logging.CRITICAL + 1)
+                # Buang log "ticker ini tidak punya data" dari yfinance.
+                # Dulu logger yfinance diturunkan levelnya (CRITICAL+1) lalu
+                # dikembalikan lagi setelah fetch - kalau ada thread lain yang
+                # fetch bersamaan, levelnya bisa ter-restore duluan dan log
+                # yfinance bocor lagi ke alert admin.
+                drop_filter = DropNoPriceData()
+                yf_logger.addFilter(drop_filter)
 
                 try:
                     stock = yf.Ticker(ticker)
@@ -280,6 +286,9 @@ class CryptoService:
                         if attempt < retry - 1:
                             time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
                             continue
+                        logger.warning(
+                            f"Yahoo tidak punya data untuk {ticker} "
+                            f"setelah {retry} percobaan - pakai fallback")
                         return None
 
                     df = hist.copy()
@@ -426,7 +435,7 @@ class CryptoService:
 
                     return result
                 finally:
-                    yf_logger.setLevel(_yf_old)
+                    yf_logger.removeFilter(drop_filter)
 
             except Exception as e:
                 logger.warning(f"Yahoo attempt {attempt+1} failed for {ticker}: {e}")

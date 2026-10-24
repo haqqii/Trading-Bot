@@ -17,40 +17,19 @@ from urllib3.util.retry import Retry
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
 from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
+from utils.log_filters import DropNoPriceData, install_provider_filters
 from services import ticker_health
 
 logger = logging.getLogger(__name__)
 
 
-class _DropNoPriceData(logging.Filter):
+class _DropNoPriceData(DropNoPriceData):
     """Buang log yfinance yang cuma mengatakan "ticker ini tidak ada datanya".
 
-    yfinance menulis ticker yang tidak punya candles sebagai ERROR, dan
-    error itu naik jadi alert ke admin. Padahal ini bukan bug: ticker-nya
-    memang tidak ada datanya, dan bot sudah tahu cara menanganinya (tandai
-    di ticker_health lalu lewati). Log lain dari yfinance — rate limit,
-    error server — tetap diteruskan.
-
-    Pesan yang dibuang:
-      - "... possibly delisted; no price data found" — jalur utama gagal,
-        tapi sumber lain (v8/TradingView) masih bisa jawab.
-      - "... No data found, symbol may be delisted" — ticker memang tidak ada.
-      - "HTTP Error 404 ... Quote not found for symbol" — request gagal 404
-        karena ticker tidak ada.
+    Sekarang filter-nya tinggal di utils/log_filters.py, jadi semua jalur
+    yang pakai yfinance (saham, crypto, chart) memakai filter yang sama.
+    Log lain dari yfinance — rate limit, error server — tetap diteruskan.
     """
-
-    _DROP = (
-        'no price data found',
-        'no data found, symbol may be delisted',
-        'quote not found for symbol',
-    )
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            message = record.getMessage().lower()
-        except Exception:
-            return True
-        return not any(marker in message for marker in self._DROP)
 
 
 # Status fetch terakhir per thread, supaya "Yahoo tidak punya data" bisa

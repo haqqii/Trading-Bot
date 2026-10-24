@@ -55,6 +55,46 @@ _TRANSPORT_NOISE_MARKERS = (
     "event loop is closed",
 )
 
+# Log dari library pihak ketiga bukan bug bot: yang rusak adalah providernya,
+# dan bot sudah tahu cara menanganinya (tandai ticker, lewati, atau fallback
+# ke sumber lain). Error seperti ini tetap masuk error.log, tapi tidak
+# dikirimi alert - alert cuma untuk bug sungguhan di kode kita.
+#
+# Dicocokkan ke SETIAP bagian nama logger, karena di dalam container nama
+# logger library ini ber-prefix: 'trading.yfinance', bukan 'yfinance'.
+_THIRD_PARTY_LOGGERS = frozenset({
+    "yfinance",
+    "peewee",
+    "urllib3",
+    "requests",
+    "httpx",
+    "httpcore",
+    "aiohttp",
+    "curl_cffi",
+    "charset_normalizer",
+    "certifi",
+    "websockets",
+    "socksio",
+})
+
+# "Ticker ini tidak punya data" - pesan yfinance (v1.7+) dan sebagian
+# library lain. Bukan bug, cuma informasi.
+_NO_DATA_MARKERS = (
+    "no price data found",
+    "no data found, symbol may be delisted",
+    "possibly delisted",
+    "quote not found for symbol",
+)
+
+
+def _is_third_party(record: logging.LogRecord) -> bool:
+    """True kalau record ini datang dari library pihak ketiga.
+
+    Nama logger library di dalam container ber-prefix nama bot
+    ('trading.yfinance'), jadi dicocokkan ke setiap bagiannya.
+    """
+    return any(part in _THIRD_PARTY_LOGGERS for part in record.name.split('.'))
+
 
 def _is_noise(record: logging.LogRecord) -> bool:
     """True kalau error ini tidak perlu dikirim ke admin.
@@ -82,7 +122,12 @@ def _is_noise(record: logging.LogRecord) -> bool:
 
     # Ticker yang tidak punya data harga. Bukan bug: bot sudah menandainya
     # dan melewatinya, jadi tidak perlu bother admin.
-    if "no price data found" in text or "possibly delisted" in text:
+    if any(marker in text for marker in _NO_DATA_MARKERS):
+        return True
+
+    # Error dari library pihak ketiga (yfinance, urllib3, ...). Yang rusak
+    # adalah providernya, bukan bot. Tetap masuk error.log.
+    if _is_third_party(record):
         return True
 
     # BadRequest checked dulu: di PTB, BadRequest anak dari NetworkError,

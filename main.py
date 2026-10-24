@@ -76,6 +76,12 @@ logging.basicConfig(
 from utils.log_tag import install as install_log_tag
 install_log_tag('trading')
 
+# yfinance menulis "ticker ini tidak punya datanya" sebagai ERROR. Itu bukan
+# bug bot, jadi harusnya tidak naik jadi alert ke admin - dan filter-nya
+# dipasang sekali di sini supaya tidak hilang-lahang di antara thread.
+from utils.log_filters import install_provider_filters
+install_provider_filters()
+
 logger = logging.getLogger(__name__)
 
 # Single instance lock - prevent multiple bot instances
