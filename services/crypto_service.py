@@ -46,6 +46,23 @@ _FALLBACK_CRYPTO_PAIRS = {
 
 COINGECKO_IDS: dict[str, str] = {}
 
+# Namespace ticker Yahoo Finance ({SYM}-USD) tidak sama dengan CoinGecko.
+# Simbol yang sama belum tentu aset yang sama:
+#   JUP-USD di Yahoo = aset lain ($0.00026), JUP di CoinGecko = Jupiter ($0.30)
+#   AERO-USD di Yahoo = Aerovek Aviation (token mati), AERO = Aerodrome Finance
+# Kalau harga Yahoo beda lebih dari rasio ini dari harga acuan CoinGecko,
+# datanya dicurigai milik aset lain dan ditolak.
+_PRICE_MISMATCH_RATIO = 5.0
+
+# Umur acuan harga (detik). Harga token bergerak, tapi toleransinya lebar
+# (5x), jadi acuan cukup beberapa kali refresh per siklus scan. Sengaja
+# pendek supaya cakupan yang sempat hilang (chunk kena rate limit) cepat
+# dilengkapi lagi.
+_PRICE_REF_TTL = 600
+
+# Jumlah id per request /simple/price (URL-nya tidak boleh terlalu panjang).
+_PRICE_REF_CHUNK = 100
+
 
 class CryptoService:
     """Service for fetching crypto data"""
@@ -57,6 +74,9 @@ class CryptoService:
         self.coingecko_ids = {}
         self.major_crypto = set()
         self._crypto_loaded = False
+        # Harga acuan dari CoinGecko untuk mencocokkan hasil Yahoo Finance.
+        self.cg_price_ref: dict[str, float] = {}
+        self._price_ref_time: float = 0.0
 
     def load_crypto_pairs(self):
         """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback"""
@@ -130,6 +150,81 @@ class CryptoService:
         self._crypto_loaded = True
         logger.info(f"Crypto loaded: {len(self.crypto_pairs)} pairs (major: {len(self.major_crypto)})")
         return self.crypto_pairs
+
+    def load_price_reference(self) -> dict[str, float]:
+        """Ambil harga acuan semua pair dari CoinGecko.
+
+        Dipakai untuk mencocokkan hasil Yahoo Finance. Namespace ticker Yahoo
+        ({SYM}-USD) punya makna sendiri: simbol yang sama belum tentu aset
+        yang sama. Contoh nyata: JUP-USD di Yahoo = aset lain ($0.00026)
+        sementara JUP di CoinGecko = Jupiter ($0.30). Volume bukan penanda
+        yang andal (candle terakhir bisa nol sementara 19 candle sebelumnya
+        normal), jadi harga acuan yang dipakai sebagai pembanding.
+
+        Semua pair diambil sekaligus, jadi biayanya 1-3 request per siklus
+        scan, bukan satu request per ticker.
+        """
+        ids = {ticker: coin_id for ticker, coin_id in self.coingecko_ids.items() if coin_id}
+        if not ids:
+            return self.cg_price_ref
+
+        ref: dict[str, float] = {}
+        items = list(ids.items())
+        for start in range(0, len(items), _PRICE_REF_CHUNK):
+            chunk = items[start:start + _PRICE_REF_CHUNK]
+            for attempt in range(3):
+                try:
+                    _coingecko_limiter.wait_if_needed()
+                    resp = _cg_session.get(
+                        'https://api.coingecko.com/api/v3/simple/price',
+                        params={
+                            'ids': ','.join(coin_id for _, coin_id in chunk),
+                            'vs_currencies': 'usd',
+                        },
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for ticker, coin_id in chunk:
+                            usd = (data.get(coin_id) or {}).get('usd')
+                            if usd:
+                                ref[ticker] = float(usd)
+                        break
+                    if resp.status_code == 429:
+                        # Rate limit: tunggu sebentar lalu coba lagi. Chunk
+                        # yang gagal berarti ticker di dalamnya tidak punya
+                        # acuan, jadi tidak terlindungi dari aset yang salah.
+                        if attempt < 2:
+                            time.sleep(exponential_backoff(attempt, base_delay=3.0, max_delay=20))
+                            continue
+                    logger.warning(
+                        f"CoinGecko price reference chunk skipped (status {resp.status_code})")
+                    break
+                except Exception as e:
+                    logger.warning(f"CoinGecko price reference failed: {e}")
+                    break
+
+        if ref:
+            # Acuan lama diganti kalau yang baru lebih lengkap, supaya chunk
+            # yang sempat gagal tidak membuat cakupan mengecil.
+            if len(ref) >= len(self.cg_price_ref):
+                self.cg_price_ref = ref
+            logger.info(
+                f"Price reference loaded for {len(ref)}/{len(ids)} pairs "
+                f"(active coverage {len(self.cg_price_ref)})")
+        return self.cg_price_ref
+
+    def _ensure_price_reference(self, max_age: int = _PRICE_REF_TTL) -> dict[str, float]:
+        """Pastikan acuan harga CoinGecko ada dan masih segar.
+
+        Percobaan yang gagal tidak dihapus acuan lamanya, dan waktu percobaan
+        tetap dicatat, supaya tidak ada request ulang per ticker saat
+        CoinGecko sedang rate limit.
+        """
+        if (time.time() - self._price_ref_time) < max_age:
+            return self.cg_price_ref
+        self._price_ref_time = time.time()
+        return self.load_price_reference()
 
     def get_usd_idr_rate(self):
         """Get USD to IDR conversion rate (cached 5 minutes)"""
@@ -252,6 +347,22 @@ class CryptoService:
                             time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
                             continue
                         return None
+
+                    # Cocokkan harga Yahoo dengan acuan CoinGecko. Namespace
+                    # ticker Yahoo ({SYM}-USD) tidak sama dengan CoinGecko,
+                    # jadi simbol yang cocok belum tentu aset yang cocok
+                    # (JUP-USD di Yahoo = aset lain, bukan Jupiter). Kalau
+                    # harga beda jauh, datanya milik aset yang salah - tolak
+                    # supaya fallback CoinGecko yang dipakai.
+                    ref = self._ensure_price_reference().get(ticker)
+                    if ref and ref > 0:
+                        ratio = price / ref
+                        if ratio < (1 / _PRICE_MISMATCH_RATIO) or ratio > _PRICE_MISMATCH_RATIO:
+                            logger.warning(
+                                f"Yahoo price for {ticker} ({price:.8f}) differs from "
+                                f"CoinGecko reference ({ref:.8f}) by {ratio:.1f}x - "
+                                f"likely a different asset, rejecting")
+                            return None
 
                     rsi = latest['RSI']
                     if rsi is None or rsi <= 0 or rsi > 100 or (rsi != rsi):

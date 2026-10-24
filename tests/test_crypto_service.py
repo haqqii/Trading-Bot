@@ -4,6 +4,7 @@ Tests crypto data fetching service structure and utility functions.
 """
 import sys
 import os
+import time
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -517,4 +518,100 @@ class TestZeroVolumeRejection:
         volumes[-1] = 0  # candle terakhir kosong, sisanya aktif
         hist = self._hist_df(volumes)
         assert self._fetch_with_hist(hist) is not None
+
+
+class TestPriceReferenceCrossCheck:
+    """Yahoo {SYM}-USD belum tentu aset yang sama dengan CoinGecko.
+
+    Kasus nyata: JUP-USD di Yahoo = aset lain ($0.00026) sementara JUP di
+    CoinGecko = Jupiter ($0.30). Rasio 1158x itu lolos semua validasi
+    harga/RSI, jadi sinyal dibangun di atas aset yang salah. Volume bukan
+    penanda yang andal - candle terakhir bisa nol sementara 19 candle
+    sebelumnya normal. Jadi harga acuan CoinGecko yang dipakai sebagai
+    pembanding.
+    """
+
+    @staticmethod
+    def _hist_df(close_price, n=80):
+        """Build an OHLCV frame trading around ``close_price``."""
+        import numpy as np
+        import pandas as pd
+        idx = pd.date_range('2026-01-01', periods=n, freq='1h')
+        rng = np.random.default_rng(11)
+        close = pd.Series(close_price + np.cumsum(rng.normal(0, 0.01, n)), index=idx)
+        return pd.DataFrame({
+            'Open': close,
+            'High': close * 1.01,
+            'Low': close * 0.99,
+            'Close': close,
+            'Volume': np.full(n, 100_000.0),
+        })
+
+    @staticmethod
+    def _fetch(hist, ticker='REF-USD', ref=None):
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        if ref is not None:
+            service.cg_price_ref = dict(ref)
+            # Tandai acuan baru saja diambil, supaya tidak ada request HTTP.
+            service._price_ref_time = time.time()
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value.history.return_value = hist
+        with patch.object(cs_mod, 'yf', mock_yf):
+            return service.get_crypto_data(ticker, '4h', '1mo', use_cache=False)
+
+    def test_price_far_from_reference_is_rejected(self):
+        """Harga Yahoo yang beda jauh dari CoinGecko harus ditolak."""
+        hist = self._hist_df(0.00026)
+        result = self._fetch(hist, 'JUP-USD', ref={'JUP-USD': 0.30})
+        assert result is None
+
+    def test_price_matching_reference_is_accepted(self):
+        """Harga yang wajar terhadap acuan tetap dipakai."""
+        hist = self._hist_df(2.489)
+        result = self._fetch(hist, 'CVX-USD', ref={'CVX-USD': 2.40})
+        assert result is not None
+        assert result['price'] > 0
+
+    def test_missing_reference_does_not_reject_data(self):
+        """Tanpa acuan (CoinGecko rate limit) data Yahoo tetap dipakai."""
+        hist = self._hist_df(2.489)
+        result = self._fetch(hist, 'CVX-USD', ref={})
+        assert result is not None
+
+    def test_reference_above_price_by_far_is_rejected(self):
+        """Acuan jauh di atas harga Yahoo juga ditolak (aset lain)."""
+        hist = self._hist_df(0.00028092)
+        result = self._fetch(hist, 'M-USD', ref={'M-USD': 0.933799})
+        assert result is None
+
+    def test_batch_price_reference_is_parsed(self):
+        """Harga acuan diambil per ticker dari satu request batch."""
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        service.coingecko_ids = {'AAA-USD': 'coin-a', 'BBB-USD': 'coin-b'}
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {'coin-a': {'usd': 2.5}, 'coin-b': {'usd': 0.5}}
+
+        with patch.object(cs_mod, '_cg_session') as mock_session:
+            mock_session.get.return_value = resp
+            ref = service.load_price_reference()
+
+        assert ref == {'AAA-USD': 2.5, 'BBB-USD': 0.5}
+
+    def test_price_reference_is_not_refetched_within_ttl(self):
+        """Acuan tidak di-refresh tiap ticker."""
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        service.coingecko_ids = {'AAA-USD': 'coin-a'}
+        service.cg_price_ref = {'AAA-USD': 1.0}
+        service._price_ref_time = time.time()
+
+        with patch.object(CryptoService, 'load_price_reference') as mock_load:
+            service._ensure_price_reference()
+            assert mock_load.call_count == 0
 
