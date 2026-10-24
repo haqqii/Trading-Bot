@@ -37,7 +37,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$RepoDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# Root repo Trading-Bot (satu level di atas folder scripts).
+$RepoDir = Split-Path -Parent $PSScriptRoot
 $EnvFile = Join-Path $RepoDir '.env'
 $ComposeFile = Join-Path $BotDir 'docker-compose.yml'
 
