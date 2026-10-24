@@ -138,6 +138,21 @@ class TestBulkGuardRelative:
             assert registry.mark_missing(f'COIN{i}-USD', '4h',
                                          universe_size=250) is True
 
+    def test_same_ticker_other_interval_does_not_double_count(self, registry):
+        """Ticker yang hilang di 4h dan 1h tetap dihitung satu kali.
+
+        Kalau dihitung dua kali, pengaman bisa menyala padahal ticker
+        yang hilang cuma separuh daftar.
+        """
+        limit = max(registry.MAX_MARKS_PER_HOUR,
+                    int(250 * registry.BULK_RATIO))
+        for i in range(limit):
+            assert registry.mark_missing(f'COIN{i}-USD', '4h',
+                                         universe_size=250) is True
+        # Ticker sama, interval lain: bukan menambah hitungan.
+        assert registry.mark_missing('COIN0-USD', '1h',
+                                     universe_size=250) is True
+
 
 class TestBulkWarningLevel:
     """Kondisi provider bukan bug bot, jadi tidak boleh jadi alert admin."""

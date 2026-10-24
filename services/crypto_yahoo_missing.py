@@ -120,9 +120,18 @@ def is_missing(ticker: str, interval: str = '15m',
         return True
 
 
-def _marks_in_last_hour(now: float) -> int:
-    return sum(1 for info in _entries.values()
-               if float(info.get('at', 0)) > now - 3600)
+def _marks_in_last_hour(now: float, interval: str = '') -> int:
+    """Berapa ticker yang ditandai dalam satu jam terakhir.
+
+    Kalau interval diberi, hanya entri untuk interval itu yang dihitung.
+    Satu ticker bisa hilang di beberapa interval sekaligus (misal 4h dan
+    1h), tapi itu tetap satu ticker - menghitungnya dua kali bikin
+    pengaman terlalu cepat menyala.
+    """
+    suffix = f"@{interval}" if interval else ''
+    return sum(1 for key, info in _entries.items()
+               if (not suffix or key.endswith(suffix))
+               and float(info.get('at', 0)) > now - 3600)
 
 
 def mark_missing(ticker: str, interval: str = '15m', reason: str = '',
@@ -156,7 +165,7 @@ def mark_missing(ticker: str, interval: str = '15m', reason: str = '',
         limit = MAX_MARKS_PER_HOUR
         if universe_size > 0:
             limit = max(limit, int(universe_size * BULK_RATIO))
-        if _marks_in_last_hour(now) >= limit:
+        if _marks_in_last_hour(now, interval) >= limit:
             # Terlalu banyak sekaligus: kemungkinan besar Yahoo yang
             # bermasalah, bukan ticker-nya. Yang ditandai tidak ditambah,
             # supaya jalur Yahoo tetap dicoba.
