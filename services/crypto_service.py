@@ -265,7 +265,9 @@ class CryptoService:
                 return cached
 
         if skip_if_missing and crypto_yahoo_missing.is_missing(ticker, interval):
-            logger.debug(
+            # Level INFO (bukan debug) supaya jelas di bot.log ticker mana
+            # yang lewat jalur Yahoo - jadi gampang dicek tanpa masuk container.
+            logger.info(
                 f"Yahoo dilewati untuk {ticker} ({interval}) - ticker ini "
                 f"tidak ada di Yahoo, pakai CoinGecko")
             return None

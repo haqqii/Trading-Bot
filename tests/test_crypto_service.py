@@ -667,6 +667,29 @@ class TestYahooMissingFilter:
         assert result is None
         assert mock_yf.Ticker.call_count == 0
 
+    def test_skip_is_logged_at_info(self, registry, caplog):
+        """Lewat-nya jalur Yahoo harus kelihatan di bot.log.
+
+        Kalau cuma debug, tidak ada jejak di log produksi - orang tidak
+        bisa cek sendiri apakah filter ini jalan.
+        """
+        import logging
+        from services import crypto_service as cs_mod
+        from services.crypto_service import CryptoService
+        registry.mark_missing('UNI-USD', '15m')
+        service = CryptoService()
+        mock_yf = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger='services.crypto_service'):
+            with patch.object(cs_mod, 'yf', mock_yf):
+                service.get_crypto_data('UNI-USD', '15m', '3d', retry=1,
+                                        use_cache=False, skip_if_missing=True)
+
+        pesan = [r.getMessage() for r in caplog.records
+                 if r.levelno == logging.INFO and 'Yahoo dilewati' in r.getMessage()]
+        assert pesan, 'tidak ada log INFO untuk ticker yang dilewati'
+        assert 'UNI-USD' in pesan[0]
+
     def test_user_path_still_tries_yahoo(self, registry):
         """Jalur yang dipicu user tetap mencoba Yahoo.
 
