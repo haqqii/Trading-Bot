@@ -433,24 +433,90 @@ class TestCryptoPairLoading:
         """Request daftar pair harus ikut limiter CoinGecko yang sama.
 
         Tanpa ini, request saat start tidak dihitung di kuota 5/menit dan
-        bisa memicu 429.
+        bisa memicu 429. Sekaligus dijaga hanya ada SATU request: dulu
+        loop "halaman 1-2" tidak pernah mengirim parameter 'page', jadi
+        request kedua mengulang request pertama dan satu kuota terbuang.
         """
         from services import crypto_service as cs
 
         service = cs.CryptoService()
         waits = []
+        requests = []
 
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
                             lambda *a, **k: waits.append(1))
-        monkeypatch.setattr(
-            cs._cg_session, 'get',
-            lambda url, params=None, timeout=None:
-                FakeResponse(200, self._make_coins()))
+
+        def fake_get(url, params=None, timeout=None):
+            requests.append(params)
+            return FakeResponse(200, self._make_coins())
+
+        monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
 
         service.load_crypto_pairs(force=True)
 
-        assert len(waits) == 2, "kedua halaman harus lewat limiter"
+        assert len(waits) == 1, "hanya satu request, lewat limiter"
+        assert len(requests) == 1, "tidak boleh ada request kembar"
+
+    def test_pair_load_seeds_price_reference(self, monkeypatch):
+        """Harga dari respons daftar pair langsung jadi acuan harga.
+
+        Tanpa ini, acuan harus dimuat terpisah (1-3 request CoinGecko lagi)
+        - di saat start itu berarti start bisa kena 429 dan acuan kosong
+        selama 10 menit.
+        """
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        coins = self._make_coins(3)
+        coins[0]['current_price'] = 123.45
+        coins[1]['current_price'] = 0.5
+        coins[2]['current_price'] = None
+
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, coins))
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        service.load_crypto_pairs(force=True)
+
+        assert service.cg_price_ref.get('SYM0-USD') == 123.45
+        assert service.cg_price_ref.get('SYM1-USD') == 0.5
+        assert 'SYM2-USD' not in service.cg_price_ref
+        # Acuan dianggap segar, jadi tidak perlu request tambahan.
+        assert service._price_ref_time > 0
+
+    def test_seeded_reference_avoids_extra_coingecko_call(self, monkeypatch):
+        """Setelah daftar pair dimuat, acuan harga tidak perlu dimuat lagi."""
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        coins = self._make_coins(12)
+        coins[0]['current_price'] = 10.0
+        coins[1]['current_price'] = 20.0
+
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, coins))
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        service.load_crypto_pairs(force=True)
+        before = len(service.cg_price_ref)
+
+        called = []
+        monkeypatch.setattr(service, 'load_price_reference',
+                            lambda *a, **k: called.append(1))
+
+        service.refresh_price_reference()
+
+        assert not called, "acuan sudah ada, tidak boleh request lagi"
+        assert len(service.cg_price_ref) == before
 
     def test_successful_load_records_expected_count(self, monkeypatch):
         """Jumlah pair dari daftar lengkap dicatat untuk pembanding."""

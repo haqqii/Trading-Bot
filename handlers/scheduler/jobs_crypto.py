@@ -49,6 +49,12 @@ PREFETCH_MAJOR_COUNT = 10
 # lebih dari ini, harga diambil dari Yahoo (sumber harga entry sinyal).
 _TP_SL_PRICE_TOLERANCE = 0.05
 
+# Toleransi "apakah ticker-nya menunjuk aset yang sama" - dipakai kalau
+# tidak ada harga acuan dari scan (mis. tepat setelah restart container).
+# Jauh lebih longgar dari _TP_SL_PRICE_TOLERANCE: yang diuji adalah
+# pertukaran aset antar provider, bukan pergerakan harga harian.
+_SAME_ASSET_MAX_RATIO = 2.0
+
 # Berapa bagian harga CoinGecko yang harus ada di cache sebelum cache itu
 # dipakai buat cek TP/SL tanpa menunggu slot limiter. Kalau cache-nya
 # belum terisi (mis. tepat setelah restart), lebih baik tunggu slot
@@ -635,9 +641,21 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
                 continue
             ref = get_crypto_scan_data(ticker, interval, period)
             price_ref = ref.get('price') if ref else None
-            if not price_ref:
-                price_ref = entry_prices.get(key)
-            if _price_matches_reference(payload.get('price'), price_ref):
+            if price_ref:
+                same_asset = _price_matches_reference(payload.get('price'),
+                                                     price_ref)
+            else:
+                # Tidak ada data scan untuk ticker ini - biasanya tepat
+                # setelah container restart, waktu cache scan masih kosong.
+                #
+                # Pembandingnya jadi harga entry sinyal, dan toleransinya
+                # longgar: yang diuji di sini bukan pergerakan harga
+                # (5% terlalu ketat untuk aset yang bergerak cepat) tapi
+                # "apakah ticker ini aset yang sama". Selisih lebih dari
+                # 2x dicurigai sebagai ticker yang menunjuk aset lain.
+                same_asset = _price_is_same_asset(payload.get('price'),
+                                                 entry_prices.get(key))
+            if same_asset:
                 result[ticker] = payload
             else:
                 # Harga CoinGecko beda jauh dari data scan - ticker ini
@@ -772,6 +790,28 @@ def _price_matches_reference(price, reference) -> bool:
     if price <= 0 or reference <= 0:
         return False
     return abs(price / reference - 1) <= _TP_SL_PRICE_TOLERANCE
+
+
+def _price_is_same_asset(price, reference) -> bool:
+    """True kalau dua harga dianggap harga dari aset yang sama.
+
+    Dipakai kalau tidak ada harga acuan dari scan (mis. tepat setelah
+    container restart, waktu cache scan masih kosong). Yang diuji di sini
+    bukan pergerakan harga - tapi apakah ticker-nya menunjuk aset yang
+    sama, jadi toleransinya jauh lebih longgar dari
+    _TP_SL_PRICE_TOLERANCE: aset crypto bisa bergerak berkali-kali dalam
+    sehari, sedangkan ticker yang tertukar aset biasanya bedanya jauh
+    lebih dari itu.
+    """
+    try:
+        price = float(price)
+        reference = float(reference)
+    except (TypeError, ValueError):
+        return False
+    if price <= 0 or reference <= 0:
+        return False
+    ratio = price / reference
+    return (1 / _SAME_ASSET_MAX_RATIO) <= ratio <= _SAME_ASSET_MAX_RATIO
 
 
 async def check_crypto_tp_sl(app):

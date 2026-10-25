@@ -317,8 +317,8 @@ class CryptoService:
         # CoinGecko sedang rate limit. Selama status ini masih ada, hanya
         # 12 aset yang dipantau - itu perlu diketahui admin.
         self.used_fallback_pairs = False
-        # Berapa banyak pair yang normalnya dipantau (2 halaman x 250 koin
-        # dari CoinGecko, setelah symbol duplikat dibuang). Dipakai untuk
+        # Berapa banyak pair yang normalnya dipantau (250 koin teratas dari
+        # CoinGecko, setelah symbol duplikat dibuang). Dipakai untuk
         # memberi tahu admin seberapa jauh daftar yang aktif berkurang.
         self.expected_pair_count = _EXPECTED_PAIR_COUNT
         # Kapan terakhir kali daftar pair dicoba ambil. Dipakai supaya
@@ -330,18 +330,26 @@ class CryptoService:
         self._price_ref_time: float = 0.0
 
     def load_crypto_pairs(self, force: bool = False, priority: bool = True):
-        """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback
+        """Auto-load crypto pairs from CoinGecko (top 250 coins) with fallback
 
         priority=True (default): daftar pair itu fondasi bot - command user
         (/analisa) butuh tahu ticker mana yang crypto, dan job recovery
         butuh memulihkan daftar yang hilang. Jadi request-nya boleh memakai
         kuota cadangan, tidak perlu antre di belakang scan.
+
+        Respons /coins/markets sekaligus membawa harga USD tiap koin, jadi
+        daftar ini sekaligus jadi acuan harga - tanpa request CoinGecko
+        tambahan.
         """
         if self._crypto_loaded and not force:
             return self.crypto_pairs
 
         coingecko_mappings = {}
         major_set = set()
+        # Harga USD dari respons CoinGecko. Dipakai sebagai acuan harga
+        # (ticker yang simbolnya sama di dua provider bisa menunjuk aset
+        # yang berbeda) tanpa request tambahan.
+        price_seed: dict[str, float] = {}
         cg_failed = False
         self._last_pair_load_time = time.time()
 
@@ -355,19 +363,27 @@ class CryptoService:
                 'price_change_percentage': '24h'
             }
 
-            # Fetch pages 1-2 (top 500 coins) - reduce from 5 to avoid rate limits
-            for page in [1, 2]:
-                try:
-                    # Pakai limiter yang sama dengan jalur CoinGecko lain.
-                    # Tanpa ini, request saat start tidak ikut dihitung dan
-                    # bisa menabrak kuota 5 request/menit.
-                    _coingecko_limiter.wait_if_needed(priority=priority)
-                    resp = _cg_session.get(url, params=params, timeout=10)
-                except Exception as req_err:
-                    logger.warning(f"CoinGecko request failed: {req_err}")
-                    cg_failed = True
-                    break
+            # Satu request saja. Dulu loop ini mengambil "halaman 1-2"
+            # tapi parameter 'page' tidak pernah dikirim ke CoinGecko,
+            # jadi request kedua mengulang request pertama - satu kuota
+            # CoinGecko terbuang percuma setiap start.
+            #
+            # Halaman kedua (250 koin berikutnya) sengaja tidak diambil:
+            # kuota CoinGecko free tier hanya ~4 request/menit, dan kuota
+            # itu lebih penting dipakai untuk harga (acuan + cek TP/SL)
+            # daripada menambah daftar koin yang dipantau.
+            try:
+                # Pakai limiter yang sama dengan jalur CoinGecko lain.
+                # Tanpa ini, request saat start tidak ikut dihitung dan
+                # bisa menabrak kuota 5 request/menit.
+                _coingecko_limiter.wait_if_needed(priority=priority)
+                resp = _cg_session.get(url, params=params, timeout=10)
+            except Exception as req_err:
+                logger.warning(f"CoinGecko request failed: {req_err}")
+                cg_failed = True
+                resp = None
 
+            if resp is not None:
                 if resp.status_code == 200:
                     coins = resp.json()
                     for coin in coins:
@@ -380,23 +396,38 @@ class CryptoService:
                             coingecko_mappings[ticker] = (name, cg_id)
                             if rank <= 100:
                                 major_set.add(ticker)
+                            # Respons /coins/markets sudah membawa harga
+                            # sekarang, jadi sekalian dipakai sebagai
+                            # acuan harga - hemat 1-3 request CoinGecko.
+                            price = coin.get('current_price')
+                            if isinstance(price, (int, float)) and price > 0:
+                                price_seed[ticker] = float(price)
                 elif resp.status_code == 429:
                     # Rate limited - skip immediately, use fallback
                     logger.warning(f"CoinGecko rate limited, skipping to fallback")
                     cg_failed = True
-                    break
                 else:
-                    logger.warning(f"CoinGecko page {page} error: {resp.status_code}")
+                    logger.warning(f"CoinGecko error: {resp.status_code}")
                     cg_failed = True
-                    break
-
-                # Delay between pages
-                time.sleep(1)
 
             logger.info(f"CoinGecko: fetched {len(coingecko_mappings)} coins")
         except Exception as e:
             logger.warning(f"CoinGecko fetch failed: {e}, falling back to hardcoded list")
             cg_failed = True
+
+        # Acuan harga diisi dari respons yang sama. Tanpa ini, acuan harus
+        # dimuat terpisah (1-3 request CoinGecko lagi) - di saat start itu
+        # berarti start bisa kena 429 dan acuan harga kosong selama 10
+        # menit, sehingga ticker yang simbolnya sama di dua provider
+        # bisa dipakai untuk aset yang salah.
+        if price_seed:
+            merged = dict(self.cg_price_ref)
+            merged.update(price_seed)
+            if len(merged) >= len(self.cg_price_ref):
+                self.cg_price_ref = merged
+                self._price_ref_time = time.time()
+            logger.info(f"Acuan harga awal {len(price_seed)} pair dari respons "
+                        f"CoinGecko (total {len(self.cg_price_ref)})")
 
         # Fallback if CoinGecko failed or returned too few coins
         used_fallback = cg_failed or len(coingecko_mappings) < 10
