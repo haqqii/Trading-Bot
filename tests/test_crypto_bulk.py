@@ -178,7 +178,7 @@ class TestCoingeckoBulkFetch:
 
         monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
 
         result = service.get_crypto_data_coingecko_bulk(
             ['AAA-USD', 'BBB-USD', 'CCC-USD'])
@@ -204,7 +204,7 @@ class TestCoingeckoBulkFetch:
 
         monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
 
         result = service.get_crypto_data_coingecko_bulk(
             [f'T{i}-USD' for i in range(250)])
@@ -225,7 +225,7 @@ class TestCoingeckoBulkFetch:
 
         monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
 
         service.get_crypto_data_coingecko_bulk(['AAA-USD'])
         cached = service.cache.get('cg_AAA-USD')
@@ -250,7 +250,7 @@ class TestCoingeckoBulkFetch:
 
         monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
 
         result = service.get_crypto_data_coingecko_bulk(['AAA-USD'])
 
@@ -270,7 +270,7 @@ class TestCoingeckoBulkFetch:
 
         monkeypatch.setattr(cs._cg_session, 'get', fake_get)
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
 
         bulk = service.get_crypto_data_coingecko_bulk(['AAA-USD'])['AAA-USD']
         service.cache.delete('cg_AAA-USD')
@@ -291,7 +291,7 @@ class TestCoingeckoBulkFetch:
                             lambda url, params=None, timeout=None:
                             FakeResponse(429, {}))
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
         monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
 
         result = service.get_crypto_data_coingecko_bulk(['AAA-USD'])
@@ -458,7 +458,7 @@ class TestCryptoPairLoading:
 
         service = cs.CryptoService()
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
         monkeypatch.setattr(
             cs._cg_session, 'get',
             lambda url, params=None, timeout=None:
@@ -478,7 +478,7 @@ class TestCryptoPairLoading:
         service = cs.CryptoService()
         service.expected_pair_count = 250
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: None)
+                            lambda *a, **k: None)
         monkeypatch.setattr(
             cs._cg_session, 'get',
             lambda url, params=None, timeout=None:

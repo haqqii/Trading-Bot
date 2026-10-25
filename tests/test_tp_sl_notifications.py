@@ -100,7 +100,7 @@ def crypto_loop(monkeypatch):
         jobs_crypto.crypto_service, 'get_crypto_data', fake_fetch)
     monkeypatch.setattr(
         jobs_crypto.crypto_service, 'get_crypto_data_coingecko_bulk',
-        lambda tickers, retry=3, use_cache=True: {})
+        lambda tickers, retry=3, use_cache=True, priority=False: {})
     monkeypatch.setattr(
         jobs_crypto.crypto_service, 'get_usd_idr_rate', lambda: 16000)
     monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome', fake_save_outcome)
@@ -268,7 +268,7 @@ class TestTpSlFetchesPricesInParallel:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk',
-                            lambda tickers, retry=3, use_cache=True: {})
+                            lambda tickers, retry=3, use_cache=True, priority=False: {})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
@@ -291,7 +291,7 @@ class TestTpSlFetchesPricesInParallel:
 
         bulk_calls = []
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             bulk_calls.append((list(tickers), use_cache))
             return {}
 
@@ -335,7 +335,7 @@ class TestTpSlFetchesPricesInParallel:
             yahoo_calls.append(ticker)
             return {'price': 999.0, 'candles': 50, 'rsi': 45.0}
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
 
         signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
@@ -380,7 +380,7 @@ class TestTpSlFetchesPricesInParallel:
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             return {'BTC-USD': {'price': 0.3, 'candles': 168, 'rsi': 45.0}}
 
         signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
@@ -426,7 +426,7 @@ class TestTpSlFetchesPricesInParallel:
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             # Harga CoinGecko menunjuk aset lain (0.3 vs 102).
             return {'BTC-USD': {'price': 0.3, 'candles': 168, 'rsi': 45.0}}
 
@@ -471,7 +471,7 @@ class TestTpSlFetchesPricesInParallel:
 
         bulk_calls = []
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             bulk_calls.append(list(tickers))
             return {}
 
@@ -485,7 +485,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_cached', fake_cached)
         monkeypatch.setattr(jobs_crypto, 'coingecko_can_call_now',
-                            lambda: False)
+                            lambda priority=False: False)
         monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: {'price': 102.0, 'candles': 50})
         monkeypatch.setattr(jobs_crypto.crypto_service,
@@ -517,7 +517,7 @@ class TestTpSlFetchesPricesInParallel:
 
         bulk_calls = []
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             bulk_calls.append(list(tickers))
             return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
 
@@ -531,7 +531,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_cached', fake_cached)
         monkeypatch.setattr(jobs_crypto, 'coingecko_can_call_now',
-                            lambda: False)
+                            lambda priority=False: False)
         monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: {'price': 102.0, 'candles': 50})
         monkeypatch.setattr(jobs_crypto.crypto_service,
@@ -564,7 +564,7 @@ class TestTpSlFetchesPricesInParallel:
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             return {}
 
         signals = {
@@ -603,7 +603,7 @@ class TestTpSlFetchesPricesInParallel:
                      priority=False):
             return None
 
-        def fake_bulk(tickers, retry=3, use_cache=True):
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
             return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
 
         signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}

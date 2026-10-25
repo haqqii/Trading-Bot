@@ -262,7 +262,7 @@ class TestScanSkipsStablecoin:
                 return fake_data(ticker, interval, period)[0]
 
             def get_crypto_data_coingecko_bulk(self, tickers, retry=3,
-                                               use_cache=True):
+                                               use_cache=True, priority=False):
                 return {}
 
         class FakeSignalService:
@@ -348,7 +348,7 @@ class TestTpSlClosesStablecoin:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk',
-                            lambda tickers, retry=3, use_cache=True: {})
+                            lambda tickers, retry=3, use_cache=True, priority=False: {})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',

@@ -31,6 +31,10 @@ class RateLimiter:
         self.period = period
         self.calls = deque()
         self.lock = threading.Lock()
+        # Condition di atas lock yang sama: menunggu slot melepas lock,
+        # jadi pemanggil lain (terutama yang prioritas) tidak ikut terblokir
+        # selama satu pemanggil sedang tidur.
+        self._cond = threading.Condition(self.lock)
         self.name = name
         # Sisa kuota yang khusus untuk pemanggil prioritas (command yang
         # dipicu user). Pemanggil background dibatasi max_calls - reserved,
@@ -102,34 +106,35 @@ class RateLimiter:
             return len(self.calls) < self._limit_for(priority)
 
     def wait_if_needed(self, priority: bool = False):
-        """Wait until a call can be made - interruptible by shutdown signals"""
-        with self.lock:
-            now = time.time()
-            while self.calls and self.calls[0] < now - self.period:
-                self.calls.popleft()
+        """Tunggu sampai ada slot, lalu catat panggilan.
 
-            if len(self.calls) >= self._limit_for(priority):
-                wait_time = self.calls[0] + self.period - now
-                if wait_time > 0:
+        Menunggu lewat Condition, bukan time.sleep di bawah lock. Kalau
+        tidurnya di bawah lock, satu pemanggil yang sedang nunggu memblokir
+        semua pemanggil lain - termasuk yang prioritas, yang justru paling
+        butuh cepat. Condition melepas lock selama menunggu.
+        """
+        waited = False
+        with self._cond:
+            while True:
+                now = time.time()
+                while self.calls and self.calls[0] < now - self.period:
+                    self.calls.popleft()
+
+                if len(self.calls) < self._limit_for(priority):
+                    self.calls.append(time.time())
+                    self._total_calls += 1
+                    if self.state_file:
+                        self._persist_state()
+                    self._cond.notify_all()
+                    return
+
+                if not waited:
                     self._total_waits += 1
-                    # Interruptible sleep - allow graceful shutdown
-                    slept = 0.0
-                    while slept < wait_time:
-                        chunk = min(0.5, wait_time - slept)
-                        try:
-                            time.sleep(chunk)
-                        except (KeyboardInterrupt, SystemExit):
-                            # Re-raise but allow cleanup
-                            raise
-                        slept += chunk
-                    now = time.time()
-                    while self.calls and self.calls[0] < now - self.period:
-                        self.calls.popleft()
-
-            self.calls.append(time.time())
-            self._total_calls += 1
-            if self.state_file:
-                self._persist_state()
+                    waited = True
+                wait_time = self.calls[0] + self.period - now
+                # Potongan pendek supaya jendela waktu dan pemanggil
+                # prioritas selalu dicek ulang.
+                self._cond.wait(timeout=max(0.1, min(wait_time, 1.0)))
 
     def record_call(self):
         """Record a successful call"""
@@ -277,7 +282,12 @@ _COINGECKO_STATE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data',
     'coingecko_calls.json')
 _coingecko_limiter = RateLimiter(max_calls=4, period=60, name="coingecko",
-                                 state_file=_COINGECKO_STATE_FILE)
+                                 state_file=_COINGECKO_STATE_FILE, reserved=2)
+# 2 dari 4 request/menit ke CoinGecko dikhususkan untuk jalur yang butuh
+# cepat (job cek TP/SL, command user). Scan dan prefetch dibatasi 2/menit,
+# dan biasanya cuma pakai 1 request per 15 menit - jadi sisa kuotanya
+# hampir tidak pernah dipakai, tapi kalau ada burst (misal setelah
+# restart) job TP/SL tidak lagi menunggu hampir semenit.
 _yahoo_limiter = RateLimiter(max_calls=20, period=60, name="yahoo",
                              reserved=4)  # Reduced from 30 to avoid rate limit
 # Sisa 4 request/menit dikhususkan untuk jalur yang butuh cepat: command
@@ -296,14 +306,17 @@ _circuit_breakers: Dict[str, CircuitBreaker] = {
 }
 
 
-def coingecko_can_call_now() -> bool:
+def coingecko_can_call_now(priority: bool = False) -> bool:
     """True kalau limiter CoinGecko punya slot kosong sekarang juga.
 
     Dipakai pemanggil yang tidak boleh menunggu lama (job cek TP/SL):
     menunggu slot bisa memakan hampir semenit, dan itu sendiri sudah
     cukup untuk bikin satu siklus lewat batas 2 menit.
+
+    priority=True: jalur yang butuh cepat boleh memakai kuota cadangan,
+    jadi syaratnya lebih longgar.
     """
-    return _coingecko_limiter.can_call()
+    return _coingecko_limiter.can_call(priority=priority)
 
 
 def reset_all_circuit_breakers():

@@ -149,7 +149,7 @@ class TestGetCryptoDataCombined:
         def mock_yahoo(ticker, *args, **kwargs):
             return yahoo_data
 
-        def mock_cg(ticker):
+        def mock_cg(ticker, priority=False):
             cg_called.append(ticker)
             return None
 
@@ -179,7 +179,7 @@ class TestGetCryptoDataCombined:
         def mock_yahoo(ticker, *args, **kwargs):
             return None
 
-        def mock_cg(ticker):
+        def mock_cg(ticker, priority=False):
             return cg_data
 
         service.get_crypto_data = mock_yahoo
@@ -196,7 +196,7 @@ class TestGetCryptoDataCombined:
         service = CryptoService()
 
         service.get_crypto_data = lambda *args, **kwargs: None
-        service.get_crypto_data_coingecko = lambda x: None
+        service.get_crypto_data_coingecko = lambda x, priority=False: None
 
         result = service.get_crypto_data_combined('BTC-USD', '1h', '1d')
         assert result is None
@@ -214,7 +214,7 @@ class TestGetCryptoDataCombined:
         cg_data = {'price': 49000, 'rsi': 55, 'name': 'Bitcoin'}
 
         service.get_crypto_data = lambda *args, **kwargs: yahoo_data
-        service.get_crypto_data_coingecko = lambda x: (cg_called.append(x) or cg_data)
+        service.get_crypto_data_coingecko = lambda x, priority=False: (cg_called.append(x) or cg_data)
 
         result = service.get_crypto_data_combined('BTC-USD', '1h', '1d')
 
@@ -232,7 +232,7 @@ class TestGetCryptoDataCombined:
         cg_called = []
 
         service.get_crypto_data = lambda *args, **kwargs: yahoo_data
-        service.get_crypto_data_coingecko = lambda x: (cg_called.append(x) or {'price': 49000, 'rsi': 55})
+        service.get_crypto_data_coingecko = lambda x, priority=False: (cg_called.append(x) or {'price': 49000, 'rsi': 55})
 
         service.get_crypto_data_combined('BTC-USD', '1h', '1d')
 

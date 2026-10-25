@@ -580,9 +580,10 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
         # menunggu slot lebih baik daripada tidak punya harga sama sekali.
         t0 = time.monotonic()
         cached_cg = crypto_service.get_crypto_data_coingecko_cached(tickers)
-        if coingecko_can_call_now():
+        if coingecko_can_call_now(priority=True):
             cg_data = await asyncio.to_thread(
-                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
+                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False,
+                priority=True)
         elif len(cached_cg) >= len(tickers) * _COINGECKO_CACHE_COVERAGE:
             cg_data = cached_cg
             logger.info(
@@ -595,7 +596,8 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
                 f"[TP/SL] limiter CoinGecko penuh dan cache baru "
                 f"{len(cached_cg)}/{len(tickers)} - tunggu slot")
             cg_data = await asyncio.to_thread(
-                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
+                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False,
+                priority=True)
         cg_secs = time.monotonic() - t0
 
         need_yahoo = []

@@ -826,14 +826,20 @@ class CryptoService:
             return data
 
         # Fallback to CoinGecko if Yahoo fails
-        data = self.get_crypto_data_coingecko(ticker)
+        data = self.get_crypto_data_coingecko(ticker, priority=priority)
         if data and not math.isnan(data.get('rsi', 50)) and data.get('rsi', 50) > 0:
             return data
 
         return None
 
-    def get_crypto_data_coingecko(self, ticker: str, retry: int = 3, use_cache: bool = True):
-        """Get crypto data from CoinGecko API"""
+    def get_crypto_data_coingecko(self, ticker: str, retry: int = 3, use_cache: bool = True,
+                                  priority: bool = False):
+        """Get crypto data from CoinGecko API
+
+        priority=True: jalur yang butuh cepat (job cek TP/SL, command user) -
+        boleh memakai kuota CoinGecko yang dicadangkan, jadi tidak menunggu
+        hampir semenit di belakang request scan/prefetch.
+        """
         cache_key = f"cg_{ticker}"
         if use_cache:
             cached = self.cache.get(cache_key)
@@ -852,7 +858,7 @@ class CryptoService:
 
         for attempt in range(retry):
             try:
-                _coingecko_limiter.wait_if_needed()
+                _coingecko_limiter.wait_if_needed(priority=priority)
 
                 url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
                 params = {
@@ -918,7 +924,8 @@ class CryptoService:
         return None
 
     def get_crypto_data_coingecko_bulk(self, tickers, retry: int = 3,
-                                       use_cache: bool = True):
+                                       use_cache: bool = True,
+                                       priority: bool = False):
         """Ambil data CoinGecko untuk banyak ticker sekaligus.
 
         Endpoint /coins/markets bisa membawa dozens ticker (dengan sparkline
@@ -928,6 +935,10 @@ class CryptoService:
 
         Ticker yang datanya sudah ada di cache tidak diambil lagi, tapi
         tetap dikembalikan supaya pemanggil tidak mengira datanya hilang.
+
+        priority=True: jalur yang butuh cepat (job cek TP/SL) - boleh memakai
+        kuota CoinGecko yang dicadangkan, jadi tidak menunggu hampir
+        semenit di belakang request scan/prefetch.
 
         Returns:
             dict ticker -> payload (hanya ticker yang datanya valid).
@@ -962,7 +973,7 @@ class CryptoService:
 
             for attempt in range(retry):
                 try:
-                    _coingecko_limiter.wait_if_needed()
+                    _coingecko_limiter.wait_if_needed(priority=priority)
 
                     resp = _cg_session.get(
                         'https://api.coingecko.com/api/v3/coins/markets',
