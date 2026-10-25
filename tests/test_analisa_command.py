@@ -120,6 +120,52 @@ class TestAnalisaDoesNotBlockEventLoop:
         assert 'tidak ditemukan' in texts
 
 
+class TestAnalisaDoesNotBlockOnPairLoading:
+    """Pemuatan daftar pair tidak boleh membekukan event loop."""
+
+    @pytest.mark.asyncio
+    async def test_slow_pair_load_does_not_freeze_loop(self, monkeypatch):
+        from handlers.commands import analisa as analisa_mod
+        from handlers.commands.analisa import analisa_cmd
+
+        monkeypatch.setattr(analisa_mod, 'ALL_STOCKS', {})
+        # Daftar pair belum termuat (misal baru restart) dan pemuatannya
+        # lambat - kalau dipanggil blocking, loop beku.
+        monkeypatch.setattr(analisa_mod.crypto_service, 'crypto_pairs', {})
+
+        def slow_load(*args, **kwargs):
+            time.sleep(1.5)
+            return {}
+
+        def fake_probe(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(analisa_mod.crypto_service, 'load_crypto_pairs',
+                            slow_load)
+        monkeypatch.setattr(analisa_mod.crypto_service, 'get_crypto_data',
+                            fake_probe)
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['SKYAI'])
+
+        ticks = 0
+
+        async def heartbeat():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        hb = asyncio.create_task(heartbeat())
+        try:
+            await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+        finally:
+            hb.cancel()
+
+        assert ticks > 20, f"event loop beku saat load pair (ticks={ticks})"
+        assert 'tidak ditemukan' in ' '.join(update.message.sent)
+
+
 class TestAnalisaUsesPriorityQuota:
     """Request user harus pakai kuota limiter yang dipesan untuk user."""
 

@@ -161,6 +161,14 @@ def main():
         sys.stdout.write(f"CRYPTO_LOADED:{len(crypto_service.crypto_pairs)}\n")
         sys.stdout.flush()
 
+        # Acuan harga CoinGecko dimuat sekali di sini. Tanpa itu, ticker
+        # dengan simbol sama di Yahoo dan CoinGecko (mis. AERO-USD) bisa
+        # dipakai untuk aset yang salah sampai scan pertama selesai.
+        try:
+            crypto_service.refresh_price_reference()
+        except Exception as ref_err:
+            logger.warning(f"[MAIN] Gagal muat acuan harga CoinGecko: {ref_err}")
+
         # Load persisted user data - import and call directly from command_handlers module
         sys.stdout.write("LOADING_USER_DATA\n")
         sys.stdout.flush()

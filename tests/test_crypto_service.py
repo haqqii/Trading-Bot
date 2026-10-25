@@ -337,6 +337,44 @@ class TestCryptoPairLoading:
             assert service._crypto_loaded is True
 
 
+class TestCryptoPairLoadingPriority:
+    """Pemuat daftar pair adalah fondasi bot - harus pakai kuota prioritas."""
+
+    def test_load_crypto_pairs_uses_priority_quota(self, monkeypatch):
+        """Request CoinGecko saat load memakai slot prioritas."""
+        from services import crypto_service as cs
+        from services.crypto_service import CryptoService
+
+        service = CryptoService()
+        recorded = []
+
+        def fake_wait(priority=False):
+            recorded.append(priority)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return [
+                    {'symbol': 'aaa', 'id': 'aaa', 'name': 'AAA',
+                     'market_cap_rank': 1},
+                    {'symbol': 'bbb', 'id': 'bbb', 'name': 'BBB',
+                     'market_cap_rank': 2},
+                ]
+
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            fake_wait)
+        monkeypatch.setattr(cs._cg_session, 'get',
+                            lambda *a, **k: _Resp())
+
+        service.load_crypto_pairs(force=True)
+
+        assert recorded, "limiter tidak dipanggil saat load pair"
+        assert all(recorded), (
+            "load_crypto_pairs harus pakai kuota prioritas - kalau tidak, "
+            "start container tertahan antre di belakang scan")
+
+
 class TestEdgeCases:
     """Edge case tests for crypto service."""
 

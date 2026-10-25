@@ -43,6 +43,9 @@ data/health_state.json
 # Registry ticker crypto yang tidak ada di Yahoo Finance
 data/crypto_yahoo_missing.json
 
+# Registry ticker yang tidak punya data harga di sumber data manapun
+data/ticker_unavailable.json
+
 # Riwayat request CoinGecko - batas rate limitnya per-IP, jadi state ini
 # harus bertahan antar-restart container
 data/coingecko_calls.json

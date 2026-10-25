@@ -65,6 +65,13 @@ _PRICE_REF_TTL = 600
 # Jumlah id per request /simple/price (URL-nya tidak boleh terlalu panjang).
 _PRICE_REF_CHUNK = 100
 
+# Batas waktu menunggu slot limiter CoinGecko untuk jalur prioritas
+# (command user dan job cek TP/SL). Tanpa batas, satu slot yang lambat
+# muncul bisa menahan jalur ini hampir semenit - command user jadi
+# kelihatan "gabisa" dan siklus cek TP/SL bisa lewat batas 2 menit.
+# Lewat batas ini, jalur prioritas memakai harga cache (basi) saja.
+_COINGECKO_PRIORITY_MAX_WAIT = 20
+
 # Umur cache data harga (detik). Scan crypto jalan tiap 15 menit, job TP/SL
 # tiap 2 menit - kalau cache terlalu pendek, keduanya berebut request ke
 # provider yang sama (batas Yahoo 20 request/menit, CoinGecko 5/menit) dan
@@ -322,8 +329,14 @@ class CryptoService:
         self.cg_price_ref: dict[str, float] = {}
         self._price_ref_time: float = 0.0
 
-    def load_crypto_pairs(self, force: bool = False):
-        """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback"""
+    def load_crypto_pairs(self, force: bool = False, priority: bool = True):
+        """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback
+
+        priority=True (default): daftar pair itu fondasi bot - command user
+        (/analisa) butuh tahu ticker mana yang crypto, dan job recovery
+        butuh memulihkan daftar yang hilang. Jadi request-nya boleh memakai
+        kuota cadangan, tidak perlu antre di belakang scan.
+        """
         if self._crypto_loaded and not force:
             return self.crypto_pairs
 
@@ -348,7 +361,7 @@ class CryptoService:
                     # Pakai limiter yang sama dengan jalur CoinGecko lain.
                     # Tanpa ini, request saat start tidak ikut dihitung dan
                     # bisa menabrak kuota 5 request/menit.
-                    _coingecko_limiter.wait_if_needed()
+                    _coingecko_limiter.wait_if_needed(priority=priority)
                     resp = _cg_session.get(url, params=params, timeout=10)
                 except Exception as req_err:
                     logger.warning(f"CoinGecko request failed: {req_err}")
@@ -470,7 +483,15 @@ class CryptoService:
             chunk = items[start:start + _PRICE_REF_CHUNK]
             for attempt in range(3):
                 try:
-                    _coingecko_limiter.wait_if_needed()
+                    # Batas tunggu: kalau slot CoinGecko tidak ada dalam
+                    # 30 detik, chunk ini dilewati (chunk sebelumnya masih
+                    # jadi acuan). Tanpa batas, refresh acuan bisa menahan
+                    # scan hampir 3 menit (3 chunk x hampir semenit).
+                    if not _coingecko_limiter.wait_if_needed(max_wait=30):
+                        logger.warning(
+                            "CoinGecko tidak ada slot dalam 30 detik - "
+                            "acuan harga tidak disegarkan untuk chunk ini")
+                        break
                     resp = _cg_session.get(
                         'https://api.coingecko.com/api/v3/simple/price',
                         params={
@@ -521,6 +542,15 @@ class CryptoService:
             return self.cg_price_ref
         self._price_ref_time = time.time()
         return self.load_price_reference()
+
+    def refresh_price_reference(self) -> dict[str, float]:
+        """Muat ulang acuan harga CoinGecko kalau sudah basi.
+
+        Dipanggil dari scan (sekali per siklus) dan dari startup. Jadi
+        setiap fetch ticker cukup membandingkan dengan acuan yang ada,
+        tanpa perlu memicu request CoinGecko di tengah jalan.
+        """
+        return self._ensure_price_reference()
 
     def get_usd_idr_rate(self):
         """Get USD to IDR conversion rate (cached 5 minutes)"""
@@ -626,9 +656,12 @@ class CryptoService:
                 if len(hist) < 50:
                     # Candle-nya ada tapi kurang dari 50 - ticker baru
                     # listing, bukan ticker yang hilang. Tidak ditandai.
-                    if attempt < retry - 1:
-                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                        continue
+                    #
+                    # Tidak dicoba ulang: candle yang memang segini tidak
+                    # akan bertambah dalam hitungan detik, dan tiap percobaan
+                    # menahan jalur ini belasan detik. Pada 25 Okt 2026 satu
+                    # ticker (MNT-USD) bikin tahap Yahoo di job cek TP/SL
+                    # memakan 59 detik karena 3 percobaan sia-sia.
                     logger.warning(
                         f"Yahoo cuma punya {len(hist)} candle untuk {ticker} "
                         f"({interval}) - pakai fallback")
@@ -706,7 +739,13 @@ class CryptoService:
                 # (JUP-USD di Yahoo = aset lain, bukan Jupiter). Kalau
                 # harga beda jauh, datanya milik aset yang salah - tolak
                 # supaya fallback CoinGecko yang dipakai.
-                ref = self._ensure_price_reference().get(ticker)
+                #
+                # Acuan dipakai apa adanya. Memuat ulang acuan = 1-3
+                # request CoinGecko, dan itu kerjaan scan (yang memuatnya
+                # sekali per siklus) atau startup - bukan tiap fetch
+                # ticker, karena satu pemuatan bisa menahan jalur ini
+                # hampir semenit di antrean limiter CoinGecko.
+                ref = self.cg_price_ref.get(ticker)
                 if ref and ref > 0:
                     ratio = price / ref
                     if ratio < (1 / _PRICE_MISMATCH_RATIO) or ratio > _PRICE_MISMATCH_RATIO:
@@ -858,7 +897,20 @@ class CryptoService:
 
         for attempt in range(retry):
             try:
-                _coingecko_limiter.wait_if_needed(priority=priority)
+                if priority:
+                    # Jalur yang dipicu user (dan job cek TP/SL) tidak boleh
+                    # menunggu hampir semenit di antrean limiter. Kalau slot
+                    # tidak ada dalam batas waktu, pakai harga cache yang
+                    # basi - lebih baik daripada diam terlalu lama.
+                    if not _coingecko_limiter.wait_if_needed(
+                            priority=True, max_wait=_COINGECKO_PRIORITY_MAX_WAIT):
+                        logger.warning(
+                            f"CoinGecko tidak ada slot dalam "
+                            f"{_COINGECKO_PRIORITY_MAX_WAIT} detik untuk "
+                            f"{ticker} - pakai harga cache")
+                        return self.cache.get_stale(cache_key)
+                else:
+                    _coingecko_limiter.wait_if_needed()
 
                 url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
                 params = {
@@ -973,7 +1025,24 @@ class CryptoService:
 
             for attempt in range(retry):
                 try:
-                    _coingecko_limiter.wait_if_needed(priority=priority)
+                    if priority:
+                        # Jalur prioritas tidak menunggu hampir semenit.
+                        # Kalau slot tidak ada dalam batas waktu, pakai
+                        # harga cache yang basi untuk sisa ticker.
+                        if not _coingecko_limiter.wait_if_needed(
+                                priority=True,
+                                max_wait=_COINGECKO_PRIORITY_MAX_WAIT):
+                            logger.warning(
+                                "CoinGecko tidak ada slot dalam "
+                                f"{_COINGECKO_PRIORITY_MAX_WAIT} detik - "
+                                "pakai harga cache")
+                            for pending, _ in wanted:
+                                stale = self.cache.get_stale(f"cg_{pending}")
+                                if stale:
+                                    out[pending] = stale
+                            return out
+                    else:
+                        _coingecko_limiter.wait_if_needed()
 
                     resp = _cg_session.get(
                         'https://api.coingecko.com/api/v3/coins/markets',

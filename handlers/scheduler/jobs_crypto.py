@@ -61,6 +61,12 @@ _COINGECKO_CACHE_COVERAGE = 0.8
 _DEGRADE_ALERT_INTERVAL = 6 * 60 * 60
 _last_degrade_alert = 0.0
 
+# Batas waktu tahap Yahoo di job cek TP/SL. Job ini jalan tiap 2 menit,
+# jadi satu tahap yang lama bisa bikin siklus berikutnya kena skip.
+# Kalau lewat batas ini, harga diambil dari CoinGecko (datanya sudah
+# ada di tangan job ini) - notifikasi tetap jalan, walau sedikit terlambat.
+_TP_SL_YAHOO_TIMEOUT = 45
+
 
 def _has_valid_rsi(data) -> bool:
     """True kalau data punya RSI yang masuk akal (dipakai buat validasi)."""
@@ -103,7 +109,25 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
     Returns:
         dict ticker -> data.
     """
-    semaphore = asyncio.Semaphore(20)
+    # Acuan harga CoinGecko disegarkan sekali per siklus scan, di sini.
+    # Kalau tidak, tiap fetch ticker yang butuh pencocokan harga bisa
+    # memicu pemuatan acuan (1-3 request CoinGecko) dan menahan jalurnya
+    # hampir semenit di antrean limiter. Dijalankan sebagai task supaya
+    # scan tidak ikut menunggu antrean CoinGecko.
+    async def _refresh_ref():
+        try:
+            await asyncio.to_thread(crypto_service.refresh_price_reference)
+        except Exception as ref_err:
+            logger.warning(f"[CRYPTO] Gagal segarkan acuan harga CoinGecko: {ref_err}")
+
+    asyncio.create_task(_refresh_ref())
+
+    # 6 request sekaligus sudah cukup untuk mengisi kuota limiter
+    # (16/menit): dengan fetch ~4 detik, 2 worker saja sudah jenuh.
+    # Dan 20 worker bikin Yahoo throttling + cache SQLite yfinance
+    # contends ("database is locked") sehingga tiap fetch jadi lebih
+    # lambat - bukan lebih cepat.
+    semaphore = asyncio.Semaphore(6)
 
     def fetch_yahoo(ticker):
         """Ambil data Yahoo untuk satu ticker (blocking, dipanggil di thread)."""
@@ -647,9 +671,40 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
                         skip_if_missing=True, priority=True)
                     return ticker, d
 
-                fetched = await asyncio.gather(
-                    *[_fetch_yahoo(t) for t in still_need_fetch])
-                for ticker, d in fetched:
+                # Tahap ini dibatasi waktunya. Satu ticker yang lambat
+                # (mis. Yahoo cuma punya sedikit candle untuk timeframe 4h)
+                # pernah menahan tahap ini 90 detik, dan itu
+                # mendorong siklus ke batas 2 menit - siklus berikutnya
+                # lalu kena skip dan notifikasi telat.
+                #
+                # asyncio.wait, bukan wait_for: wait_for membatalkan task
+                # dan tetap menunggu thread-nya selesai (thread tidak bisa
+                # diinterupsi), jadi batasnya jadi tidak konsisten.
+                # asyncio.wait melepas task yang belum selesai - job lanjut
+                # dengan harga CoinGecko, thread sisa dibiarkan beres sendiri.
+                tasks = [asyncio.create_task(_fetch_yahoo(t))
+                         for t in still_need_fetch]
+                done, pending = await asyncio.wait(
+                    tasks, timeout=_TP_SL_YAHOO_TIMEOUT)
+
+                fetched_map = {}
+                for task in done:
+                    try:
+                        ticker, d = task.result()
+                    except Exception as fetch_err:
+                        logger.warning(
+                            f"[TP/SL] gagal ambil harga Yahoo: {fetch_err}")
+                        continue
+                    fetched_map[ticker] = d
+
+                if pending:
+                    logger.warning(
+                        f"[TP/SL] tahap Yahoo lewat {_TP_SL_YAHOO_TIMEOUT} "
+                        f"detik ({len(pending)} ticker) - pakai harga "
+                        f"CoinGecko untuk sisa ticker")
+
+                for ticker in still_need_fetch:
+                    d = fetched_map.get(ticker)
                     if d and _has_valid_rsi(d):
                         result[ticker] = d
                     else:

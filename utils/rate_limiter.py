@@ -105,14 +105,24 @@ class RateLimiter:
                 self.calls.popleft()
             return len(self.calls) < self._limit_for(priority)
 
-    def wait_if_needed(self, priority: bool = False):
+    def wait_if_needed(self, priority: bool = False,
+                       max_wait: Optional[float] = None) -> bool:
         """Tunggu sampai ada slot, lalu catat panggilan.
 
         Menunggu lewat Condition, bukan time.sleep di bawah lock. Kalau
         tidurnya di bawah lock, satu pemanggil yang sedang nunggu memblokir
         semua pemanggil lain - termasuk yang prioritas, yang justru paling
         butuh cepat. Condition melepas lock selama menunggu.
+
+        max_wait: batas maksimum menunggu (detik). Kalau habis dan tetap
+        tidak ada slot, fungsi ini mengembalikan False tanpa memakai slot -
+        pemanggil bisa pakai data cache sebagai gantinya. Tanpa batas ini,
+        pemanggil yang butuh cepat bisa menunggu hampir satu menit.
+
+        Returns:
+            True kalau slot dipakai, False kalau batas waktu habis.
         """
+        deadline = None if max_wait is None else time.time() + max_wait
         waited = False
         with self._cond:
             while True:
@@ -126,7 +136,10 @@ class RateLimiter:
                     if self.state_file:
                         self._persist_state()
                     self._cond.notify_all()
-                    return
+                    return True
+
+                if deadline is not None and now >= deadline:
+                    return False
 
                 if not waited:
                     self._total_waits += 1

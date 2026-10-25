@@ -441,7 +441,7 @@ class TestCryptoPairLoading:
         waits = []
 
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
-                            lambda: waits.append(1))
+                            lambda *a, **k: waits.append(1))
         monkeypatch.setattr(
             cs._cg_session, 'get',
             lambda url, params=None, timeout=None:

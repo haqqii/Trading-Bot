@@ -409,6 +409,71 @@ class TestTpSlFetchesPricesInParallel:
         assert len(app.bot.sent) == 1
         assert 'TP1' in app.bot.sent[0][1]
 
+    def test_slow_yahoo_stage_is_bounded(self, monkeypatch):
+        """Tahap Yahoo yang lambat dibatasi waktunya.
+
+        Satu ticker yang lambat (mis. Yahoo cuma punya sedikit candle untuk
+        timeframe 4h) pernah menahan tahap ini 90 detik, dan siklus cek
+        TP/SL jadi lewat 2 menit - siklus berikutnya kena skip dan
+        notifikasi telat. Jadi tahap ini dibatasi; harga yang tertinggal
+        diambil dari CoinGecko (datanya sudah ada di tangan job ini).
+        """
+        import time
+        from handlers.scheduler import jobs_crypto
+
+        monkeypatch.setattr(jobs_crypto, '_TP_SL_YAHOO_TIMEOUT', 0.5)
+
+        timing = {}
+
+        def slow_fetch(ticker, interval, period, skip_if_missing=False,
+                       priority=False):
+            time.sleep(2)
+            timing['yahoo_done'] = time.time()
+            return None
+
+        def fake_bulk(tickers, retry=3, use_cache=True, priority=False):
+            # Harga CoinGecko beda jauh dari harga scan (90), jadi ticker
+            # ini masuk tahap Yahoo. Harga 103 masih dekat dengan entry 100
+            # dan sudah lewat TP1 (102).
+            return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', slow_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
+                            lambda t, i, p: {'price': 90.0, 'candles': 50})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        orig_send = app.bot.send_message
+
+        async def timed_send(chat_id, text, **kwargs):
+            timing['sent'] = time.time()
+            return await orig_send(chat_id, text, **kwargs)
+
+        app.bot.send_message = timed_send
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        # Notifikasi harus terkirim sebelum request Yahoo yang lambat itu
+        # selesai - artinya job tidak menunggu tahap itu.
+        assert 'sent' in timing, "notifikasi tidak terkirim"
+        assert 'yahoo_done' in timing
+        assert timing['sent'] < timing['yahoo_done'], (
+            "job menunggu request Yahoo yang lambat - batas waktunya "
+            "tidak dipakai")
+
     def test_cached_yahoo_price_avoids_new_request(self, monkeypatch):
         """Harga Yahoo dari cache dipakai, tanpa request baru.
 

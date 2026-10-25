@@ -338,6 +338,24 @@ class TestRateLimiterPriority:
         limiter = RateLimiter(max_calls=20, period=60, reserved=4)
         assert limiter.get_stats()['reserved'] == 4
 
+    def test_max_wait_gives_up_instead_of_waiting_forever(self):
+        """Batas waktu tunggu: Caller dapat_report False, bukan nunggu
+        hampir semenit tanpa hasil."""
+        limiter = RateLimiter(max_calls=1, period=60)
+        assert limiter.wait_if_needed() is True
+
+        t0 = time.time()
+        got_slot = limiter.wait_if_needed(max_wait=0.5)
+        waited = time.time() - t0
+
+        assert got_slot is False, "harus menyerah, bukan dapat slot"
+        assert waited < 5, f"terlalu lama nunggu ({waited:.1f} detik)"
+
+    def test_max_wait_returns_true_when_slot_is_free(self):
+        """Kalau slot memang ada, batas waktu tidak menggagalkan."""
+        limiter = RateLimiter(max_calls=2, period=60)
+        assert limiter.wait_if_needed(max_wait=0.5) is True
+
 
 # === CircuitBreaker Tests ===
 

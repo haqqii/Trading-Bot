@@ -94,9 +94,16 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(send_immediate_reply())
 
     try:
-        # Load crypto pairs if not loaded
+        # Load crypto pairs if not loaded. Jangan blocking di event loop:
+        # load_crypto_pairs bisa antre di limiter CoinGecko beberapa detik,
+        # dan selama itu semua perintah lain ikut beku.
         if not crypto_service.crypto_pairs:
-            crypto_service.load_crypto_pairs()
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(crypto_service.load_crypto_pairs),
+                    timeout=25)
+            except Exception as pairs_err:
+                logger.warning(f"[ANALISA] Gagal load crypto pairs: {pairs_err}")
 
         ticker_upper = ticker.upper()
 
