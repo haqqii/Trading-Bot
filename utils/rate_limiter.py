@@ -301,8 +301,15 @@ _coingecko_limiter = RateLimiter(max_calls=4, period=60, name="coingecko",
 # dan biasanya cuma pakai 1 request per 15 menit - jadi sisa kuotanya
 # hampir tidak pernah dipakai, tapi kalau ada burst (misal setelah
 # restart) job TP/SL tidak lagi menunggu hampir semenit.
-_yahoo_limiter = RateLimiter(max_calls=20, period=60, name="yahoo",
-                             reserved=4)  # Reduced from 30 to avoid rate limit
+_yahoo_limiter = RateLimiter(max_calls=26, period=60, name="yahoo",
+                             reserved=4)
+# Kuota 26/menit: 22 untuk jalur background (scan crypto, scan saham,
+# prefetch) dan 4 untuk jalur yang butuh cepat. Naiknya dari 20 karena
+# dengan 20, jalur background hanya dapat 16/menit, dan prefetch saham
+# memakan ~6/menit - sisa 10/menit membuat scan crypto (250 ticker) makan
+# 17 menit, lewat interval 15 menit, jadi tiap scan berikutnya kena skip.
+# Batas sebenarnya tetap ~20 request/menit (total kebutuhan job), jadi
+# angka ini tidak menambah beban ke Yahoo - cuma mencegah antrean.
 # Sisa 4 request/menit dikhususkan untuk jalur yang butuh cepat: command
 # yang dipicu user (/analisa, /harga) dan job cek TP/SL. Tanpa itu, mereka
 # antre di belakang scan crypto yang sedang pakai kuota - dulu /analisa

@@ -679,13 +679,17 @@ class CryptoService:
                     # Yang boleh dicatat hanya yang pertama - kalau request
                     # yang gagal, ticker-nya tetap sah dan harus dicoba lagi
                     # di scan berikutnya.
-                    if attempt < retry - 1:
-                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
-                        continue
                     if no_data_reported(ticker, since):
                         # Yahoo sendiri yang bilang ticker ini tidak ada
                         # datanya. Dicatat, supaya scan berikutnya tidak
                         # menebak lagi - datanya tetap dari CoinGecko.
+                        #
+                        # Tidak dicoba ulang: jawaban Yahoo untuk ticker
+                        # yang memang tidak ada tidak akan berubah, dan
+                        # tiap percobaan memakan satu slot limiter. Pada
+                        # 26 Okt 2026 sekitar 11 ticker seperti ini bikin
+                        # scan crypto 17 menit (lewat interval 15 menit,
+                        # jadi tiap scan berikutnya kena skip).
                         crypto_yahoo_missing.mark_missing(
                             ticker, interval,
                             reason=f'Yahoo tidak punya data untuk {ticker}',
@@ -693,10 +697,13 @@ class CryptoService:
                         logger.warning(
                             f"Yahoo tidak punya data untuk {ticker} ({interval}) "
                             f"- pakai fallback CoinGecko")
-                    else:
-                        logger.warning(
-                            f"Yahoo tidak mengembalikan data untuk {ticker} "
-                            f"({interval}) - pakai fallback CoinGecko")
+                        return None
+                    if attempt < retry - 1:
+                        time.sleep(exponential_backoff(attempt, base_delay=0.5, max_delay=4))
+                        continue
+                    logger.warning(
+                        f"Yahoo tidak mengembalikan data untuk {ticker} "
+                        f"({interval}) - pakai fallback CoinGecko")
                     return None
 
                 if len(hist) < 50:

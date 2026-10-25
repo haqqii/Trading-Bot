@@ -131,12 +131,12 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
 
     asyncio.create_task(_refresh_ref())
 
-    # 6 request sekaligus sudah cukup untuk mengisi kuota limiter
-    # (16/menit): dengan fetch ~4 detik, 2 worker saja sudah jenuh.
-    # Dan 20 worker bikin Yahoo throttling + cache SQLite yfinance
-    # contends ("database is locked") sehingga tiap fetch jadi lebih
-    # lambat - bukan lebih cepat.
-    semaphore = asyncio.Semaphore(6)
+    # 10 request sekaligus. Kuota limiter (16/menit) yang jadi penentu
+    # kecepatan, tapi jumlah worker menentukan seberapa cepat satu fetch
+    # yang lambat (Yahoo yang timeout bisa tahan 2 menit) dihide.
+    # 20 worker dulu dipakai, tapi itu bikin cache SQLite yfinance contends
+    # ("database is locked") sehingga tiap fetch jadi lebih lambat.
+    semaphore = asyncio.Semaphore(10)
 
     def fetch_yahoo(ticker):
         """Ambil data Yahoo untuk satu ticker (blocking, dipanggil di thread)."""
@@ -157,6 +157,7 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
     data_map: dict = {}
     failed: list = []
 
+    yahoo_t0 = time.monotonic()
     for fut in asyncio.as_completed([fetch_with_limit(t) for t in tickers]):
         ticker, d = await fut
         if d:
@@ -164,6 +165,13 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
             store_crypto_scan_data(ticker, interval, period, d)
         else:
             failed.append(ticker)
+    yahoo_secs = time.monotonic() - yahoo_t0
+    # Log durasi tahap ini penting: kalau scan kena interval 15 menit,
+    # siklus berikutnya akan kena skip dan sinyal baru telat satu siklus.
+    logger.info(
+        f"[CRYPTO] tahap Yahoo {len(tickers)} ticker - {yahoo_secs:.1f} detik "
+        f"({len(tickers) / max(yahoo_secs, 0.1) * 60:.0f} ticker/menit, "
+        f"{len(failed)} tanpa data)")
 
     if failed:
         logger.info(f"[CRYPTO] {len(failed)} ticker tanpa data Yahoo, "

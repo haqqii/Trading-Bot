@@ -375,6 +375,65 @@ class TestCryptoPairLoadingPriority:
             "start container tertahan antre di belakang scan")
 
 
+class TestYahooNoDataIsNotRetried:
+    """Yahoo yang bilang ticker tidak ada tidak boleh di-retry.
+
+    Retry tidak akan mengubah jawaban Yahoo, tapi tiap percobaan memakan
+    satu slot limiter Yahoo. Pada 26 Okt 2026 sekitar 11 ticker seperti
+    ini membuat scan crypto makan 17 menit - lewat interval 15 menit, jadi
+    tiap scan berikutnya kena skip.
+    """
+
+    @staticmethod
+    def _fake_yahoo(monkeypatch, cs, calls):
+        import pandas as pd
+
+        class FakeTicker:
+            def __init__(self, ticker):
+                self.ticker = ticker
+
+            def history(self, interval=None, period=None, timeout=None):
+                calls.append(self.ticker)
+                return pd.DataFrame()
+
+        monkeypatch.setattr(cs.yf, 'Ticker', FakeTicker)
+        monkeypatch.setattr(cs.crypto_yahoo_missing, 'is_missing',
+                            lambda *a, **k: False)
+        monkeypatch.setattr(cs._yahoo_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+
+    def test_ticker_yang_tidak_ada_tidak_di_retry(self, monkeypatch):
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        calls = []
+        self._fake_yahoo(monkeypatch, cs, calls)
+        monkeypatch.setattr(cs, 'no_data_reported', lambda t, since: True)
+        monkeypatch.setattr(cs.crypto_yahoo_missing, 'mark_missing',
+                            lambda *a, **k: True)
+
+        result = service.get_crypto_data('TIDAK-ADA-USD', '4h', '1mo')
+
+        assert result is None
+        assert len(calls) == 1, \
+            "ticker yang memang tidak ada di Yahoo tidak perlu di-retry"
+
+    def test_request_yang_gagal_tetap_di_retry(self, monkeypatch):
+        """Request yang gagal (bukan ticker yang hilang) tetap di-retry."""
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        calls = []
+        self._fake_yahoo(monkeypatch, cs, calls)
+        monkeypatch.setattr(cs, 'no_data_reported', lambda t, since: False)
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        result = service.get_crypto_data('GAGAL-USD', '4h', '1mo')
+
+        assert result is None
+        assert len(calls) == 3, "request yang gagal harus dicoba lagi"
+
+
 class TestEdgeCases:
     """Edge case tests for crypto service."""
 
