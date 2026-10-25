@@ -15,6 +15,7 @@ import io
 import sys
 import logging
 import logging.handlers
+import threading
 
 # Fix UTF-8 output for Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -164,10 +165,19 @@ def main():
         # Acuan harga CoinGecko dimuat sekali di sini. Tanpa itu, ticker
         # dengan simbol sama di Yahoo dan CoinGecko (mis. AERO-USD) bisa
         # dipakai untuk aset yang salah sampai scan pertama selesai.
-        try:
-            crypto_service.refresh_price_reference()
-        except Exception as ref_err:
-            logger.warning(f"[MAIN] Gagal muat acuan harga CoinGecko: {ref_err}")
+        #
+        # Di thread terpisah: pemuatan ini butuh 1-3 request CoinGecko dan
+        # bisa menunggu slot limiter, sementara bot harus bisa melayani
+        # command user sedekat mungkin setelah start.
+        def _load_price_reference():
+            try:
+                crypto_service.refresh_price_reference()
+            except Exception as ref_err:
+                logger.warning(
+                    f"[MAIN] Gagal muat acuan harga CoinGecko: {ref_err}")
+
+        threading.Thread(target=_load_price_reference,
+                         name='price-ref-loader', daemon=True).start()
 
         # Load persisted user data - import and call directly from command_handlers module
         sys.stdout.write("LOADING_USER_DATA\n")
