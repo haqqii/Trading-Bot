@@ -84,7 +84,7 @@ _COINGECKO_CACHE_TTL = 300
 _COINGECKO_BULK_CHUNK = 100
 
 # Berapa pair yang normalnya dipantau kalau CoinGecko sempat bisa diakses
-# (2 halaman x 250 koin, setelah symbol duplikat dibuang).
+# (250 koin teratas, setelah symbol duplikat dibuang).
 _EXPECTED_PAIR_COUNT = 250
 
 # Jeda minimum antar percobaan ambil daftar pair. Tanpa ini, container yang
