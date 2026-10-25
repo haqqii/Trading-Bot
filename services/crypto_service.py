@@ -70,34 +70,99 @@ _PRICE_REF_CHUNK = 100
 # Stablecoin = aset yang nilainya dipatok ke mata uang lain (biasanya $1).
 # Rekomendasi "beli" untuk stablecoin tidak berguna: volatilitasnya ~0, jadi
 # tidak ada peluang profit dan TP/SL-nya tidak pernah kena. Di produksi,
-# 12 dari 54 sinyal crypto/stablecoin yang terkirim selama sehari adalah
-# stablecoin - semuanya noise.
+# 12 dari 54 sinyal crypto yang terkirim selama sehari adalah stablecoin -
+# semuanya noise.
 #
 # Dua syarat, keduanya wajib:
-# 1. Harga dekat peg. Aset biasa yang kebetulan$~1 (FIL, DOT, BTSE) tidak ikut
-#    tersaring karena syarat kedua tidak terpenuhi.
-# 2. Bollinger band sangat sempit. Diukur dari LEBAR BAND, bukan dari ATR.
-#    ATR tidak bisa dipakai: jalur CoinGecko mengganti ATR di bawah 0.1% harga
-#    dengan 2.5% (lihat get_crypto_data_coingecko), jadi stablecoin yang
-#    diambil dari CoinGecko terlihat "bergerak". Lebar band dihitung dari seri
-#    harga yang sama di kedua jalur, jadi aman untuk provider apa pun.
+# 1. Harga dekat peg (0.80 - 1.60). Aset biasa yang kebetulan~$1 (FIL, DOT,
+#    BTSE) tidak ikut tersaring karena syarat 2 tidak terpenuhi.
+# 2. Hampir tidak bergerak: rentang harga 24 jam <= 0.5%.
 #
-# Data produksi (interval 4h, 25 Okt 2026):
-#   stablecoin : lebar band 0.016% - 0.288%
-#   aset biasa : 2.5% (BTSE, $1.07), 2.8% (BTC), 4.9% (ETH), 11.5% (FIL)
-# Ambang 1% ada di tengah celah 10x itu.
-STABLECOIN_PRICE_MIN = 0.85
-STABLECOIN_PRICE_MAX = 1.20
-STABLECOIN_MAX_BB_WIDTH = 0.01   # 1% dari harga
+# Kenapa "rentang 24 jam", bukan lebar Bollinger band atau ATR:
+# - ATR: jalur CoinGecko mengganti ATR di bawah 0.1% harga dengan 2.5%
+#   (lihat get_crypto_data_coingecko), jadi stablecoin yang diambil dari
+#   CoinGecko terlihat "bergerak".
+# - Lebar Bollinger band: dihitung dari 20 bar, jadi lebarnya ikut
+#   timeframe. Pada timeframe 1 menit, 20 bar cuma 20 menit dan aset biasa
+#   pun punya band sempit - aset baik bisa ikut tersaring.
+# - Rentang 24 jam selalu mengukur periode yang sama, jadi hasilnya sama
+#   untuk timeframe 1 menit maupun 1 hari, dan dihitung dari seri yang sama
+#   di kedua jalur data (Yahoo pakai High/Low, CoinGecko pakai sparkline).
+#
+# Data produksi (25 Okt 2026), rentang 24 jam ternormalisasi:
+#   stablecoin : 0.03% (USDC), 0.14% (BFUSD), 0.17% (EURC)
+#   aset biasa : 1.0% (MX), 1.2% (BTC), 1.5% (BTSE), 4.0% (FIL)
+# Ambang 0.5% ada di tengah celah itu.
+STABLECOIN_PRICE_MIN = 0.80
+STABLECOIN_PRICE_MAX = 1.60
+STABLECOIN_MAX_RANGE_24H = 0.5   # persen
+
+# Stablecoin yang dipatok ke mata uang selain USD (JPY Coin, JPY Stablecoin).
+# Harganya dalam USD bergerak mengikuti kurs, jadi tidak bisa dideteksi dari
+# rentang harga: JPYC bergerak 14% dalam sebulan, karena yen menguat. Daftar
+# ini perlu diupdate kalau CoinGecko menambah stablecoin dengan peg non-USD.
+NON_USD_STABLECOINS = {
+    'JPYC-USD',
+    'JPYSC-USD',
+}
+
+# Interval Yahoo -> jam. Dipakai untuk menghitung berapa bar yang menutup
+# 24 jam, supaya metrik "rentang 24 jam" sama untuk semua timeframe.
+_INTERVAL_HOURS = {
+    '1m': 1 / 60, '2m': 2 / 60, '5m': 5 / 60, '15m': 0.25,
+    '30m': 0.5, '1h': 1, '2h': 2, '4h': 4, '1d': 24,
+}
+
+
+def compute_range_pct(high: float, low: float, price: float,
+                      window_hours: float) -> float | None:
+    """Rentang harga dalam persen, dinormalisasi ke window 24 jam.
+
+    Yahoo untuk interval 1m hanya memberi ~500 bar (sekitar 8 jam), bukan
+    24 jam, jadi window yang tersedia lebih pendek dari yang diinginkan.
+    Pergerakan harga ~ random walk, jadi rentang naik dengan akar waktu -
+    hasil window 8 jam dikali sqrt(8/24) supaya comparable dengan window
+    24 jam. Tanpa ini, timeframe 1 menit akan melihat aset biasa apa pun
+    sebagai "datar".
+    """
+    if price is None or price <= 0 or window_hours is None or window_hours <= 0:
+        return None
+    scale = math.sqrt(window_hours / 24.0)
+    return ((high - low) / price * 100) / scale
+
+
+def compute_range_24h(df, price: float, interval: str) -> float | None:
+    """Rentang harga 24 jam (persen) dari frame OHLC Yahoo.
+
+    `df` = DataFrame dengan kolom High/Low (apa adanya dari yfinance).
+    """
+    if df is None or price is None or price <= 0:
+        return None
+    bar_hours = _INTERVAL_HOURS.get(interval, 1)
+    bars_24h = max(2, int(round(24 / bar_hours)))
+    recent = df.tail(bars_24h)
+    if len(recent) < 2:
+        return None
+    try:
+        high = float(recent['High'].max())
+        low = float(recent['Low'].min())
+    except (KeyError, TypeError, ValueError):
+        return None
+    return compute_range_pct(high, low, price, len(recent) * bar_hours)
 
 
 def is_stablecoin(data: dict) -> bool:
     """True kalau data harga menunjukkan aset yang nilainya dipatok.
 
     `data` = dict hasil get_crypto_data / get_crypto_data_coingecko.
-    Mengembalikan False kalau data Bollinger tidak ada atau rusak, supaya
-    aset yang tidak bisa dinilai tidak ikut tersaring diam-diam.
+
+    Mengembalikan False kalau metriknya tidak ada atau rusak, supaya aset
+    yang tidak bisa dinilai tidak ikut tersaring diam-diam.
     """
+    ticker = str(data.get('ticker') or '').upper()
+    if ticker in NON_USD_STABLECOINS:
+        return True
+
     try:
         price = float(data.get('price') or 0)
     except (TypeError, ValueError):
@@ -107,22 +172,15 @@ def is_stablecoin(data: dict) -> bool:
     if not (STABLECOIN_PRICE_MIN <= price <= STABLECOIN_PRICE_MAX):
         return False
 
-    upper = data.get('bb_upper')
-    lower = data.get('bb_lower')
-    middle = data.get('bb_middle')
-    if upper is None or lower is None or middle is None:
+    range_24h = data.get('range_24h')
+    if range_24h is None:
         return False
     try:
-        upper = float(upper)
-        lower = float(lower)
-        middle = float(middle)
+        range_24h = float(range_24h)
     except (TypeError, ValueError):
         return False
-    if middle <= 0 or upper <= 0 or lower <= 0:
-        return False
 
-    width = (upper - lower) / middle
-    return width <= STABLECOIN_MAX_BB_WIDTH
+    return range_24h <= STABLECOIN_MAX_RANGE_24H
 
 
 class CryptoService:
@@ -487,6 +545,13 @@ class CryptoService:
                 if atr_val is None or atr_val <= 0:
                     atr_val = price * 0.025
 
+                # Rentang harga 24 jam (persen). Metrik ini dipakai untuk
+                # membedakan aset yang dipatok (stablecoin) dari aset biasa,
+                # dan sengaja berbasis waktu - bukan jumlah bar. Kalau
+                # berbasis bar, hasilnya berbeda antara timeframe 1 menit
+                # dan 4 jam, jadi aset biasa bisa ikut tersaring.
+                range_24h = compute_range_24h(df, price, interval)
+
                 if breaker:
                     breaker.record_success()
 
@@ -500,6 +565,7 @@ class CryptoService:
                     'rsi': rsi,
                     'volume': latest['Volume'],
                     'atr': atr_val,
+                    'range_24h': range_24h,
                     'candles': len(df),
                     'macd': latest['MACD'],
                     'macd_signal': latest['MACD_SIGNAL'],
@@ -673,6 +739,17 @@ class CryptoService:
                 bb_middle = bb_data['middle'].iloc[-1]
                 bb_lower = bb_data['lower'].iloc[-1]
 
+                # Rentang harga 24 jam (persen). Sparkline CoinGecko
+                # hourly 7 hari, jadi 24 jam = 24 titik terakhir. Nilai ini
+                # dibandingkan dengan hasil Yahoo (yang memakai bar High/Low)
+                # supaya filter stablecoin hasilnya sama untuk kedua jalur.
+                spark_24h = sparkline[-24:] if len(sparkline) >= 24 else sparkline
+                if len(spark_24h) >= 2:
+                    range_24h = compute_range_pct(
+                        max(spark_24h), min(spark_24h), price, 24.0)
+                else:
+                    range_24h = None
+
                 if breaker:
                     breaker.record_success()
 
@@ -686,6 +763,7 @@ class CryptoService:
                     'rsi': rsi,
                     'volume': volume,
                     'atr': atr_val,
+                    'range_24h': range_24h,
                     'candles': len(sparkline),
                     'source': 'coingecko',
                     'macd': macd,
