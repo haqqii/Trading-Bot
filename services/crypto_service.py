@@ -89,10 +89,10 @@ _PRICE_REF_CHUNK = 100
 #   untuk timeframe 1 menit maupun 1 hari, dan dihitung dari seri yang sama
 #   di kedua jalur data (Yahoo pakai High/Low, CoinGecko pakai sparkline).
 #
-# Data produksi (25 Okt 2026), rentang 24 jam ternormalisasi:
-#   stablecoin : 0.03% (USDC), 0.14% (BFUSD), 0.17% (EURC)
-#   aset biasa : 1.0% (MX), 1.2% (BTC), 1.5% (BTSE), 4.0% (FIL)
-# Ambang 0.5% ada di tengah celah itu.
+# Data produksi (25 Okt 2026), rentang 24 jam:
+#   stablecoin : 0.037% (USDAI), 0.14% (BFUSD), 0.23% (EURC)
+#   aset biasa : 1.465% (MX), 1.80% (BTC), 4.12% (FIL), 5.38% (PIEVERSE)
+# Ambang 0.5% ada di tengah celah 6x itu.
 STABLECOIN_PRICE_MIN = 0.80
 STABLECOIN_PRICE_MAX = 1.60
 STABLECOIN_MAX_RANGE_24H = 0.5   # persen
