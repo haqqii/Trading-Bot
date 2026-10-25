@@ -484,22 +484,6 @@ async def check_crypto_signals(app):
         logger.error(f"Error in check_crypto_signals: {e}", exc_info=True)
 
 
-async def _fetch_crypto_price(ticker, interval, period):
-    """Ambil harga satu ticker di thread.
-
-    Permintaan provider + limiter-nya blocking, jadi harus jalan di thread
-    - kalau dipanggil langsung di event loop, bot stutter dan job lain
-    (mis. notifikasi harga) ikut terlambat.
-    """
-    try:
-        return await asyncio.to_thread(
-            crypto_service.get_crypto_data_combined, ticker, interval,
-            period, skip_if_missing=True)
-    except Exception as e:
-        logger.warning(f"Gagal ambil harga crypto {ticker}: {e}")
-        return None
-
-
 async def _fetch_prices_for_tp_sl(user_db, signals):
     """Ambil harga semua sinyal crypto yang dipantau, sekaligus.
 
@@ -508,6 +492,10 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
     siklus cek TP/SL bisa lewat 2 menit - job berikutnya lalu kena
     "maximum number of running instances reached" dan notifikasi TP/SL
     telat.
+
+    Pengambilan pakai fetch_crypto_prices: ticker yang tidak ada di Yahoo
+    diambil dari CoinGecko sekaligus (satu request untuk banyak ticker),
+    bukan satu request per ticker.
 
     Returns:
         dict key sinyal -> data harga (hanya yang datanya berhasil diambil).
@@ -531,11 +519,27 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
     if not wanted:
         return {}
 
+    # Kelompokkan per timeframe - tiap kelompok cukup satu pengambilan.
+    groups: dict = {}
+    for key, ticker, interval, period in wanted:
+        groups.setdefault((interval, period), []).append((key, ticker))
+
+    async def _fetch_group(interval, period, items):
+        data_map = await fetch_crypto_prices(
+            [ticker for _, ticker in items], interval, period)
+        return {key: data_map.get(ticker) for key, ticker in items}
+
     results = await asyncio.gather(*[
-        _fetch_crypto_price(ticker, interval, period)
-        for _, ticker, interval, period in wanted
+        _fetch_group(interval, period, items)
+        for (interval, period), items in groups.items()
     ])
-    return {key: data for (key, _, _, _), data in zip(wanted, results) if data}
+
+    price_cache: dict = {}
+    for group_result in results:
+        for key, data in group_result.items():
+            if data:
+                price_cache[key] = data
+    return price_cache
 
 
 async def check_crypto_tp_sl(app):
@@ -782,17 +786,15 @@ async def check_crypto_favorit_alerts(app):
             tickers_to_remove = []
 
             # Target yang punya harga target. Ambil harga semuanya sekaligus
-            # (paralel) - kalau satu per satu, tiap ticker antre di limiter
-            # provider dan satu siklus bisa lewat 2 menit.
+            # (Yahoo paralel + CoinGecko bulk) - kalau satu per satu, tiap
+            # ticker antre di limiter provider dan satu siklus bisa lewat
+            # 2 menit.
             targets = {t: p for t, p in crypto_favorit.items()
                        if p is not None}
             if not targets:
                 continue
 
-            fetched = await asyncio.gather(*[
-                _fetch_crypto_price(ticker, '1h', '1d') for ticker in targets
-            ])
-            price_map = dict(zip(targets.keys(), fetched))
+            price_map = await fetch_crypto_prices(list(targets), '1h', '1d')
 
             for ticker, target_price in targets.items():
                 try:

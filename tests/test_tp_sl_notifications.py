@@ -88,13 +88,18 @@ def crypto_loop(monkeypatch):
     }
 
     def fake_fetch(ticker, interval, period, skip_if_missing=False):
-        return {'price': state['price'], 'candles': 50}
+        return {'price': state['price'], 'candles': 50, 'rsi': 45.0}
 
     def fake_save_outcome(key, outcome, **kwargs):
         state['outcomes'].append((key, outcome))
 
+    # Job cek TP/SL memakai fetch_crypto_prices: Yahoo per ticker, lalu
+    # CoinGecko bulk untuk yang tidak ada di Yahoo.
     monkeypatch.setattr(
-        jobs_crypto.crypto_service, 'get_crypto_data_combined', fake_fetch)
+        jobs_crypto.crypto_service, 'get_crypto_data', fake_fetch)
+    monkeypatch.setattr(
+        jobs_crypto.crypto_service, 'get_crypto_data_coingecko_bulk',
+        lambda tickers, retry=3, use_cache=True: {})
     monkeypatch.setattr(
         jobs_crypto.crypto_service, 'get_usd_idr_rate', lambda: 16000)
     monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome', fake_save_outcome)
@@ -234,7 +239,7 @@ class TestTpSlFetchesPricesInParallel:
             state['calls'].append(ticker)
             time.sleep(0.15)
             state['inflight'] -= 1
-            return {'price': 103.0, 'candles': 50}
+            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
         signals = {
             'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD'),
@@ -243,7 +248,10 @@ class TestTpSlFetchesPricesInParallel:
         }
 
         monkeypatch.setattr(jobs_crypto.crypto_service,
-                            'get_crypto_data_combined', fake_fetch)
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk',
+                            lambda tickers, retry=3, use_cache=True: {})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
@@ -259,6 +267,49 @@ class TestTpSlFetchesPricesInParallel:
         assert sorted(state['calls']) == ['BTC-USD', 'ETH-USD', 'SOL-USD']
         assert state['max_inflight'] > 1, \
             "harga harus diambil paralel, bukan satu per satu"
+
+    def test_missing_tickers_are_fetched_in_one_bulk_request(self, monkeypatch):
+        """Ticker yang tidak ada di Yahoo diambil CoinGecko sekaligus.
+
+        Kalau satu per satu, tiap ticker kena limiter CoinGecko (5/menit)
+        dan satu siklus cek TP/SL bisa lewat beberapa menit.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        bulk_calls = []
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            if ticker == 'ETH-USD':
+                return None
+            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            bulk_calls.append(list(tickers))
+            return {'ETH-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {
+            'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD'),
+            'CRYPTO_ETH-USD_1': make_signal(ticker_raw='ETH-USD'),
+        }
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
+
+        assert len(bulk_calls) == 1, "ticker yang gagal harus 1 request bulk"
+        assert bulk_calls[0] == ['ETH-USD']
 
 
 class TestStockLoop:

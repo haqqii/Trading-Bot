@@ -341,8 +341,13 @@ class TestTpSlClosesStablecoin:
         def fake_save_outcome(key, outcome, **kwargs):
             state['outcomes'].append((key, outcome))
 
+        # Job cek TP/SL memakai fetch_crypto_prices (Yahoo per ticker +
+        # CoinGecko bulk untuk yang tidak ada di Yahoo).
         monkeypatch.setattr(jobs_crypto.crypto_service,
-                            'get_crypto_data_combined', fake_fetch)
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk',
+                            lambda tickers, retry=3, use_cache=True: {})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
