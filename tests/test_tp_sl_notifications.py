@@ -501,6 +501,52 @@ class TestTpSlFetchesPricesInParallel:
         assert len(app.bot.sent) == 1
         assert 'TP1' in app.bot.sent[0][1]
 
+    def test_waits_for_slot_when_cache_is_empty(self, monkeypatch):
+        """Limiter penuh tapi cache belum terisi -> tunggu slot.
+
+        Tepat setelah restart cache CoinGecko masih kosong. Kalau job
+        tidak menunggu, satu siklus cek TP/SL berjalan tanpa harga
+        sama sekali - tidak ada sinyal yang dicek.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        bulk_calls = []
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            bulk_calls.append(list(tickers))
+            return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        def fake_cached(tickers):
+            return {}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_cached', fake_cached)
+        monkeypatch.setattr(jobs_crypto, 'coingecko_can_call_now',
+                            lambda: False)
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
+                            lambda t, i, p: {'price': 102.0, 'candles': 50})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert len(bulk_calls) == 1, \
+            "cache kosong harus menunggu slot, bukan jalan tanpa harga"
+        assert len(app.bot.sent) == 1
+        assert 'TP1' in app.bot.sent[0][1]
+
     def test_ticker_missing_from_coingecko_falls_back_to_yahoo(self,
                                                                 monkeypatch):
         """Ticker yang tidak dikenal CoinGecko diambil dari Yahoo."""

@@ -49,6 +49,12 @@ PREFETCH_MAJOR_COUNT = 10
 # lebih dari ini, harga diambil dari Yahoo (sumber harga entry sinyal).
 _TP_SL_PRICE_TOLERANCE = 0.05
 
+# Berapa bagian harga CoinGecko yang harus ada di cache sebelum cache itu
+# dipakai buat cek TP/SL tanpa menunggu slot limiter. Kalau cache-nya
+# belum terisi (mis. tepat setelah restart), lebih baik tunggu slot
+# daripada memeriksa sinyal tanpa harga.
+_COINGECKO_CACHE_COVERAGE = 0.8
+
 # Alert "scan degrade" dikirim sparing - satu per 6 jam. Scan degrade
 # biasanya berlangsung lama (provider sedang bermasalah), jadi alert tiap
 # 15 menit cuma jadi spam.
@@ -569,17 +575,27 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
         #
         # Kalau limiter CoinGecko sedang penuh, menunggu slot bisa memakan
         # hampir semenit - itu sendiri sudah cukup untuk bikin siklus ini
-        # lewat batas 2 menit, jadi siklus berikutnya kena skip. Lebih
-        # baik pakai harga dari cache (5 menit lalu) daripada menunggu.
+        # lewat batas 2 menit, jadi siklus berikutnya kena skip. Tapi
+        # kalau cache-nya belum terisi (mis. tepat setelah restart),
+        # menunggu slot lebih baik daripada tidak punya harga sama sekali.
         t0 = time.monotonic()
+        cached_cg = crypto_service.get_crypto_data_coingecko_cached(tickers)
         if coingecko_can_call_now():
             cg_data = await asyncio.to_thread(
                 crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
-        else:
-            cg_data = crypto_service.get_crypto_data_coingecko_cached(tickers)
+        elif len(cached_cg) >= len(tickers) * _COINGECKO_CACHE_COVERAGE:
+            cg_data = cached_cg
             logger.info(
                 "[TP/SL] limiter CoinGecko penuh - pakai harga dari cache "
                 f"({len(cg_data)}/{len(tickers)} ticker)")
+        else:
+            # Cache belum lengkap - tunggu slot saja. Menunggu paling
+            # lama satu menit, masih jauh di bawah batas 2 menit job.
+            logger.info(
+                f"[TP/SL] limiter CoinGecko penuh dan cache baru "
+                f"{len(cached_cg)}/{len(tickers)} - tunggu slot")
+            cg_data = await asyncio.to_thread(
+                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
         cg_secs = time.monotonic() - t0
 
         need_yahoo = []
