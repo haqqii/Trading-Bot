@@ -92,8 +92,14 @@ class StockService:
     def __init__(self):
         self.cache = _price_cache
 
-    def get_stock_data(self, ticker: str, interval: str = '5m', period: str = '5d', retry: int = 1):
-        """Get stock data from Yahoo Finance with rate limiting and circuit breaker"""
+    def get_stock_data(self, ticker: str, interval: str = '5m', period: str = '5d', retry: int = 1,
+                       priority: bool = False):
+        """Get stock data from Yahoo Finance with rate limiting and circuit breaker
+
+        priority=True: jalur yang dipicu user (/analisa). Request-nya boleh
+        memakai sisa kuota limiter Yahoo yang dicadangkan untuk user, jadi
+        tidak antre di belakang scan crypto yang sedang jalan.
+        """
         # Check cache first
         cache_key = f"{ticker}:{interval}:{period}"
         cached = _price_cache.get(cache_key)
@@ -111,7 +117,7 @@ class StockService:
                 # Status "Yahoo tidak punya data" direset tiap percobaan,
                 # supaya tidak bocor ke ticker berikutnya.
                 _fetch_state.yahoo_no_data = False
-                _yahoo_limiter.wait_if_needed()
+                _yahoo_limiter.wait_if_needed(priority=priority)
 
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -436,10 +442,14 @@ class StockService:
             logger.error(f"Yahoo v8 error for {ticker}: {type(e).__name__}: {e}")
             return None
 
-    def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d') -> StockDataResult:
+    def get_stock_data_combined(self, ticker: str, interval: str = '5m', period: str = '5d',
+                                priority: bool = False) -> StockDataResult:
         """Get stock data - try Yahoo Finance first, then v8 API, TradingView, then Finnhub.
 
         Returns StockDataResult with structured error information for better error handling.
+
+        priority=True: jalur yang dipicu user (/analisa) - request Yahoo boleh
+        memakai kuota yang dicadangkan untuk user.
         """
         base_ticker = ticker.replace('.JK', '')
 
@@ -471,7 +481,7 @@ class StockService:
             )
 
         # Try Yahoo Finance first
-        data = self.get_stock_data(ticker, interval, period)
+        data = self.get_stock_data(ticker, interval, period, priority=priority)
         if data:
             return StockDataResult(success=True, data=data, source='yahoo')
 

@@ -1,7 +1,6 @@
 """Analisa command - detailed stock/crypto analysis with multi-indicator scoring."""
 import asyncio
 import logging
-import concurrent.futures
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -123,9 +122,12 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         yahoo_probe = None
         if not is_crypto and len(ticker) <= 12 and ticker not in ALL_STOCKS:
             try:
-                # Run sync fetch in thread so the event loop stays free
+                # Run sync fetch in thread so the event loop stays free.
+                # priority=True supaya probe ini tidak antre belasan menit
+                # di belakang scan crypto yang sedang jalan.
                 probe = await asyncio.to_thread(
-                    crypto_service.get_crypto_data, ticker_upper + '-USD', '1h', '1d'
+                    crypto_service.get_crypto_data, ticker_upper + '-USD', '1h', '1d',
+                    priority=True
                 )
                 if probe and probe.get('candles', 0) >= 5:
                     rsi = probe.get('rsi', float('nan'))
@@ -172,7 +174,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 else:
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, tf_crypto[0], tf_crypto[1]),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, full_ticker, tf_crypto[0], tf_crypto[1], priority=True),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -193,7 +195,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     alt_ticker = full_ticker.replace('-USD', '')
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1]),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1], priority=True),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -205,7 +207,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     alt_ticker = full_ticker.replace('-USD', '-USDT')
                     try:
                         d = await asyncio.wait_for(
-                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1]),
+                            asyncio.to_thread(crypto_service.get_crypto_data_combined, alt_ticker, tf_crypto[0], tf_crypto[1], priority=True),
                             timeout=20
                         )
                     except asyncio.TimeoutError:
@@ -296,10 +298,16 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"[ANALISA] Using cached data for {full_ticker}")
             else:
                 # Step 2: Try fresh fetch from API
-                def fetch_stock_data():
+                async def fetch_stock_data():
                     try:
                         tfv = TIMEFRAMES[tf_key]
-                        return stock_service.get_stock_data_combined(full_ticker, tfv['interval'], tfv['period'])
+                        # priority=True: request user boleh memakai kuota
+                        # limiter Yahoo yang dicadangkan untuk user, jadi
+                        # tidak antre di belakang scan crypto yang jalan.
+                        return await asyncio.to_thread(
+                            stock_service.get_stock_data_combined,
+                            full_ticker, tfv['interval'], tfv['period'],
+                            priority=True)
                     except Exception as e:
                         logger.error(f"[ANALISA] Stock fetch error for {full_ticker}: {e}")
                         return StockDataResult(success=False, error=str(e), source='exception')
@@ -313,26 +321,30 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         logger.warning(f"[ANALISA] News fetch failed for {ticker}: {e}")
                     return None
 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    stock_future = executor.submit(fetch_stock_data)
-                    news_coro = fetch_news_async()
+                # Data saham dan berita diambil bareng, tapi keduanya lewat
+                # asyncio.to_thread + wait_for. Versi sebelumnya pakai
+                # future.result() di dalam blok `with`, yang membekukan
+                # seluruh event loop selama menunggu provider - bot jadi
+                # tidak bisa membalas satu pun perintah selama itu.
+                stock_task = asyncio.create_task(fetch_stock_data())
+                news_task = asyncio.create_task(fetch_news_async())
 
-                    try:
-                        result = stock_future.result(timeout=20)
-                        if result and result.success:
-                            d = result.data
-                        else:
-                            fetch_error = result.error if result else "Unknown error"
-                            retry_after = result.retry_after if result else 0
-                    except concurrent.futures.TimeoutError:
-                        logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
-                        fetch_error = "Timeout saat mengambil data"
-                        retry_after = 30
+                try:
+                    result = await asyncio.wait_for(stock_task, timeout=20)
+                    if result and result.success:
+                        d = result.data
+                    else:
+                        fetch_error = result.error if result else "Unknown error"
+                        retry_after = result.retry_after if result else 0
+                except asyncio.TimeoutError:
+                    logger.error(f"[ANALISA] Stock fetch timeout for {full_ticker}")
+                    fetch_error = "Timeout saat mengambil data"
+                    retry_after = 30
 
-                    try:
-                        sentiment = await asyncio.wait_for(news_coro, timeout=10)
-                    except (asyncio.TimeoutError, Exception):
-                        sentiment = None
+                try:
+                    sentiment = await asyncio.wait_for(news_task, timeout=10)
+                except Exception:
+                    sentiment = None
 
                 # Step 3: If API fails, try stale cache
                 if not d:

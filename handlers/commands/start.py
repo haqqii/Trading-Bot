@@ -110,7 +110,12 @@ async def harga(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     stocks = list(ALL_STOCKS.items())[:30]
 
     async def fetch_stock(ticker, name):
-        result = stock_service.get_stock_data_combined(ticker + ".JK", tf['interval'], tf['period'])
+        # Lewat to_thread: get_stock_data_combined itu blocking (ia antre
+        # di limiter Yahoo), kalau dipanggil langsung di sini event loop
+        # ikut membeku selama 30 request.
+        result = await asyncio.to_thread(
+            stock_service.get_stock_data_combined,
+            ticker + ".JK", tf['interval'], tf['period'], priority=True)
         d = result.data if result and result.success else None
         if d:
             return (ticker, name, d)

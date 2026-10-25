@@ -127,7 +127,10 @@ async def _send_bot_with_retry(bot, chat_id: int, text: str, retries: int = 5, d
                 timeout=180
             )
             return True
-        except TimedOut:
+        except (TimedOut, asyncio.TimeoutError):
+            # asyncio.wait_for melempar asyncio.TimeoutError kalau batas
+            # waktunya habis - itu bukan telegram.error.TimedOut, jadi
+            # kalau hanya menangkap TimedOut, retry-nya tidak pernah jalan.
             if attempt < retries - 1:
                 logger.warning(f"Send timeout (attempt {attempt+1}/{retries}), retrying in {delay}s")
                 await asyncio.sleep(delay)

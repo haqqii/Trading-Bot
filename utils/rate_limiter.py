@@ -26,12 +26,17 @@ class RateLimiter:
     """Token bucket rate limiter for API calls with stats tracking"""
 
     def __init__(self, max_calls=10, period=60, name="default",
-                 state_file: Optional[str] = None):
+                 state_file: Optional[str] = None, reserved: int = 0):
         self.max_calls = max_calls
         self.period = period
         self.calls = deque()
         self.lock = threading.Lock()
         self.name = name
+        # Sisa kuota yang khusus untuk pemanggil prioritas (command yang
+        # dipicu user). Pemanggil background dibatasi max_calls - reserved,
+        # jadi request user tidak perlu antre belasan menit di belakang
+        # scan yang sedang jalan. Total request per menit tetap max_calls.
+        self.reserved = max(0, int(reserved))
         self._total_calls = 0
         self._total_waits = 0
         self._total_rejected = 0
@@ -77,22 +82,33 @@ class RateLimiter:
             # Gagal menyimpan bukan alasan untuk menghentikan bot.
             pass
 
-    def can_call(self):
+    def _limit_for(self, priority: bool) -> int:
+        """Batas request yang boleh dipakai pemanggil ini.
+
+        Pemanggil prioritas boleh memakai seluruh kuota; pemanggil
+        background hanya boleh memakai kuota yang tidak dipesan untuk
+        pemanggil prioritas.
+        """
+        if priority:
+            return self.max_calls
+        return max(1, self.max_calls - self.reserved)
+
+    def can_call(self, priority: bool = False):
         """Check if we can make a call without waiting"""
         with self.lock:
             now = time.time()
             while self.calls and self.calls[0] < now - self.period:
                 self.calls.popleft()
-            return len(self.calls) < self.max_calls
+            return len(self.calls) < self._limit_for(priority)
 
-    def wait_if_needed(self):
+    def wait_if_needed(self, priority: bool = False):
         """Wait until a call can be made - interruptible by shutdown signals"""
         with self.lock:
             now = time.time()
             while self.calls and self.calls[0] < now - self.period:
                 self.calls.popleft()
 
-            if len(self.calls) >= self.max_calls:
+            if len(self.calls) >= self._limit_for(priority):
                 wait_time = self.calls[0] + self.period - now
                 if wait_time > 0:
                     self._total_waits += 1
@@ -130,6 +146,7 @@ class RateLimiter:
                 'name': self.name,
                 'max_calls': self.max_calls,
                 'period': self.period,
+                'reserved': self.reserved,
                 'current_calls': len(self.calls),
                 'total_calls': self._total_calls,
                 'total_waits': self._total_waits,
@@ -261,7 +278,12 @@ _COINGECKO_STATE_FILE = os.path.join(
     'coingecko_calls.json')
 _coingecko_limiter = RateLimiter(max_calls=4, period=60, name="coingecko",
                                  state_file=_COINGECKO_STATE_FILE)
-_yahoo_limiter = RateLimiter(max_calls=20, period=60, name="yahoo")  # Reduced from 30 to avoid rate limit
+_yahoo_limiter = RateLimiter(max_calls=20, period=60, name="yahoo",
+                             reserved=4)  # Reduced from 30 to avoid rate limit
+# Sisa 4 request/menit dikhususkan untuk jalur yang butuh cepat: command
+# yang dipicu user (/analisa, /harga) dan job cek TP/SL. Tanpa itu, mereka
+# antre di belakang scan crypto yang sedang pakai kuota - dulu /analisa
+# baru selesai 2 menit 44 detik setelah command-nya masuk.
 _circuit_breakers: Dict[str, CircuitBreaker] = {
     # CoinGecko: very slow recovery since free tier is very limited
     'coingecko': CircuitBreaker(failure_threshold=10, recovery_timeout=300, name="coingecko"),

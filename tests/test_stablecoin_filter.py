@@ -258,7 +258,7 @@ class TestScanSkipsStablecoin:
                 return 16000
 
             def get_crypto_data(self, ticker, interval, period,
-                                skip_if_missing=False):
+                                skip_if_missing=False, priority=False):
                 return fake_data(ticker, interval, period)[0]
 
             def get_crypto_data_coingecko_bulk(self, tickers, retry=3,
@@ -334,7 +334,8 @@ class TestTpSlClosesStablecoin:
 
         state = {'signals': {}, 'outcomes': []}
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                         priority=False):
             # USDC: harga dipatok $1, tidak bergerak
             return make_data(1.0, 0.04, ticker=ticker)
 

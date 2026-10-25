@@ -87,7 +87,8 @@ def crypto_loop(monkeypatch):
         'price': 103.0,
     }
 
-    def fake_fetch(ticker, interval, period, skip_if_missing=False):
+    def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
         return {'price': state['price'], 'candles': 50, 'rsi': 45.0}
 
     def fake_save_outcome(key, outcome, **kwargs):
@@ -247,7 +248,8 @@ class TestTpSlFetchesPricesInParallel:
 
         state = {'inflight': 0, 'max_inflight': 0, 'calls': []}
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             state['inflight'] += 1
             state['max_inflight'] = max(state['max_inflight'],
                                         state['inflight'])
@@ -328,7 +330,8 @@ class TestTpSlFetchesPricesInParallel:
 
         yahoo_calls = []
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             yahoo_calls.append(ticker)
             return {'price': 999.0, 'candles': 50, 'rsi': 45.0}
 
@@ -372,7 +375,8 @@ class TestTpSlFetchesPricesInParallel:
 
         yahoo_calls = []
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
@@ -417,7 +421,8 @@ class TestTpSlFetchesPricesInParallel:
 
         yahoo_calls = []
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
@@ -554,7 +559,8 @@ class TestTpSlFetchesPricesInParallel:
 
         yahoo_calls = []
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             yahoo_calls.append(ticker)
             return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
 
@@ -593,7 +599,8 @@ class TestTpSlFetchesPricesInParallel:
         """
         from handlers.scheduler import jobs_crypto
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+        def fake_fetch(ticker, interval, period, skip_if_missing=False,
+                     priority=False):
             return None
 
         def fake_bulk(tickers, retry=3, use_cache=True):

@@ -295,6 +295,50 @@ class TestRateLimiterStats:
         assert 'total_calls' in stats
 
 
+class TestRateLimiterPriority:
+    """Kuota cadangan untuk pemanggil prioritas (command yang dipicu user)."""
+
+    def test_background_stops_before_max_calls(self):
+        """Background tidak boleh memakai kuota cadangan."""
+        limiter = RateLimiter(max_calls=4, period=60, reserved=1)
+        for _ in range(3):
+            limiter.wait_if_needed()
+        # Background sudah pakai 3 dari 4 -> harusnya nunggu
+        assert limiter.can_call() is False
+        # Tapi pemanggil prioritas masih boleh lewat
+        assert limiter.can_call(priority=True) is True
+
+    def test_priority_uses_reserved_slot(self):
+        """Pemanggil prioritas bisa langsung lewat tanpa nunggu."""
+        limiter = RateLimiter(max_calls=4, period=60, reserved=1)
+        for _ in range(3):
+            limiter.wait_if_needed()
+        start = time.time()
+        limiter.wait_if_needed(priority=True)
+        assert time.time() - start < 0.5
+
+    def test_priority_also_blocked_at_hard_limit(self):
+        """Kuota keras tetap berlaku untuk pemanggil prioritas."""
+        limiter = RateLimiter(max_calls=4, period=60, reserved=1)
+        for _ in range(4):
+            limiter.wait_if_needed(priority=True)
+        assert limiter.can_call(priority=True) is False
+        assert limiter.can_call() is False
+
+    def test_no_reserve_keeps_old_behaviour(self):
+        """Tanpa reserved, perilaku lama tidak berubah."""
+        limiter = RateLimiter(max_calls=2, period=60)
+        limiter.wait_if_needed()
+        limiter.wait_if_needed()
+        assert limiter.can_call() is False
+        assert limiter.can_call(priority=True) is False
+
+    def test_stats_report_reserved(self):
+        """Statistik ikut melaporkan kuota cadangan."""
+        limiter = RateLimiter(max_calls=20, period=60, reserved=4)
+        assert limiter.get_stats()['reserved'] == 4
+
+
 # === CircuitBreaker Tests ===
 
 class TestCircuitBreakerBasic:

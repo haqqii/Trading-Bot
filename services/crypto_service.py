@@ -543,7 +543,8 @@ class CryptoService:
 
     def get_crypto_data(self, ticker: str, interval: str = '15m', period: str = '3d',
                         retry: int = 3, use_cache: bool = True,
-                        skip_if_missing: bool = False):
+                        skip_if_missing: bool = False,
+                        priority: bool = False):
         """Get crypto data from Yahoo Finance.
 
         skip_if_missing=True: kalau ticker ini sudah diketahui tidak ada di
@@ -551,6 +552,10 @@ class CryptoService:
         request. Dipakai jalur background (scan, TP/SL); jalur yang dipicu
         user tetap mencoba, supaya ticker yang tadinya hilang bisa muncul
         lagi tanpa perlu tunggu TTL.
+
+        priority=True: jalur yang dipicu user. Request-nya boleh pakai
+        sisa kuota limiter Yahoo yang dicadangkan untuk user, jadi tidak
+        antre di belakang scan yang sedang jalan.
         """
         cache_key = f"{ticker}_{interval}_{period}"
         if use_cache:
@@ -574,7 +579,7 @@ class CryptoService:
 
         for attempt in range(retry):
             try:
-                _yahoo_limiter.wait_if_needed()
+                _yahoo_limiter.wait_if_needed(priority=priority)
 
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -803,15 +808,19 @@ class CryptoService:
         return None
 
     def get_crypto_data_combined(self, ticker: str, interval: str = '15m', period: str = '3d',
-                                 skip_if_missing: bool = False):
+                                 skip_if_missing: bool = False,
+                                 priority: bool = False):
         """Get crypto data - try Yahoo Finance first, CoinGecko as fallback.
 
         skip_if_missing=True: jalur Yahoo dilewati untuk ticker yang sudah
         diketahui tidak ada di Yahoo (lihat services/crypto_yahoo_missing.py).
+
+        priority=True: jalur yang dipicu user (lihat get_crypto_data).
         """
         # Try Yahoo Finance first (no rate limits)
         data = self.get_crypto_data(ticker, interval, period,
-                                    skip_if_missing=skip_if_missing)
+                                    skip_if_missing=skip_if_missing,
+                                    priority=priority)
         if data and not math.isnan(data['rsi']) and data['rsi'] > 0:
             data['source'] = 'yahoo'
             return data

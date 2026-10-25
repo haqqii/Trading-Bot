@@ -51,7 +51,11 @@ async def _send_with_retry(message, text, retries=3, delay=2, **kwargs):
                 timeout=30
             )
             return True
-        except TimedOut:
+        except (TimedOut, asyncio.TimeoutError):
+            # asyncio.wait_for melempar asyncio.TimeoutError kalau batas
+            # waktunya habis - itu bukan telegram.error.TimedOut, jadi
+            # kalau hanya menangkap TimedOut, retry-nya tidak pernah
+            # jalan dan pesannya hilang tanpa terkirim.
             if attempt < retries - 1:
                 logger.warning(f"Send timeout, retrying in {delay}s ({attempt+1}/{retries})")
                 await asyncio.sleep(delay)

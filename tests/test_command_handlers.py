@@ -434,3 +434,64 @@ class TestEdgeCases:
                 loaded = json.load(f)
             assert loaded == data
             assert loaded['user1']['portfolio']['stocks'][0]['ticker'] == 'BBCA'
+
+
+class TestSendWithRetry:
+    """_send_with_retry harus retry juga saat asyncio.wait_for kehabisan waktu.
+
+    asyncio.wait_for melempar asyncio.TimeoutError, bukan
+    telegram.error.TimedOut. Kalau hanya yang latter yang ditangkap,
+    retry-nya tidak pernah jalan dan pesannya hilang tanpa terkirim.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retries_on_asyncio_timeout(self):
+        """Timeout dari asyncio harus di-retry, bukan langsung gagal."""
+        import asyncio
+        from handlers.command_handlers import _send_with_retry
+
+        calls = {'n': 0}
+
+        class FakeMessage:
+            async def reply_text(self, text, **kwargs):
+                calls['n'] += 1
+                if calls['n'] < 3:
+                    raise asyncio.TimeoutError()
+                return text
+
+        ok = await _send_with_retry(FakeMessage(), 'halo', retries=3, delay=0)
+        assert ok is True
+        assert calls['n'] == 3
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_retries(self):
+        """Kalau selalu timeout, fungsi mengembalikan False."""
+        import asyncio
+        from handlers.command_handlers import _send_with_retry
+
+        calls = {'n': 0}
+
+        class FakeMessage:
+            async def reply_text(self, text, **kwargs):
+                calls['n'] += 1
+                raise asyncio.TimeoutError()
+
+        ok = await _send_with_retry(FakeMessage(), 'halo', retries=2, delay=0)
+        assert ok is False
+        assert calls['n'] == 2
+
+    @pytest.mark.asyncio
+    async def test_other_errors_are_not_retried(self):
+        """Error lain (mis. Telegram rejected) tidak di-retry."""
+        from handlers.command_handlers import _send_with_retry
+
+        calls = {'n': 0}
+
+        class FakeMessage:
+            async def reply_text(self, text, **kwargs):
+                calls['n'] += 1
+                raise ValueError('tidak ada')
+
+        ok = await _send_with_retry(FakeMessage(), 'halo', retries=3, delay=0)
+        assert ok is False
+        assert calls['n'] == 1

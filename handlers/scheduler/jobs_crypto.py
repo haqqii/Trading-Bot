@@ -636,9 +636,13 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
             if still_need_fetch:
                 t1 = time.monotonic()
                 async def _fetch_yahoo(ticker):
+                    # priority=True: notifikasi TP/SL harus cepat. Slot
+                    # limiter yang dicadangkan dipakai di sini, supaya
+                    # request ini tidak antre belasan detik di belakang
+                    # scan crypto yang sedang jalan.
                     d = await asyncio.to_thread(
                         crypto_service.get_crypto_data, ticker, interval, period,
-                        skip_if_missing=True)
+                        skip_if_missing=True, priority=True)
                     return ticker, d
 
                 fetched = await asyncio.gather(
