@@ -18,7 +18,6 @@ from utils.cache import _price_cache
 from handlers.scheduler._common import (
     now_wib,
     CRYPTO_TF_TO_INTERVAL,
-    _safe_time_diff,
     get_crypto_data_with_fallback,
     _get_user_db,
     _get_last_buy_signals,
@@ -27,6 +26,8 @@ from handlers.scheduler._common import (
     compute_reliability,
     compute_trend,
     entry_price_is_trustworthy,
+    find_user_signal,
+    signal_in_cooldown,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,31 +84,17 @@ async def check_crypto_signals(app):
                     if not s.get('entry') or s['entry'] <= 0:
                         return None
 
-                    current_price = d['price']
                     # Include REVERSAL and SELL signals
                     if s['signal'] not in ('BUY', 'REVERSAL', 'SELL'):
                         return None
-                    dir_key = 'SELL' if s['signal'] == 'SELL' else 'BUY'
-                    key = f"CRYPTO_{ticker}_{tf_key}_{dir_key}"
                     score = s.get('sell_score', 0) if s['signal'] == 'SELL' else s.get('buy_score', 0)
 
                     if score >= 25:
-                        existing = signals.get(key)
-                        should_send = False
-
-                        if existing is None:
-                            should_send = True
-                        else:
-                            time_diff = _safe_time_diff(now, existing.get('time', now))
-                            if time_diff > 86400:  # 24 hours
-                                last_entry = existing.get('entry', 0)
-                                if last_entry > 0:
-                                    price_change = abs(current_price - last_entry) / last_entry
-                                    if price_change > 0.05:
-                                        should_send = True
-
-                        if should_send:
-                            return (ticker, crypto_service.crypto_pairs.get(ticker, ticker), d, s)
+                        # Pengecekan duplikat dilakukan per-user nanti, setelah
+                        # semua kandidat terkumpul. Kalau dicek di sini, satu
+                        # sinyal bisa lolos ke semua user sekaligus padahal
+                        # tiap user punya batasnya sendiri.
+                        return (ticker, crypto_service.crypto_pairs.get(ticker, ticker), d, s)
 
                     return None
                 except Exception as e:
@@ -133,12 +120,45 @@ async def check_crypto_signals(app):
                 continue
 
             buy_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)
-            top_signals = buy_signals[:3]
 
             logger.info(f"[CRYPTO] TF={tf_key}: Found {len(buy_signals)} signals, sending TOP 3 to {len(group_users)} users")
 
+            # Baris sinyal dari DB dipakai untuk cooldown: baris itu tetap ada
+            # setelah sinyal ditutup (SL/TP3) dan setelah bot restart, jadi
+            # cooldown tidak hilang sendiri seperti kalau hanya mengandalkan
+            # state in-memory. Kalau DB-nya sedang bermasalah, scan tetap
+            # jalan - filter sinyal aktif in-memory masih melindungi user
+            # dari notifikasi dobel.
+            try:
+                db_rows = db.get_all_signals()
+            except Exception as e:
+                logger.warning(f"[CRYPTO] Gagal ambil baris sinyal dari DB: {e}")
+                db_rows = {}
+
             for uid, u in group_users:
                 try:
+                    # Satu ticker tidak boleh dikirim dua kali ke user yang
+                    # sama. Posisi yang masih terbuka di-block (user sudah
+                    # masuk posisi, "beli lagi" cuma membingungkan), ticker
+                    # yang baru saja dikirim menunggu cooldown.
+                    top_signals = []
+                    for candidate in buy_signals:
+                        if len(top_signals) >= 3:
+                            break
+                        ticker, name, d, s = candidate
+                        sig_direction = 'SHORT' if s['signal'] == 'SELL' else 'LONG'
+                        if find_user_signal(signals, uid, ticker, tf_key, sig_direction):
+                            continue
+                        if signal_in_cooldown(now, db_rows,
+                                              f"CRYPTO_{ticker}_{uid}",
+                                              tf_key, sig_direction, d['price']):
+                            continue
+                        top_signals.append(candidate)
+
+                    if not top_signals:
+                        logger.info(f"[CRYPTO] TF={tf_key}: No new signals for user {uid}")
+                        continue
+
                     for i, (ticker, name, d, s) in enumerate(top_signals):
                         if i > 0:
                             await asyncio.sleep(60)

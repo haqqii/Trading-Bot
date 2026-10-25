@@ -5,6 +5,7 @@ Includes:
 - timeframe maps (TF_TO_INTERVAL, CRYPTO_TF_TO_INTERVAL)
 - result / cache helpers (_unwrap_stock_result, get_*_data_with_fallback)
 - per-signal user-data accessors (_get_user_db, _get_last_buy_signals, _remove_signal)
+- anti-duplicate signal helpers (find_user_signal, signal_in_cooldown)
 - signal retention (cleanup_old_signals, SIGNAL_MAX_*)
 - cross-job scheduling (_schedule_followup_scan) — uses lazy imports to avoid cycles.
 - bot send-with-retry helper (_send_bot_with_retry)
@@ -12,7 +13,7 @@ Includes:
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from services.stock_service import stock_service, StockDataResult
@@ -20,6 +21,7 @@ from services.crypto_service import crypto_service
 from services.signal_service import calc_tPSL
 from utils.cache import _price_cache
 from utils.time_utils import WIB, now_wib as _now_wib
+from db import normalize_signal_direction
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,108 @@ def _remove_signal(key: str):
     if key in ch.last_buy_signals:
         del ch.last_buy_signals[key]
         logger.debug(f"Signal removed from storage: {key}")
+
+
+# --- Anti-duplicate sinyal ---------------------------------------------------
+# Satu aset yang skornya tinggi akan lolos scan tiap 15 menit. Kalau tidak
+# ada filter, user menerima "beli lagi" untuk ticker yang sama berulang-ulang
+# (satu aset bisa terkirim 20x dalam sehari).
+#
+# Aturan: ticker yang sama tidak dikirim lagi ke user yang sama selama
+# cooldown, KECUALI kalau cooldown-nya sudah lewat dan harga bergerak lebih
+# dari 5% (artinya ada peluang baru, bukan pengulangan).
+SIGNAL_COOLDOWN_SECONDS = 86400        # 24 jam
+SIGNAL_PRICE_CHANGE_THRESHOLD = 0.05   # 5%
+
+
+def find_user_signal(signals: dict[str, dict[str, Any]],
+                     user_id: str, ticker: str,
+                     timeframe: str, direction: str) -> dict[str, Any] | None:
+    """Cari sinyal milik user untuk satu ticker + timeframe + arah.
+
+    Pencarian lewat ISI sinyal, bukan kunci dict-nya. Kunci penyimpanan
+    pakai format `CRYPTO_{ticker}_{uid}` sementara kunci lookup lama pakai
+    `CRYPTO_{ticker}_{tf}_{arah}` - dua format itu beda, jadi kalau lookup
+    pakai kunci, sinyal yang sedang aktif tidak pernah ditemukan dan
+    notifikasi yang sama terkirim berulang-ulang.
+    """
+    for sig in signals.values():
+        if sig.get('ticker_raw') != ticker:
+            continue
+        if str(sig.get('user_id')) != str(user_id):
+            continue
+        if str(sig.get('timeframe')) != str(timeframe):
+            continue
+        if sig.get('direction', 'LONG') != direction:
+            continue
+        return sig
+    return None
+
+
+def parse_db_timestamp(value: Any) -> datetime | None:
+    """Parse timestamp dari SQLite jadi datetime aware (UTC).
+
+    Kolom `created_at` diisi CURRENT_TIMESTAMP, jadi formatnya
+    'YYYY-MM-DD HH:MM:SS' dalam UTC. ISO string dengan offset juga
+    diterima.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        # CURRENT_TIMESTAMP selalu UTC
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def signal_in_cooldown(now: datetime, db_rows: dict[str, dict[str, Any]],
+                        signal_key: str, timeframe: str, direction: str,
+                        current_price: float) -> bool:
+    """True kalau sinyal untuk `signal_key` sudah dikirim dan masih cooldown.
+
+    Sumbernya baris tabel `signals`: baris itu tetap ada setelah sinyal
+    ditutup (SL/TP3) dan setelah bot restart, jadi cooldown tidak hilang
+    sendiri seperti kalau hanya mengandalkan state in-memory.
+
+    `db_rows` = hasil `db.get_all_signals()` (ambil sekali per scan).
+    """
+    row = db_rows.get(signal_key)
+    if not row:
+        return False
+
+    extra = row.get('extra_data') or {}
+    row_tf = str(extra.get('timeframe', ''))
+    if row_tf and row_tf != str(timeframe):
+        return False
+
+    row_dir = normalize_signal_direction(
+        extra.get('direction'), row.get('signal_type'))
+
+    if row_dir != direction:
+        return False
+
+    sent_at = parse_db_timestamp(row.get('created_at'))
+    if sent_at is None:
+        return False
+
+    age = (now.astimezone(timezone.utc) - sent_at).total_seconds()
+    if age <= SIGNAL_COOLDOWN_SECONDS:
+        return True
+
+    # Cooldown sudah lewat - kirim lagi hanya kalau harga benar-benar
+    # bergerak, kalau tidak ini cuma pengulangan sinyal yang sama.
+    last_entry = row.get('price') or 0
+    if last_entry > 0:
+        change = abs(current_price - last_entry) / last_entry
+        return change <= SIGNAL_PRICE_CHANGE_THRESHOLD
+    return False
 
 
 # Quality base for reliability scoring

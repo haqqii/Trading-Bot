@@ -25,7 +25,6 @@ from db import db
 from handlers.scheduler._common import (
     now_wib,
     TF_TO_INTERVAL,
-    _safe_time_diff,
     _unwrap_stock_result,
     get_stock_data_with_fallback,
     _get_user_db,
@@ -35,6 +34,8 @@ from handlers.scheduler._common import (
     compute_reliability,
     compute_trend,
     entry_price_is_trustworthy,
+    find_user_signal,
+    signal_in_cooldown,
 )
 from handlers.scheduler._state import ALL_STOCKS
 from utils.cache import _price_cache
@@ -293,44 +294,53 @@ async def check_stock_signals(app):
                     unique_signals.append(sig)
             group_buy_signals = unique_signals
 
-            # Filter out signals already sent (within 24h window)
-            fresh_signals = []
-            for ticker, name, d, s in group_buy_signals:
-                # Key includes direction so BUY and SELL don't dedupe each other
-                dir_key = 'SELL' if s.get('signal') == 'SELL' else 'BUY'
-                key = f"STOCK_{ticker}_{tf_key}_{dir_key}"
-                existing = signals.get(key)
-                should_send = False
-                if existing is None:
-                    should_send = True
-                else:
-                    time_diff = _safe_time_diff(now, existing.get('time', now))
-                    if time_diff > 86400:
-                        last_entry = existing.get('entry', 0)
-                        if last_entry > 0:
-                            current_price = d['price']
-                            price_change = abs(current_price - last_entry) / last_entry
-                            if price_change > 0.05:
-                                should_send = True
-                if should_send:
-                    fresh_signals.append((ticker, name, d, s))
-
-            if not fresh_signals:
-                logger.info(f"[STOCK] TF={tf_key}: All signals already sent recently")
-                continue
+            # Filter out signals already sent (within 24h window).
+            # Pengecekan duplikat dilakukan per-user di bawah, jadi di sini
+            # cukup kumpulkan kandidat saja.
+            fresh_signals = list(group_buy_signals)
 
             # Sort by score and take top 3 — pick the matching score by direction
             def _signal_score_key(sig_tuple):
                 sig = sig_tuple[3]
                 return sig.get('sell_score' if sig.get('signal') == 'SELL' else 'buy_score', 0)
             fresh_signals.sort(key=_signal_score_key, reverse=True)
-            top_signals = fresh_signals[:3]
 
             logger.info(f"[STOCK] TF={tf_key}: Found {len(fresh_signals)} fresh signals, sending TOP 3 to {len(group_users)} users")
+
+            # Baris sinyal dari DB dipakai untuk cooldown: baris itu tetap ada
+            # setelah sinyal ditutup (SL/TP3) dan setelah bot restart. Kalau
+            # DB-nya bermasalah, scan tetap jalan - filter sinyal aktif
+            # in-memory masih melindungi user dari notifikasi dobel.
+            try:
+                db_rows = db.get_all_signals()
+            except Exception as e:
+                logger.warning(f"[STOCK] Gagal ambil baris sinyal dari DB: {e}")
+                db_rows = {}
 
             # Send signals to users in this TF group
             for uid, u in group_users:
                 try:
+                    # Satu ticker tidak boleh dikirim dua kali ke user yang
+                    # sama. Posisi yang masih terbuka di-block, ticker yang
+                    # baru saja dikirim menunggu cooldown.
+                    top_signals = []
+                    for candidate in fresh_signals:
+                        if len(top_signals) >= 3:
+                            break
+                        ticker, name, d, s = candidate
+                        sig_direction = 'SHORT' if s.get('signal') == 'SELL' else 'LONG'
+                        if find_user_signal(signals, uid, ticker, tf_key, sig_direction):
+                            continue
+                        if signal_in_cooldown(now, db_rows,
+                                              f"STOCK_{ticker}_{uid}",
+                                              tf_key, sig_direction, d['price']):
+                            continue
+                        top_signals.append(candidate)
+
+                    if not top_signals:
+                        logger.info(f"[STOCK] TF={tf_key}: No new signals for user {uid}")
+                        continue
+
                     for i, (ticker, name, d, s) in enumerate(top_signals):
                         if i > 0:
                             await asyncio.sleep(60)
