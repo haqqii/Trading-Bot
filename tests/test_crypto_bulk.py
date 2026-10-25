@@ -608,6 +608,21 @@ class TestCoingeckoLimiterState:
 
         assert len(limiter.calls) == 0
 
+    def test_future_calls_are_ignored(self, tmp_path):
+        """Timestamp di masa depan (jam meleset) jangan dikunci limiter."""
+        from utils.rate_limiter import RateLimiter
+        import json
+
+        state_file = str(tmp_path / 'calls.json')
+        with open(state_file, 'w', encoding='utf-8') as f:
+            json.dump([time.time() + 3600], f)
+
+        limiter = RateLimiter(max_calls=4, period=60, name='test',
+                              state_file=state_file)
+
+        assert len(limiter.calls) == 0, \
+            "timestamp masa depan tidak boleh memblokir limiter"
+
     def test_calls_are_persisted(self, tmp_path):
         """Setiap panggilan dicatat ke file."""
         from utils.rate_limiter import RateLimiter

@@ -51,8 +51,12 @@ class RateLimiter:
             now = time.time()
             with self.lock:
                 for stamp in stamps:
-                    if now - stamp < self.period:
-                        self.calls.append(float(stamp))
+                    stamp = float(stamp)
+                    # Abaikan yang sudah lewat masa jendela, dan yang
+                    # timestamp-nya jauh di masa depan (jam meleset) -
+                    # kalau tidak, limiter bisa terkunci lama.
+                    if now - stamp < self.period and stamp - now < 5:
+                        self.calls.append(stamp)
         except Exception:
             # File belum ada / rusak - limiter tetap jalan normal.
             pass

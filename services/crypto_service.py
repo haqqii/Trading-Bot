@@ -705,9 +705,19 @@ class CryptoService:
                 if ref and ref > 0:
                     ratio = price / ref
                     if ratio < (1 / _PRICE_MISMATCH_RATIO) or ratio > _PRICE_MISMATCH_RATIO:
+                        # Kalau harga Yahoo jauh lebih kecil dari acuan,
+                        # tampilkan jadi berapa kali lebih kecil - kalau
+                        # ditulis sebagai rasio, hasilnya "0.0x" dan
+                        # tidak informatif.
+                        if ratio < 1:
+                            factor = 1 / ratio
+                            side = "smaller than"
+                        else:
+                            factor = ratio
+                            side = "bigger than"
                         logger.warning(
-                            f"Yahoo price for {ticker} ({price:.8f}) differs from "
-                            f"CoinGecko reference ({ref:.8f}) by {ratio:.1f}x - "
+                            f"Yahoo price for {ticker} ({price:.8f}) is {factor:.1f}x "
+                            f"{side} CoinGecko reference ({ref:.8f}) - "
                             f"likely a different asset, rejecting")
                         return None
 
