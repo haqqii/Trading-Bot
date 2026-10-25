@@ -76,6 +76,14 @@ _COINGECKO_CACHE_TTL = 300
 # jadi URL-nya dibatasi supaya tidak terlalu panjang.
 _COINGECKO_BULK_CHUNK = 100
 
+# Berapa pair yang normalnya dipantau kalau CoinGecko sempat bisa diakses
+# (2 halaman x 250 koin, setelah symbol duplikat dibuang).
+_EXPECTED_PAIR_COUNT = 250
+
+# Jeda minimum antar percobaan ambil daftar pair. Tanpa ini, container yang
+# baru start langsung retry (10 detik setelah start) dan kena rate limit lagi.
+_PAIR_LOAD_MIN_INTERVAL = 300
+
 
 # --- Deteksi stablecoin ------------------------------------------------------
 # Stablecoin = aset yang nilainya dipatok ke mata uang lain (biasanya $1).
@@ -302,6 +310,14 @@ class CryptoService:
         # CoinGecko sedang rate limit. Selama status ini masih ada, hanya
         # 12 aset yang dipantau - itu perlu diketahui admin.
         self.used_fallback_pairs = False
+        # Berapa banyak pair yang normalnya dipantau (2 halaman x 250 koin
+        # dari CoinGecko, setelah symbol duplikat dibuang). Dipakai untuk
+        # memberi tahu admin seberapa jauh daftar yang aktif berkurang.
+        self.expected_pair_count = _EXPECTED_PAIR_COUNT
+        # Kapan terakhir kali daftar pair dicoba ambil. Dipakai supaya
+        # percobaan ulang tidak langsung menumpuk di detik yang sama
+        # dengan percobaan yang gagal (misal restart container).
+        self._last_pair_load_time: float = 0.0
         # Harga acuan dari CoinGecko untuk mencocokkan hasil Yahoo Finance.
         self.cg_price_ref: dict[str, float] = {}
         self._price_ref_time: float = 0.0
@@ -314,6 +330,7 @@ class CryptoService:
         coingecko_mappings = {}
         major_set = set()
         cg_failed = False
+        self._last_pair_load_time = time.time()
 
         try:
             url = "https://api.coingecko.com/api/v3/coins/markets"
@@ -328,6 +345,10 @@ class CryptoService:
             # Fetch pages 1-2 (top 500 coins) - reduce from 5 to avoid rate limits
             for page in [1, 2]:
                 try:
+                    # Pakai limiter yang sama dengan jalur CoinGecko lain.
+                    # Tanpa ini, request saat start tidak ikut dihitung dan
+                    # bisa menabrak kuota 5 request/menit.
+                    _coingecko_limiter.wait_if_needed()
                     resp = _cg_session.get(url, params=params, timeout=10)
                 except Exception as req_err:
                     logger.warning(f"CoinGecko request failed: {req_err}")
@@ -377,6 +398,10 @@ class CryptoService:
         self.coingecko_ids = {ticker: cg_id for ticker, (_, cg_id) in coingecko_mappings.items()}
         self.major_crypto = major_set & set(self.crypto_pairs.keys())
         self.used_fallback_pairs = used_fallback
+        if not used_fallback:
+            # Simpan jumlah pair dari daftar lengkap, supaya kalau nanti
+            # jatuh ke daftar cadangan admin tahu bedanya berapa.
+            self.expected_pair_count = len(self.crypto_pairs)
         self._crypto_loaded = True
         logger.info(f"Crypto loaded: {len(self.crypto_pairs)} pairs (major: {len(self.major_crypto)})")
         return self.crypto_pairs
@@ -393,6 +418,18 @@ class CryptoService:
         """
         if not self.used_fallback_pairs:
             return True
+
+        # Jangan langsung retry kalau percobaan terakhir baru saja terjadi.
+        # Container yang baru start memang memanggil job prefetch ini dalam
+        # hitungan detik - percobaan kedua secepat itu hanya kena rate limit
+        # lagi dan wasting kuota.
+        since_last = time.time() - self._last_pair_load_time
+        if 0 < since_last < _PAIR_LOAD_MIN_INTERVAL:
+            logger.info(
+                f"Belum coba ulang daftar pair crypto (percobaan terakhir "
+                f"{since_last:.0f} detik lalu, minimal "
+                f"{_PAIR_LOAD_MIN_INTERVAL} detik)")
+            return False
 
         logger.info("Mencoba lagi ambil daftar pair crypto "
                     "(sebelumnya jatuh ke daftar cadangan)")

@@ -339,6 +339,10 @@ class TestFallbackPairsRetry:
         service = CryptoService()
         assert service.used_fallback_pairs is False
 
+    def test_expected_pair_count_starts_at_normal_value(self):
+        from services.crypto_service import CryptoService
+        assert CryptoService().expected_pair_count == 250
+
     def test_retry_is_noop_when_list_is_complete(self, monkeypatch):
         from services.crypto_service import CryptoService
 
@@ -378,6 +382,115 @@ class TestFallbackPairsRetry:
         assert service.retry_load_crypto_pairs() is False
         assert service.used_fallback_pairs is True
 
+    def test_retry_skipped_when_last_attempt_was_recent(self, monkeypatch):
+        """Percobaan ulang jangan menumpuk di detik yang sama.
+
+        Container yang baru start memanggil job prefetch beberapa detik
+        setelah start - percobaan kedua secepat itu hanya kena rate limit
+        lagi.
+        """
+        from services.crypto_service import CryptoService
+
+        service = CryptoService()
+        service.used_fallback_pairs = True
+        service._last_pair_load_time = time.time()
+        called = []
+        monkeypatch.setattr(service, 'load_crypto_pairs',
+                            lambda force=False: called.append(force))
+
+        assert service.retry_load_crypto_pairs() is False
+        assert called == [], "retry harus ditunda, bukan langsung request"
+
+    def test_retry_allowed_after_minimum_interval(self, monkeypatch):
+        from services.crypto_service import CryptoService
+
+        service = CryptoService()
+        service.used_fallback_pairs = True
+        service._last_pair_load_time = time.time() - 3600
+        called = []
+        monkeypatch.setattr(service, 'load_crypto_pairs',
+                            lambda force=False: called.append(force))
+
+        service.retry_load_crypto_pairs()
+        assert called == [True], "retry harus jalan kalau sudah lama"
+
+
+class TestCryptoPairLoading:
+    """Pengambilan daftar pair dari CoinGecko."""
+
+    def _make_coins(self, n=3):
+        coins = []
+        for i in range(n):
+            coins.append({
+                'id': f'id{i}',
+                'symbol': f'sym{i}',
+                'name': f'Sym {i}',
+                'market_cap_rank': 10 + i,
+            })
+        return coins
+
+    def test_loader_uses_the_shared_rate_limiter(self, monkeypatch):
+        """Request daftar pair harus ikut limiter CoinGecko yang sama.
+
+        Tanpa ini, request saat start tidak dihitung di kuota 5/menit dan
+        bisa memicu 429.
+        """
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        waits = []
+
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda: waits.append(1))
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, self._make_coins()))
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        service.load_crypto_pairs(force=True)
+
+        assert len(waits) == 2, "kedua halaman harus lewat limiter"
+
+    def test_successful_load_records_expected_count(self, monkeypatch):
+        """Jumlah pair dari daftar lengkap dicatat untuk pembanding."""
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, self._make_coins(20)))
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        service.load_crypto_pairs(force=True)
+
+        assert service.used_fallback_pairs is False
+        assert service.expected_pair_count == len(service.crypto_pairs)
+        assert service.expected_pair_count == 20
+
+    def test_fallback_load_keeps_previous_expected_count(self, monkeypatch):
+        """Kalau jatuh ke cadangan, jumlah normal tidak ikut turun."""
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        service.expected_pair_count = 250
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(429, {}))
+        monkeypatch.setattr(cs.time, 'sleep', lambda s: None)
+
+        service.load_crypto_pairs(force=True)
+
+        assert service.used_fallback_pairs is True
+        assert service.expected_pair_count == 250
+        assert len(service.crypto_pairs) == 12, "daftar cadangan berisi 12 koin"
+
 
 class TestScanDegradedAlert:
     """Alert ketika scan berjalan dengan cakupan terlalu kecil."""
@@ -414,6 +527,7 @@ class TestScanDegradedAlert:
         class FakeService:
             crypto_pairs = {'BTC-USD': 'Bitcoin'}
             used_fallback_pairs = True
+            expected_pair_count = 250
 
             def get_usd_idr_rate(self):
                 return 16000
@@ -444,6 +558,11 @@ class TestScanDegradedAlert:
                     if r.levelno >= logging.ERROR]
         assert any('Scan degrade' in m for m in messages), \
             f"tidak ada alert degrade: {messages}"
+
+        # Pesan harus menyebut jumlah normal, bukan membandingkan angka
+        # yang sama ("bukan 12" kalau yang dipantau 12).
+        degrade = next(m for m in messages if 'Scan degrade' in m)
+        assert '250' in degrade, f"jumlah pair normal tidak disebut: {degrade}"
 
 
 class TestMisfireGraceTime:
