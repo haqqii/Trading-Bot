@@ -460,7 +460,7 @@ class CryptoService:
         logger.info(f"Daftar pair crypto pulih: {len(self.crypto_pairs)} pair")
         return True
 
-    def load_price_reference(self) -> dict[str, float]:
+    def load_price_reference(self, priority: bool = False) -> dict[str, float]:
         """Ambil harga acuan semua pair dari CoinGecko.
 
         Dipakai untuk mencocokkan hasil Yahoo Finance. Namespace ticker Yahoo
@@ -472,6 +472,9 @@ class CryptoService:
 
         Semua pair diambil sekaligus, jadi biayanya 1-3 request per siklus
         scan, bukan satu request per ticker.
+
+        priority=True: jalur yang butuh cepat (startup) - boleh memakai
+        kuota CoinGecko yang dicadangkan.
         """
         ids = {ticker: coin_id for ticker, coin_id in self.coingecko_ids.items() if coin_id}
         if not ids:
@@ -484,12 +487,13 @@ class CryptoService:
             for attempt in range(3):
                 try:
                     # Batas tunggu: kalau slot CoinGecko tidak ada dalam
-                    # 30 detik, chunk ini dilewati (chunk sebelumnya masih
+                    # 60 detik, chunk ini dilewati (chunk sebelumnya masih
                     # jadi acuan). Tanpa batas, refresh acuan bisa menahan
                     # scan hampir 3 menit (3 chunk x hampir semenit).
-                    if not _coingecko_limiter.wait_if_needed(max_wait=30):
+                    if not _coingecko_limiter.wait_if_needed(
+                            priority=priority, max_wait=60):
                         logger.warning(
-                            "CoinGecko tidak ada slot dalam 30 detik - "
+                            "CoinGecko tidak ada slot dalam 60 detik - "
                             "acuan harga tidak disegarkan untuk chunk ini")
                         break
                     resp = _cg_session.get(
@@ -531,7 +535,8 @@ class CryptoService:
                 f"(active coverage {len(self.cg_price_ref)})")
         return self.cg_price_ref
 
-    def _ensure_price_reference(self, max_age: int = _PRICE_REF_TTL) -> dict[str, float]:
+    def _ensure_price_reference(self, max_age: int = _PRICE_REF_TTL,
+                                priority: bool = False) -> dict[str, float]:
         """Pastikan acuan harga CoinGecko ada dan masih segar.
 
         Percobaan yang gagal tidak dihapus acuan lamanya, dan waktu percobaan
@@ -541,16 +546,26 @@ class CryptoService:
         if (time.time() - self._price_ref_time) < max_age:
             return self.cg_price_ref
         self._price_ref_time = time.time()
-        return self.load_price_reference()
+        ref = self.load_price_reference(priority=priority)
+        if not ref:
+            # Pemuatan gagal: coba lagi dalam 60 detik, bukan menunggu
+            # TTL penuh. Kalau provider sedang rate limited, reload tiap
+            # fetch hanya membuang kuota tanpa hasil.
+            self._price_ref_time = time.time() - (max_age - 60)
+        return ref
 
-    def refresh_price_reference(self) -> dict[str, float]:
+    def refresh_price_reference(self, priority: bool = True) -> dict[str, float]:
         """Muat ulang acuan harga CoinGecko kalau sudah basi.
 
-        Dipanggil dari scan (sekali per siklus) dan dari startup. Jadi
-        setiap fetch ticker cukup membandingkan dengan acuan yang ada,
-        tanpa perlu memicu request CoinGecko di tengah jalan.
+        Dipanggil dari startup (priority=True - fondasi bot, ticker dengan
+        simbol sama di dua provider bisa tertukar) dan dari scan
+        (priority=False - jalan di belakang, tidak boleh-automatis
+        mengambil kuota yang dipakai job cek TP/SL).
+
+        Karena itu setiap fetch ticker cukup membandingkan dengan acuan
+        yang ada, tanpa perlu memicu request CoinGecko di tengah jalan.
         """
-        return self._ensure_price_reference()
+        return self._ensure_price_reference(priority=priority)
 
     def get_usd_idr_rate(self):
         """Get USD to IDR conversion rate (cached 5 minutes)"""

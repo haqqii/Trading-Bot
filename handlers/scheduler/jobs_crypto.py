@@ -116,7 +116,10 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
     # scan tidak ikut menunggu antrean CoinGecko.
     async def _refresh_ref():
         try:
-            await asyncio.to_thread(crypto_service.refresh_price_reference)
+            # priority=False: jalan di belakang. Kuota yang dipesan untuk
+            # job cek TP/SL tidak boleh dimakan di sini.
+            await asyncio.to_thread(crypto_service.refresh_price_reference,
+                                    priority=False)
         except Exception as ref_err:
             logger.warning(f"[CRYPTO] Gagal segarkan acuan harga CoinGecko: {ref_err}")
 
