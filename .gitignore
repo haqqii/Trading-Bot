@@ -50,6 +50,10 @@ data/ticker_unavailable.json
 # harus bertahan antar-restart container
 data/coingecko_calls.json
 
+# Cache daftar pair crypto - jaring pengaman kalau CoinGecko kena rate
+# limit saat container start
+data/crypto_pairs_cache.json
+
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal

@@ -11,6 +11,7 @@ Test untuk perbaikan performa scan crypto:
 import os
 import sys
 import time
+import json
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -537,12 +538,16 @@ class TestCryptoPairLoading:
         assert service.expected_pair_count == len(service.crypto_pairs)
         assert service.expected_pair_count == 20
 
-    def test_fallback_load_keeps_previous_expected_count(self, monkeypatch):
+    def test_fallback_load_keeps_previous_expected_count(self, monkeypatch,
+                                                         tmp_path):
         """Kalau jatuh ke cadangan, jumlah normal tidak ikut turun."""
         from services import crypto_service as cs
 
         service = cs.CryptoService()
         service.expected_pair_count = 250
+        # Cache pair diarahkan ke file yang tidak ada, supaya test ini
+        # benar-benar menguji jalur daftar cadangan.
+        service.pair_cache_file = str(tmp_path / 'tidak_ada.json')
         monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
                             lambda *a, **k: None)
         monkeypatch.setattr(
@@ -556,6 +561,136 @@ class TestCryptoPairLoading:
         assert service.used_fallback_pairs is True
         assert service.expected_pair_count == 250
         assert len(service.crypto_pairs) == 12, "daftar cadangan berisi 12 koin"
+        assert service.pair_source == 'fallback'
+
+
+class TestPairListCache:
+    """Cache daftar pair di disk.
+
+    Rate limit CoinGecko saat start pernah membuat bot cuma memantau 12
+    koin sampai job recovery berhasil. Cache daftar lengkap terakhir
+    membuat jendela itu tidak lagi menurunkan cakupan.
+    """
+
+    def _make_coins(self, n):
+        coins = []
+        for i in range(n):
+            coins.append({
+                'id': f'id{i}',
+                'symbol': f'sym{i}',
+                'name': f'Sym {i}',
+                'market_cap_rank': 10 + i,
+            })
+        return coins
+
+    def _service(self, tmp_path):
+        from services import crypto_service as cs
+
+        service = cs.CryptoService()
+        service.pair_cache_file = str(tmp_path / 'pairs.json')
+        return service
+
+    def test_successful_load_saves_cache(self, monkeypatch, tmp_path):
+        from services import crypto_service as cs
+
+        service = self._service(tmp_path)
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, self._make_coins(60)))
+
+        service.load_crypto_pairs(force=True)
+
+        assert os.path.exists(service.pair_cache_file), \
+            "daftar pair harus disimpan ke disk"
+
+        with open(service.pair_cache_file, encoding='utf-8') as f:
+            payload = json.load(f)
+        assert len(payload['pairs']) == 60
+        assert payload['ids']['SYM0-USD'] == 'id0'
+        assert payload['saved_at'] > 0
+
+    def test_rate_limit_uses_saved_cache(self, monkeypatch, tmp_path):
+        """429 setelah daftar pernah berhasil dimuat -> pakai cache.
+
+        Tanpa ini, satu rate limit cukup untuk menurunkan cakupan ke
+        12 koin selama beberapa menit.
+        """
+        from services import crypto_service as cs
+
+        service = self._service(tmp_path)
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, self._make_coins(60)))
+        service.load_crypto_pairs(force=True)
+
+        # Simulasikan restart: instance baru, cache masih ada di disk,
+        # CoinGecko sekarang rate limited.
+        service2 = self._service(tmp_path)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(429, {}))
+
+        service2.load_crypto_pairs(force=True)
+
+        assert len(service2.crypto_pairs) == 60, \
+            "cakupan harus tetap penuh dari cache"
+        assert service2.pair_source == 'cache'
+        assert service2.used_fallback_pairs is True, \
+            "status tetap 'belum lengkap' supaya job recovery terus mencoba"
+        assert service2.expected_pair_count == 250
+        # Id CoinGecko ikut diambil dari cache - tanpa ini job cek TP/SL
+        # harus minta Yahoo untuk tiap ticker.
+        assert service2.coingecko_ids.get('SYM0-USD') == 'id0'
+
+    def test_stale_cache_is_not_used(self, monkeypatch, tmp_path):
+        """Cache yang sudah lebih dari 7 hari tidak boleh dipakai."""
+        from services import crypto_service as cs
+
+        service = self._service(tmp_path)
+        with open(service.pair_cache_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'saved_at': time.time() - 8 * 24 * 3600,
+                'pairs': {f'SYM{i}-USD': f'Sym {i}' for i in range(60)},
+                'ids': {f'SYM{i}-USD': f'id{i}' for i in range(60)},
+                'major': [],
+            }, f)
+
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(429, {}))
+
+        service.load_crypto_pairs(force=True)
+
+        assert len(service.crypto_pairs) == 12, \
+            "cache basi harus diabaikan, jatuh ke daftar cadangan"
+        assert service.pair_source == 'fallback'
+
+    def test_partial_list_is_not_cached(self, monkeypatch, tmp_path):
+        """Daftar yang terpotong tidak boleh disimpan sebagai cache."""
+        from services import crypto_service as cs
+
+        service = self._service(tmp_path)
+        monkeypatch.setattr(cs._coingecko_limiter, 'wait_if_needed',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(
+            cs._cg_session, 'get',
+            lambda url, params=None, timeout=None:
+                FakeResponse(200, self._make_coins(12)))
+
+        service.load_crypto_pairs(force=True)
+
+        assert not os.path.exists(service.pair_cache_file), \
+            "daftar pendek tidak boleh dianggap daftar lengkap"
 
 
 class TestScanDegradedAlert:
@@ -629,6 +764,50 @@ class TestScanDegradedAlert:
         # yang sama ("bukan 12" kalau yang dipantau 12).
         degrade = next(m for m in messages if 'Scan degrade' in m)
         assert '250' in degrade, f"jumlah pair normal tidak disebut: {degrade}"
+
+    def test_cached_pair_list_does_not_trigger_alert(self, monkeypatch, caplog):
+        """Kalau daftar berasal dari cache, cakupan tetap penuh.
+
+        Rate limit CoinGecko adalah masalah jaringan, bukan bug - dan
+        cakupan tidak turun. Jadi tidak boleh dikirimi admin.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        class FakeService:
+            crypto_pairs = {f'SYM{i}-USD': 'Sym' for i in range(60)}
+            used_fallback_pairs = True
+            pair_source = 'cache'
+            expected_pair_count = 250
+
+            def get_usd_idr_rate(self):
+                return 16000
+
+            def get_crypto_data(self, ticker, interval, period,
+                                skip_if_missing=False):
+                return None
+
+            def get_crypto_data_coingecko_bulk(self, tickers, retry=3,
+                                               use_cache=True):
+                return {}
+
+        class FakeApp:
+            def __init__(self):
+                self.bot = MagicMock()
+
+        monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '240'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals', lambda: {})
+        monkeypatch.setattr(jobs_crypto, '_last_degrade_alert', 0.0)
+
+        with caplog.at_level(logging.ERROR):
+            import asyncio
+            asyncio.run(jobs_crypto.check_crypto_signals(FakeApp()))
+
+        messages = [r.getMessage() for r in caplog.records
+                    if r.levelno >= logging.ERROR]
+        assert not any('Scan degrade' in m for m in messages), \
+            f"cakupan penuh, tidak boleh ada alert degrade: {messages}"
 
 
 class TestCoingeckoLimiterState:

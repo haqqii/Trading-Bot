@@ -528,11 +528,22 @@ async def check_crypto_signals(app):
         # menampilkan "hanya 11 sinyal" tanpa ada yang tahu kenapa.
         if crypto_service.used_fallback_pairs:
             expected = getattr(crypto_service, 'expected_pair_count', 0) or 0
-            _alert_degraded_scan(
-                "daftar ticker crypto jatuh ke daftar cadangan",
-                f"Hanya {len(all_crypto)} koin yang dipantau dari sekitar "
-                f"{expected} pair normal. Daftar akan dicoba lagi otomatis "
-                f"oleh job prefetch.")
+            source = getattr(crypto_service, 'pair_source', 'fallback')
+            if source == 'cache':
+                # Cakupan tetap penuh - yang dipakai daftar lengkap
+                # terakhir yang tersimpan. Bukan penurunan cakupan, jadi
+                # cukup dicatat di log, tidak perlu dikirimi admin.
+                logger.warning(
+                    f"[CRYPTO] CoinGecko rate limited - cakupan crypto "
+                    f"memakai daftar tersimpan ({len(all_crypto)} pair "
+                    f"dari sekitar {expected}). Daftar akan dimuat ulang "
+                    f"otomatis dari CoinGecko.")
+            else:
+                _alert_degraded_scan(
+                    "daftar ticker crypto jatuh ke daftar cadangan",
+                    f"Hanya {len(all_crypto)} koin yang dipantau dari sekitar "
+                    f"{expected} pair normal. Daftar akan dicoba lagi otomatis "
+                    f"oleh job prefetch.")
         elif worst_coverage < 0.5:
             _alert_degraded_scan(
                 "cakupan scan terlalu kecil",

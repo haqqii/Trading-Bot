@@ -3,6 +3,8 @@ Crypto data fetching service using Yahoo Finance and CoinGecko.
 """
 import time
 import logging
+import json
+import os
 import requests
 import yfinance as yf
 import pandas as pd
@@ -90,6 +92,25 @@ _EXPECTED_PAIR_COUNT = 250
 # Jeda minimum antar percobaan ambil daftar pair. Tanpa ini, container yang
 # baru start langsung retry (10 detik setelah start) dan kena rate limit lagi.
 _PAIR_LOAD_MIN_INTERVAL = 100
+
+# Cache daftar pair di disk. Kalau CoinGecko kena rate limit saat start,
+# daftar cadangan cuma 12 koin - bot jadi buta pada 95% aset sampai job
+# recovery berhasil (biasanya 2-3 menit). Cache ini menahan daftar
+# lengkap terakhir yang berhasil dimuat, jadi restart di saat tidak
+# beruntung tidak langsung menurunkan cakupan.
+_PAIR_CACHE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data',
+    'crypto_pairs_cache.json')
+
+# Umur maksimum cache daftar pair (detik). 7 hari: cukup untuk menutup
+# jendela rate limit CoinGecko, tapi tidak terlalu basi supaya koin yang
+# sudah keluar dari 250 teratas tidak terus dipantau.
+_PAIR_CACHE_MAX_AGE = 7 * 24 * 3600
+
+# Minimal jumlah pair supaya hasil muatan dianggap daftar lengkap (dan
+# boleh disimpan sebagai cache). Angka kecil berarti daftar itu hasil
+# terpotong, bukan 250 koin teratas.
+_PAIR_CACHE_MIN_PAIRS = 50
 
 
 # --- Deteksi stablecoin ------------------------------------------------------
@@ -317,6 +338,14 @@ class CryptoService:
         # CoinGecko sedang rate limit. Selama status ini masih ada, hanya
         # 12 aset yang dipantau - itu perlu diketahui admin.
         self.used_fallback_pairs = False
+        # Asal daftar pair yang aktif: 'coingecko' (dimuat langsung dari
+        # CoinGecko), 'cache' (daftar lengkap terakhir yang tersimpan di
+        # disk, dipakai kalau CoinGecko rate limited), atau 'fallback'
+        # (12 koin cadangan). Cakupan penuh cuma dijamin untuk dua yang
+        # pertama, jadi asalnya perlu kelihatan saat bikin laporan.
+        self.pair_source = 'unknown'
+        # File cache daftar pair. Bisa diarahkan ke tempat lain saat test.
+        self.pair_cache_file = _PAIR_CACHE_FILE
         # Berapa banyak pair yang normalnya dipantau (250 koin teratas dari
         # CoinGecko, setelah symbol duplikat dibuang). Dipakai untuk
         # memberi tahu admin seberapa jauh daftar yang aktif berkurang.
@@ -328,6 +357,72 @@ class CryptoService:
         # Harga acuan dari CoinGecko untuk mencocokkan hasil Yahoo Finance.
         self.cg_price_ref: dict[str, float] = {}
         self._price_ref_time: float = 0.0
+
+    def _save_pair_cache(self, pairs: dict[str, str], ids: dict[str, str],
+                         major: set[str]) -> bool:
+        """Simpan daftar pair ke disk.
+
+        Tujuannya bukan hemat request (daftar tetap diambil dari CoinGecko
+        kalau bisa), tapi jaring pengaman: kalau CoinGecko sedang rate
+        limited saat container start, daftar lengkap terakhir ini yang
+        dipakai, bukan daftar cadangan 12 koin.
+        """
+        if len(pairs) < _PAIR_CACHE_MIN_PAIRS:
+            return False
+        try:
+            folder = os.path.dirname(self.pair_cache_file)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            payload = {
+                'saved_at': time.time(),
+                'pairs': dict(pairs),
+                'ids': dict(ids),
+                'major': sorted(major),
+            }
+            tmp = f"{self.pair_cache_file}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.pair_cache_file)
+            return True
+        except Exception as save_err:
+            # Gagal menyimpan bukan alasan untuk menghentikan bot.
+            logger.warning(f"Gagal menyimpan cache daftar pair crypto: "
+                           f"{save_err}")
+            return False
+
+    def _load_pair_cache(self):
+        """Baca daftar pair tersimpan.
+
+        Balikan: (pairs, ids, major, umur_detik) atau None kalau file tidak
+        ada, isinya tidak lengkap, atau sudah terlalu basi.
+        """
+        try:
+            with open(self.pair_cache_file, encoding='utf-8') as f:
+                payload = json.load(f)
+        except FileNotFoundError:
+            return None
+        except Exception as read_err:
+            logger.warning(f"Gagal membaca cache daftar pair crypto: "
+                           f"{read_err}")
+            return None
+
+        pairs = payload.get('pairs') or {}
+        ids = payload.get('ids') or {}
+        if len(pairs) < _PAIR_CACHE_MIN_PAIRS:
+            return None
+
+        try:
+            saved_at = float(payload.get('saved_at') or 0)
+        except (TypeError, ValueError):
+            return None
+        age = time.time() - saved_at
+        if age < 0 or age > _PAIR_CACHE_MAX_AGE:
+            logger.info("Cache daftar pair crypto sudah basi "
+                        f"({age / 3600:.0f} jam) - tidak dipakai")
+            return None
+
+        major = set(payload.get('major') or [])
+        return pairs, ids, major, age
 
     def load_crypto_pairs(self, force: bool = False, priority: bool = True):
         """Auto-load crypto pairs from CoinGecko (top 250 coins) with fallback
@@ -432,6 +527,28 @@ class CryptoService:
         # Fallback if CoinGecko failed or returned too few coins
         used_fallback = cg_failed or len(coingecko_mappings) < 10
         if used_fallback:
+            # Coba dulu daftar lengkap terakhir yang berhasil dimuat.
+            # Tanpa ini, satu rate limit CoinGecko cukup untuk menurunkan
+            # cakupan ke 12 koin selama beberapa menit - dan id CoinGecko
+            # yang ikut hilang membuat job cek TP/SL jauh lebih lambat
+            # (tiap ticker yang tidak bisa dicocokkan harus minta Yahoo).
+            cached = self._load_pair_cache()
+            if cached:
+                pairs, ids, major, age = cached
+                logger.warning(
+                    f"CoinGecko tidak bisa dipakai - pakai daftar pair "
+                    f"tersimpan ({len(pairs)} pair, umur "
+                    f"{age / 3600:.1f} jam)")
+                self.crypto_pairs = dict(pairs)
+                self.coingecko_ids = dict(ids)
+                self.major_crypto = major & set(self.crypto_pairs.keys())
+                self.used_fallback_pairs = True
+                self.pair_source = 'cache'
+                self._crypto_loaded = True
+                logger.info(f"Crypto loaded: {len(self.crypto_pairs)} pairs "
+                            f"dari cache (major: {len(self.major_crypto)})")
+                return self.crypto_pairs
+
             logger.warning(f"Using fallback crypto list ({len(_FALLBACK_CRYPTO_PAIRS)} coins)")
             # Merge with what we got from CoinGecko (prefer CoinGecko data)
             for ticker, value in _FALLBACK_CRYPTO_PAIRS.items():
@@ -442,10 +559,15 @@ class CryptoService:
         self.coingecko_ids = {ticker: cg_id for ticker, (_, cg_id) in coingecko_mappings.items()}
         self.major_crypto = major_set & set(self.crypto_pairs.keys())
         self.used_fallback_pairs = used_fallback
+        self.pair_source = 'fallback' if used_fallback else 'coingecko'
         if not used_fallback:
             # Simpan jumlah pair dari daftar lengkap, supaya kalau nanti
             # jatuh ke daftar cadangan admin tahu bedanya berapa.
             self.expected_pair_count = len(self.crypto_pairs)
+            # Simpan daftarnya ke disk, jadi restart berikutnya punya
+            # jaring pengaman kalau CoinGecko sedang rate limited.
+            self._save_pair_cache(self.crypto_pairs, self.coingecko_ids,
+                                  self.major_crypto)
         self._crypto_loaded = True
         logger.info(f"Crypto loaded: {len(self.crypto_pairs)} pairs (major: {len(self.major_crypto)})")
         return self.crypto_pairs
@@ -484,8 +606,12 @@ class CryptoService:
             return False
 
         if self.used_fallback_pairs:
-            logger.warning("CoinGecko masih rate limited - daftar pair crypto "
-                           "masih pakai daftar cadangan")
+            if self.pair_source == 'cache':
+                logger.warning("CoinGecko masih rate limited - daftar pair "
+                               "crypto masih memakai daftar tersimpan")
+            else:
+                logger.warning("CoinGecko masih rate limited - daftar pair "
+                               "crypto masih pakai daftar cadangan")
             return False
 
         logger.info(f"Daftar pair crypto pulih: {len(self.crypto_pairs)} pair")
