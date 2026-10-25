@@ -484,14 +484,74 @@ async def check_crypto_signals(app):
         logger.error(f"Error in check_crypto_signals: {e}", exc_info=True)
 
 
+async def _fetch_crypto_price(ticker, interval, period):
+    """Ambil harga satu ticker di thread.
+
+    Permintaan provider + limiter-nya blocking, jadi harus jalan di thread
+    - kalau dipanggil langsung di event loop, bot stutter dan job lain
+    (mis. notifikasi harga) ikut terlambat.
+    """
+    try:
+        return await asyncio.to_thread(
+            crypto_service.get_crypto_data_combined, ticker, interval,
+            period, skip_if_missing=True)
+    except Exception as e:
+        logger.warning(f"Gagal ambil harga crypto {ticker}: {e}")
+        return None
+
+
+async def _fetch_prices_for_tp_sl(user_db, signals):
+    """Ambil harga semua sinyal crypto yang dipantau, sekaligus.
+
+    Kalau diambil satu per satu, tiap sinyal harus antre di limiter
+    provider. Saat scan crypto sedang jalan limiter itu penuh, jadi satu
+    siklus cek TP/SL bisa lewat 2 menit - job berikutnya lalu kena
+    "maximum number of running instances reached" dan notifikasi TP/SL
+    telat.
+
+    Returns:
+        dict key sinyal -> data harga (hanya yang datanya berhasil diambil).
+    """
+    wanted = []
+    for uid, u in user_db.items():
+        if not u.get('notif_crypto', False):
+            continue
+        user_tf = u.get('timeframe', '60')
+        interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
+        for key, signal_data in list(signals.items()):
+            if signal_data.get('type') != 'crypto':
+                continue
+            if signal_data.get('user_id') != uid:
+                continue
+            ticker = signal_data.get('ticker_raw')
+            if not ticker:
+                continue
+            wanted.append((key, ticker, interval, period))
+
+    if not wanted:
+        return {}
+
+    results = await asyncio.gather(*[
+        _fetch_crypto_price(ticker, interval, period)
+        for _, ticker, interval, period in wanted
+    ])
+    return {key: data for (key, _, _, _), data in zip(wanted, results) if data}
+
+
 async def check_crypto_tp_sl(app):
     """Check and notify TP/SL hits for tracked crypto signals."""
     try:
-        for uid, u in _get_user_db().items():
+        user_db = _get_user_db()
+        signals = _get_last_buy_signals()
+
+        # Harga semua sinyal diambil sekali di awal (paralel), lalu dipakai
+        # di bawah per sinyal.
+        price_cache = await _fetch_prices_for_tp_sl(user_db, signals)
+
+        for uid, u in user_db.items():
             if not u.get('notif_crypto', False):
                 continue
 
-            signals = _get_last_buy_signals()
             for key, signal_data in list(signals.items()):
                 if signal_data.get('type') != 'crypto':
                     continue
@@ -507,13 +567,7 @@ async def check_crypto_tp_sl(app):
                 try:
                     # Get user's TF for per-user TP/SL calculation
                     user_tf = u.get('timeframe', '60')
-                    interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
-                    # Blocking (request provider + limiter) - kalau dipanggil
-                    # langsung di event loop, bot stutter dan job lain
-                    # (mis. notifikasi harga) ikut terlambat.
-                    d = await asyncio.to_thread(
-                        crypto_service.get_crypto_data_combined, ticker, interval,
-                        period, skip_if_missing=True)
+                    d = price_cache.get(key)
                     if not d:
                         continue
 
@@ -727,16 +781,22 @@ async def check_crypto_favorit_alerts(app):
 
             tickers_to_remove = []
 
-            for ticker, target_price in list(crypto_favorit.items()):
-                if target_price is None:
-                    continue
+            # Target yang punya harga target. Ambil harga semuanya sekaligus
+            # (paralel) - kalau satu per satu, tiap ticker antre di limiter
+            # provider dan satu siklus bisa lewat 2 menit.
+            targets = {t: p for t, p in crypto_favorit.items()
+                       if p is not None}
+            if not targets:
+                continue
 
+            fetched = await asyncio.gather(*[
+                _fetch_crypto_price(ticker, '1h', '1d') for ticker in targets
+            ])
+            price_map = dict(zip(targets.keys(), fetched))
+
+            for ticker, target_price in targets.items():
                 try:
-                    # Blocking (request provider + limiter) - dijalankan di
-                    # thread supaya event loop bot tidak tertahan.
-                    d = await asyncio.to_thread(
-                        crypto_service.get_crypto_data_combined, ticker, '1h',
-                        '1d', skip_if_missing=True)
+                    d = price_map.get(ticker)
                     if not d:
                         continue
 

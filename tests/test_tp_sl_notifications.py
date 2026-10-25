@@ -212,6 +212,55 @@ class TestShortDirection:
         assert 'SL' in app.bot.sent[0][1]
 
 
+class TestTpSlFetchesPricesInParallel:
+    """Harga semua sinyal yang dipantau diambil sekaligus.
+
+    Kalau satu per satu, tiap sinyal antre di limiter provider. Saat scan
+    crypto sedang jalan limiter itu penuh, jadi satu siklus cek TP/SL bisa
+    lewat 2 menit - job berikutnya lalu kena "maximum number of running
+    instances reached" dan notifikasi TP/SL telat.
+    """
+
+    def test_prices_are_fetched_together(self, monkeypatch):
+        import time
+        from handlers.scheduler import jobs_crypto
+
+        state = {'inflight': 0, 'max_inflight': 0, 'calls': []}
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            state['inflight'] += 1
+            state['max_inflight'] = max(state['max_inflight'],
+                                        state['inflight'])
+            state['calls'].append(ticker)
+            time.sleep(0.15)
+            state['inflight'] -= 1
+            return {'price': 103.0, 'candles': 50}
+
+        signals = {
+            'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD'),
+            'CRYPTO_ETH-USD_1': make_signal(ticker_raw='ETH-USD'),
+            'CRYPTO_SOL-USD_1': make_signal(ticker_raw='SOL-USD'),
+        }
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_combined', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
+
+        assert sorted(state['calls']) == ['BTC-USD', 'ETH-USD', 'SOL-USD']
+        assert state['max_inflight'] > 1, \
+            "harga harus diambil paralel, bukan satu per satu"
+
+
 class TestStockLoop:
     """Loop TP/SL saham punya aturan yang sama."""
 
