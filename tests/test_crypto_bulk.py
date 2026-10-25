@@ -565,6 +565,107 @@ class TestScanDegradedAlert:
         assert '250' in degrade, f"jumlah pair normal tidak disebut: {degrade}"
 
 
+class TestCoingeckoLimiterState:
+    """Limiter CoinGecko harus ingat request dari proses sebelumnya.
+
+    Batas request CoinGecko itu per-IP, jadi kalau container di-restart
+    tepat setelah scan, limiter baru yang amnesia bisa menembak kuota
+    yang sudah terpakai -> 429 -> daftar pair jatuh ke 12 koin cadangan.
+    """
+
+    def test_state_file_is_configured(self):
+        from utils import rate_limiter
+        assert rate_limiter._coingecko_limiter.state_file, \
+            "limiter CoinGecko harus menyimpan state ke file"
+        assert rate_limiter._coingecko_limiter.max_calls == 4
+
+    def test_previous_calls_are_restored(self, tmp_path):
+        """Riwayat panggilan dari file dipakai limiter yang baru."""
+        from utils.rate_limiter import RateLimiter
+        import json
+
+        state_file = str(tmp_path / 'calls.json')
+        with open(state_file, 'w', encoding='utf-8') as f:
+            json.dump([time.time() - 5, time.time() - 10], f)
+
+        limiter = RateLimiter(max_calls=4, period=60, name='test',
+                              state_file=state_file)
+
+        assert len(limiter.calls) == 2, \
+            "riwayat dari proses sebelumnya harus ikut dihitung"
+
+    def test_old_calls_are_ignored(self, tmp_path):
+        """Riwayat yang sudah lewat masa jendela tidak dihitung."""
+        from utils.rate_limiter import RateLimiter
+        import json
+
+        state_file = str(tmp_path / 'calls.json')
+        with open(state_file, 'w', encoding='utf-8') as f:
+            json.dump([time.time() - 600], f)
+
+        limiter = RateLimiter(max_calls=4, period=60, name='test',
+                              state_file=state_file)
+
+        assert len(limiter.calls) == 0
+
+    def test_calls_are_persisted(self, tmp_path):
+        """Setiap panggilan dicatat ke file."""
+        from utils.rate_limiter import RateLimiter
+        import json
+
+        state_file = str(tmp_path / 'calls.json')
+        limiter = RateLimiter(max_calls=4, period=60, name='test',
+                              state_file=state_file)
+
+        limiter.wait_if_needed()
+
+        with open(state_file, encoding='utf-8') as f:
+            saved = json.load(f)
+        assert len(saved) == 1
+
+
+class TestCryptoPairsRecoveryJob:
+    """Job pemulihan daftar pair harus mencoba lagi lalu melapor."""
+
+    def test_noop_when_list_is_complete(self, monkeypatch):
+        import asyncio
+        from handlers.scheduler import jobs_crypto
+
+        class FakeService:
+            used_fallback_pairs = False
+            crypto_pairs = {'BTC-USD': 'Bitcoin'}
+
+            def retry_load_crypto_pairs(self):
+                raise AssertionError("retry tidak boleh jalan saat daftar lengkap")
+
+        monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
+
+        asyncio.run(jobs_crypto.check_crypto_pairs_recovery(MagicMock()))
+
+    def test_retries_when_fallback(self, monkeypatch, caplog):
+        import asyncio
+        from handlers.scheduler import jobs_crypto
+
+        state = {'called': 0}
+
+        class FakeService:
+            used_fallback_pairs = True
+            crypto_pairs = {'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum'}
+
+            def retry_load_crypto_pairs(self):
+                state['called'] += 1
+                self.used_fallback_pairs = False
+                return True
+
+        monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
+
+        with caplog.at_level(logging.INFO):
+            asyncio.run(jobs_crypto.check_crypto_pairs_recovery(MagicMock()))
+
+        assert state['called'] == 1
+        assert any('pulih' in r.getMessage() for r in caplog.records)
+
+
 class TestMisfireGraceTime:
     """Semua job background harus punya misfire_grace_time yang benar."""
 

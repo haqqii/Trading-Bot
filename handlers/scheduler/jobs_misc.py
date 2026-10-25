@@ -23,6 +23,7 @@ from handlers.scheduler.jobs_crypto import (
     check_crypto_signals,
     check_crypto_tp_sl,
     check_crypto_favorit_alerts,
+    check_crypto_pairs_recovery,
     prefetch_crypto_cache,
 )
 from handlers.scheduler.jobs_bsjp_morning import (
@@ -120,6 +121,12 @@ def register_jobs(app):
 
     # Crypto favorit alerts check every 2 minutes
     app.job_queue.run_repeating(check_crypto_favorit_alerts, interval=120, first=30,
+                                job_kwargs=_job_kwargs())
+
+    # Pemulihan daftar pair crypto - jalan tiap 2 menit tapi hanya dipakai
+    # kalau daftarnya jatuh ke daftar cadangan (12 koin) karena CoinGecko
+    # kena rate limit. Job prefetch (15 menit) terlalu jarang untuk itu.
+    app.job_queue.run_repeating(check_crypto_pairs_recovery, interval=120, first=45,
                                 job_kwargs=_job_kwargs())
 
     # Auto-save user data every 5 minutes

@@ -82,7 +82,7 @@ _EXPECTED_PAIR_COUNT = 250
 
 # Jeda minimum antar percobaan ambil daftar pair. Tanpa ini, container yang
 # baru start langsung retry (10 detik setelah start) dan kena rate limit lagi.
-_PAIR_LOAD_MIN_INTERVAL = 300
+_PAIR_LOAD_MIN_INTERVAL = 100
 
 
 # --- Deteksi stablecoin ------------------------------------------------------

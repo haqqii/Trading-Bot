@@ -835,6 +835,32 @@ async def check_crypto_favorit_alerts(app):
         logger.error(f"Error in check_crypto_favorit_alerts: {e}", exc_info=True)
 
 
+async def check_crypto_pairs_recovery(app):
+    """Coba lagi ambil daftar pair crypto kalau jatuh ke daftar cadangan.
+
+    Job ini jalan tiap 2 menit, tapi hanya melakukan sesuatu kalau daftar
+    sedang fallback - kalau daftar sudah lengkap, langsung selesai tanpa
+    request ke CoinGecko.
+
+    Kenapa perlu: kalau CoinGecko kena rate limit saat bot start, hanya 12
+    koin yang dipantau. Job prefetch (15 menit) terlalu jarang untuk
+    memulihkan, jadi user bisa kehilangan separuh aset selama belasan menit
+    tanpa ada yang tahu.
+    """
+    try:
+        if not crypto_service.used_fallback_pairs:
+            return
+
+        recovered = await asyncio.to_thread(
+            crypto_service.retry_load_crypto_pairs)
+        if recovered:
+            logger.info(
+                "Daftar pair crypto pulih - universe dipantau penuh lagi "
+                f"({len(crypto_service.crypto_pairs)} pair)")
+    except Exception as e:
+        logger.warning(f"Gagal memulihkan daftar pair crypto: {e}")
+
+
 async def prefetch_crypto_cache(app):
     """Pemanasan cache crypto.
 

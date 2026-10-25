@@ -4,7 +4,9 @@ Rate limiting and circuit breaker patterns for API protection.
 import time
 import random
 import asyncio
+import json
 import logging
+import os
 from enum import Enum
 from collections import deque
 import threading
@@ -23,7 +25,8 @@ class APIState(Enum):
 class RateLimiter:
     """Token bucket rate limiter for API calls with stats tracking"""
 
-    def __init__(self, max_calls=10, period=60, name="default"):
+    def __init__(self, max_calls=10, period=60, name="default",
+                 state_file: Optional[str] = None):
         self.max_calls = max_calls
         self.period = period
         self.calls = deque()
@@ -32,6 +35,43 @@ class RateLimiter:
         self._total_calls = 0
         self._total_waits = 0
         self._total_rejected = 0
+        # Kalau diisi, riwayat panggilan disimpan ke file supaya tetap
+        # berlaku setelah container di-restart. Batas request provider itu
+        # per-IP, jadi limiter baru yang lupa request lama bisa menembak
+        # kuota orang lain di IP yang sama.
+        self.state_file = state_file
+        if state_file:
+            self._restore_state()
+
+    def _restore_state(self):
+        """Baca riwayat panggilan dari file (dari proses sebelumnya)."""
+        try:
+            with open(self.state_file, encoding='utf-8') as f:
+                stamps = json.load(f)
+            now = time.time()
+            with self.lock:
+                for stamp in stamps:
+                    if now - stamp < self.period:
+                        self.calls.append(float(stamp))
+        except Exception:
+            # File belum ada / rusak - limiter tetap jalan normal.
+            pass
+
+    def _persist_state(self):
+        """Simpan riwayat panggilan ke file."""
+        try:
+            folder = os.path.dirname(self.state_file)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            now = time.time()
+            recent = [s for s in self.calls if now - s < self.period]
+            tmp = f"{self.state_file}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(recent, f)
+            os.replace(tmp, self.state_file)
+        except Exception:
+            # Gagal menyimpan bukan alasan untuk menghentikan bot.
+            pass
 
     def can_call(self):
         """Check if we can make a call without waiting"""
@@ -68,12 +108,16 @@ class RateLimiter:
 
             self.calls.append(time.time())
             self._total_calls += 1
+            if self.state_file:
+                self._persist_state()
 
     def record_call(self):
         """Record a successful call"""
         with self.lock:
             self.calls.append(time.time())
             self._total_calls += 1
+            if self.state_file:
+                self._persist_state()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get rate limiter stats"""
@@ -203,7 +247,16 @@ def exponential_backoff(attempt, base_delay=1.0, max_delay=32.0, jitter=True):
 
 
 # Global rate limiters for each API
-_coingecko_limiter = RateLimiter(max_calls=5, period=60, name="coingecko")  # Conservative: 5 calls/min
+# CoinGecko free tier: batasnya per-IP dan kadang lebih ketat dari
+# dokumentasi, jadi 4 request/menit (bukan 5). Limiter CoinGecko juga
+# menyimpan riwayat panggilannya ke file, supaya container yang di-restart
+# tidak lupa request yang dibuat proses sebelumnya - kalau lupa, burst
+# saat start bisa kena 429 dan daftar pair jatuh ke daftar cadangan.
+_COINGECKO_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data',
+    'coingecko_calls.json')
+_coingecko_limiter = RateLimiter(max_calls=4, period=60, name="coingecko",
+                                 state_file=_COINGECKO_STATE_FILE)
 _yahoo_limiter = RateLimiter(max_calls=20, period=60, name="yahoo")  # Reduced from 30 to avoid rate limit
 _circuit_breakers: Dict[str, CircuitBreaker] = {
     # CoinGecko: very slow recovery since free tier is very limited

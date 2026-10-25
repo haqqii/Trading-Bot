@@ -43,6 +43,10 @@ data/health_state.json
 # Registry ticker crypto yang tidak ada di Yahoo Finance
 data/crypto_yahoo_missing.json
 
+# Riwayat request CoinGecko - batas rate limitnya per-IP, jadi state ini
+# harus bertahan antar-restart container
+data/coingecko_calls.json
+
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal
