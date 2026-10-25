@@ -65,6 +65,17 @@ _PRICE_REF_TTL = 600
 # Jumlah id per request /simple/price (URL-nya tidak boleh terlalu panjang).
 _PRICE_REF_CHUNK = 100
 
+# Umur cache data harga (detik). Scan crypto jalan tiap 15 menit, job TP/SL
+# tiap 2 menit - kalau cache terlalu pendek, keduanya berebut request ke
+# provider yang sama (batas Yahoo 20 request/menit, CoinGecko 5/menit) dan
+# salah satunya jadi lambat atau kena 429.
+_YAHOO_CACHE_TTL = 300
+_COINGECKO_CACHE_TTL = 300
+
+# Jumlah ticker per request /coins/markets (bulk CoinGecko). ID dipisah koma
+# jadi URL-nya dibatasi supaya tidak terlalu panjang.
+_COINGECKO_BULK_CHUNK = 100
+
 
 # --- Deteksi stablecoin ------------------------------------------------------
 # Stablecoin = aset yang nilainya dipatok ke mata uang lain (biasanya $1).
@@ -183,6 +194,100 @@ def is_stablecoin(data: dict) -> bool:
     return range_24h <= STABLECOIN_MAX_RANGE_24H
 
 
+def build_crypto_payload(ticker: str, name: str, price, change_24h, volume,
+                         sparkline, rsi_fallback: bool = False):
+    """Bangun payload indikator crypto dari seri harga.
+
+    Seri harga = sparkline hourly 7 hari (168 titik) dari CoinGecko. Fungsi
+    ini satu-satunya tempat perhitungan indikator jalur CoinGecko, jadi jalur
+    satu-per-ticker dan jalur bulk selalu menghasilkan angka yang sama.
+
+    Args:
+        rsi_fallback: kalau True, RSI yang tidak valid diganti perkiraan
+            (50 + perubahan 24 jam) alih-alih dianggap gagal.
+
+    Returns:
+        (payload, error). error=None kalau payload berhasil dibuat.
+        error: 'price' | 'sparkline' | 'rsi' kalau gagal.
+    """
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None, 'price'
+    if not price or price <= 0 or price > 10000000:
+        return None, 'price'
+
+    try:
+        change_24h = float(change_24h) if change_24h is not None else 0.0
+    except (TypeError, ValueError):
+        change_24h = 0.0
+    try:
+        volume = float(volume) if volume is not None else 0.0
+    except (TypeError, ValueError):
+        volume = 0.0
+
+    if not sparkline or len(sparkline) < 20:
+        return None, 'sparkline'
+
+    prices = pd.Series(sparkline)
+    ma_fast = prices.rolling(8).mean().iloc[-1]
+    ma_slow = prices.rolling(21).mean().iloc[-1]
+
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    rsi = (100 - (100 / (1 + rs))).iloc[-1]
+
+    if math.isnan(rsi) or rsi <= 0 or rsi > 100:
+        if not rsi_fallback:
+            return None, 'rsi'
+        rsi = 50 + (change_24h * 2) if change_24h else 50
+        rsi = max(1, min(99, rsi))
+
+    tr1 = prices.diff().abs()
+    tr_all = pd.concat([tr1, tr1, tr1], axis=1).max(axis=1)
+    atr_val = tr_all.rolling(14).mean().iloc[-1] if len(tr_all) >= 14 else tr_all.mean()
+    if not atr_val or atr_val <= 0 or atr_val < (price * 0.001):
+        atr_val = price * 0.025
+
+    macd_data = calculate_macd(prices)
+    bb_data = calculate_bollinger_bands(prices)
+
+    # Rentang harga 24 jam (persen). Sparkline CoinGecko hourly 7 hari,
+    # jadi 24 jam = 24 titik terakhir. Nilai ini dibandingkan dengan hasil
+    # Yahoo (yang memakai bar High/Low) supaya filter stablecoin hasilnya
+    # sama untuk kedua jalur.
+    spark_24h = sparkline[-24:] if len(sparkline) >= 24 else sparkline
+    if len(spark_24h) >= 2:
+        range_24h = compute_range_pct(max(spark_24h), min(spark_24h), price, 24.0)
+    else:
+        range_24h = None
+
+    return {
+        'ticker': ticker,
+        'name': name,
+        'price': price,
+        'change': change_24h,
+        'ma_fast': ma_fast,
+        'ma_slow': ma_slow,
+        'rsi': rsi,
+        'volume': volume,
+        'atr': atr_val,
+        'range_24h': range_24h,
+        'candles': len(sparkline),
+        'source': 'coingecko',
+        'macd': macd_data['macd'].iloc[-1],
+        'macd_signal': macd_data['signal'].iloc[-1],
+        'macd_hist': macd_data['histogram'].iloc[-1],
+        'bb_upper': bb_data['upper'].iloc[-1],
+        'bb_middle': bb_data['middle'].iloc[-1],
+        'bb_lower': bb_data['lower'].iloc[-1],
+        'volume_ma': volume,
+        'volume_ratio': 1.0,
+    }, None
+
+
 class CryptoService:
     """Service for fetching crypto data"""
 
@@ -193,13 +298,17 @@ class CryptoService:
         self.coingecko_ids = {}
         self.major_crypto = set()
         self._crypto_loaded = False
+        # True kalau daftar pair jatuh ke daftar cadangan (12 koin) karena
+        # CoinGecko sedang rate limit. Selama status ini masih ada, hanya
+        # 12 aset yang dipantau - itu perlu diketahui admin.
+        self.used_fallback_pairs = False
         # Harga acuan dari CoinGecko untuk mencocokkan hasil Yahoo Finance.
         self.cg_price_ref: dict[str, float] = {}
         self._price_ref_time: float = 0.0
 
-    def load_crypto_pairs(self):
+    def load_crypto_pairs(self, force: bool = False):
         """Auto-load crypto pairs from CoinGecko (top 500 coins) with fallback"""
-        if self._crypto_loaded:
+        if self._crypto_loaded and not force:
             return self.crypto_pairs
 
         coingecko_mappings = {}
@@ -256,7 +365,8 @@ class CryptoService:
             cg_failed = True
 
         # Fallback if CoinGecko failed or returned too few coins
-        if cg_failed or len(coingecko_mappings) < 10:
+        used_fallback = cg_failed or len(coingecko_mappings) < 10
+        if used_fallback:
             logger.warning(f"Using fallback crypto list ({len(_FALLBACK_CRYPTO_PAIRS)} coins)")
             # Merge with what we got from CoinGecko (prefer CoinGecko data)
             for ticker, value in _FALLBACK_CRYPTO_PAIRS.items():
@@ -266,9 +376,39 @@ class CryptoService:
         self.crypto_pairs = {ticker: name for ticker, (name, _) in coingecko_mappings.items()}
         self.coingecko_ids = {ticker: cg_id for ticker, (_, cg_id) in coingecko_mappings.items()}
         self.major_crypto = major_set & set(self.crypto_pairs.keys())
+        self.used_fallback_pairs = used_fallback
         self._crypto_loaded = True
         logger.info(f"Crypto loaded: {len(self.crypto_pairs)} pairs (major: {len(self.major_crypto)})")
         return self.crypto_pairs
+
+    def retry_load_crypto_pairs(self) -> bool:
+        """Coba lagi ambil daftar pair kalau sebelumnya jatuh ke daftar cadangan.
+
+        Tanpa retry, CoinGecko yang kena rate limit saat start bikin bot
+        hanya memantau 12 koin sampai container di-restart. Dipanggil
+        berkala dari job prefetch supaya daftar pulih sendiri.
+
+        Returns:
+            True kalau sekarang daftar lengkap (tidak lagi fallback).
+        """
+        if not self.used_fallback_pairs:
+            return True
+
+        logger.info("Mencoba lagi ambil daftar pair crypto "
+                    "(sebelumnya jatuh ke daftar cadangan)")
+        try:
+            self.load_crypto_pairs(force=True)
+        except Exception as e:
+            logger.warning(f"Gagal ambil ulang daftar pair crypto: {e}")
+            return False
+
+        if self.used_fallback_pairs:
+            logger.warning("CoinGecko masih rate limited - daftar pair crypto "
+                           "masih pakai daftar cadangan")
+            return False
+
+        logger.info(f"Daftar pair crypto pulih: {len(self.crypto_pairs)} pair")
+        return True
 
     def load_price_reference(self) -> dict[str, float]:
         """Ambil harga acuan semua pair dari CoinGecko.
@@ -600,7 +740,7 @@ class CryptoService:
                 }
 
                 if use_cache:
-                    self.cache.set(cache_key, result, ttl=60)
+                    self.cache.set(cache_key, result, ttl=_YAHOO_CACHE_TTL)
 
                 return result
 
@@ -683,103 +823,32 @@ class CryptoService:
                     return None
 
                 data = resp.json()
-                price = data['market_data']['current_price']['usd']
-                if not price or price <= 0 or price > 10000000:
-                    if attempt < retry - 1:
-                        time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
-                        continue
-                    return None
+                market = data.get('market_data') or {}
+                price = (market.get('current_price') or {}).get('usd')
 
                 # Some tokens (e.g. FIGR_HELOC / Figure Heloc) return null for
                 # price_change_percentage_24h — normalize so downstream numeric
                 # comparisons never hit None.
-                change_24h = data['market_data'].get('price_change_percentage_24h')
-                change_24h = float(change_24h) if change_24h is not None else 0.0
-                total_volume = data['market_data'].get('total_volume') or {}
-                volume = total_volume.get('usd')
-                volume = float(volume) if volume is not None else 0.0
-                sparkline = (data['market_data'].get('sparkline_7d') or {}).get('price')
+                change_24h = market.get('price_change_percentage_24h')
+                volume = (market.get('total_volume') or {}).get('usd')
+                sparkline = (market.get('sparkline_7d') or {}).get('price')
 
-                if not sparkline or len(sparkline) < 20:
+                payload, error = build_crypto_payload(
+                    ticker, data.get('name') or ticker, price, change_24h,
+                    volume, sparkline, rsi_fallback=(attempt == retry - 1))
+                if payload is None:
                     if attempt < retry - 1:
                         time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
                         continue
                     return None
 
-                prices = pd.Series(sparkline)
-                ma_fast = prices.rolling(8).mean().iloc[-1]
-                ma_slow = prices.rolling(21).mean().iloc[-1]
-
-                delta = prices.diff()
-                gain = delta.where(delta > 0, 0).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                rsi = (100 - (100 / (1 + rs))).iloc[-1]
-
-                if math.isnan(rsi) or rsi <= 0 or rsi > 100:
-                    if attempt < retry - 1:
-                        time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
-                        continue
-                    rsi = 50 + (change_24h * 2) if change_24h else 50
-                    rsi = max(1, min(99, rsi))
-
-                tr1 = prices.diff().abs()
-                tr_all = pd.concat([tr1, tr1, tr1], axis=1).max(axis=1)
-                atr_val = tr_all.rolling(14).mean().iloc[-1] if len(tr_all) >= 14 else tr_all.mean()
-                if not atr_val or atr_val <= 0 or atr_val < (price * 0.001):
-                    atr_val = price * 0.025
-
-                macd_data = calculate_macd(prices)
-                macd = macd_data['macd'].iloc[-1]
-                macd_signal = macd_data['signal'].iloc[-1]
-                macd_hist = macd_data['histogram'].iloc[-1]
-
-                bb_data = calculate_bollinger_bands(prices)
-                bb_upper = bb_data['upper'].iloc[-1]
-                bb_middle = bb_data['middle'].iloc[-1]
-                bb_lower = bb_data['lower'].iloc[-1]
-
-                # Rentang harga 24 jam (persen). Sparkline CoinGecko
-                # hourly 7 hari, jadi 24 jam = 24 titik terakhir. Nilai ini
-                # dibandingkan dengan hasil Yahoo (yang memakai bar High/Low)
-                # supaya filter stablecoin hasilnya sama untuk kedua jalur.
-                spark_24h = sparkline[-24:] if len(sparkline) >= 24 else sparkline
-                if len(spark_24h) >= 2:
-                    range_24h = compute_range_pct(
-                        max(spark_24h), min(spark_24h), price, 24.0)
-                else:
-                    range_24h = None
-
                 if breaker:
                     breaker.record_success()
 
-                result = {
-                    'ticker': ticker,
-                    'name': data['name'],
-                    'price': price,
-                    'change': change_24h,
-                    'ma_fast': ma_fast,
-                    'ma_slow': ma_slow,
-                    'rsi': rsi,
-                    'volume': volume,
-                    'atr': atr_val,
-                    'range_24h': range_24h,
-                    'candles': len(sparkline),
-                    'source': 'coingecko',
-                    'macd': macd,
-                    'macd_signal': macd_signal,
-                    'macd_hist': macd_hist,
-                    'bb_upper': bb_upper,
-                    'bb_middle': bb_middle,
-                    'bb_lower': bb_lower,
-                    'volume_ma': volume,
-                    'volume_ratio': 1.0,
-                }
-
                 if use_cache:
-                    self.cache.set(cache_key, result, ttl=60)
+                    self.cache.set(cache_key, payload, ttl=_COINGECKO_CACHE_TTL)
 
-                return result
+                return payload
             except Exception as e:
                 if breaker:
                     breaker.record_failure()
@@ -791,6 +860,126 @@ class CryptoService:
                 return None
 
         return None
+
+    def get_crypto_data_coingecko_bulk(self, tickers, retry: int = 3,
+                                       use_cache: bool = True):
+        """Ambil data CoinGecko untuk banyak ticker sekaligus.
+
+        Endpoint /coins/markets bisa membawa dozens ticker (dengan sparkline
+        7 hari) dalam satu request. Tanpa ini, scan crypto mengambil satu
+        request per ticker dan rate limit CoinGecko (5 request/menit)
+        menentukan lamanya scan - 83 ticker butuh 16 menit.
+
+        Ticker yang datanya sudah ada di cache tidak diambil lagi, tapi
+        tetap dikembalikan supaya pemanggil tidak mengira datanya hilang.
+
+        Returns:
+            dict ticker -> payload (hanya ticker yang datanya valid).
+        """
+        if not tickers:
+            return {}
+
+        out: dict[str, dict] = {}
+        wanted: list[tuple[str, str]] = []
+        for ticker in tickers:
+            coin_id = self.coingecko_ids.get(ticker)
+            if not coin_id:
+                continue
+            if use_cache:
+                cached = self.cache.get(f"cg_{ticker}")
+                if cached:
+                    out[ticker] = cached
+                    continue
+            wanted.append((ticker, coin_id))
+
+        if not wanted:
+            return out
+
+        breaker = _circuit_breakers.get('coingecko')
+        if breaker and not breaker.can_execute():
+            logger.warning("CoinGecko circuit breaker OPEN, bulk fetch dilewati")
+            return out
+
+        for start in range(0, len(wanted), _COINGECKO_BULK_CHUNK):
+            chunk = wanted[start:start + _COINGECKO_BULK_CHUNK]
+            id_to_ticker = {coin_id: ticker for ticker, coin_id in chunk}
+
+            for attempt in range(retry):
+                try:
+                    _coingecko_limiter.wait_if_needed()
+
+                    resp = _cg_session.get(
+                        'https://api.coingecko.com/api/v3/coins/markets',
+                        params={
+                            'vs_currency': 'usd',
+                            'ids': ','.join(coin_id for _, coin_id in chunk),
+                            'sparkline': 'true',
+                            'price_change_percentage': '24h',
+                            'per_page': 250,
+                            'page': 1,
+                        },
+                        timeout=25,
+                    )
+
+                    if resp.status_code == 429:
+                        if breaker:
+                            breaker.record_failure()
+                        if attempt < retry - 1:
+                            time.sleep(exponential_backoff(attempt, base_delay=2.0, max_delay=60))
+                            continue
+                        break
+
+                    if resp.status_code != 200:
+                        if attempt < retry - 1:
+                            time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
+                            continue
+                        break
+
+                    coins = resp.json()
+                    if not isinstance(coins, list):
+                        break
+
+                    for coin in coins:
+                        ticker = id_to_ticker.get(coin.get('id'))
+                        if not ticker:
+                            continue
+                        sparkline = (coin.get('sparkline_in_7d') or {}).get('price')
+                        payload, _ = build_crypto_payload(
+                            ticker,
+                            coin.get('name') or ticker,
+                            coin.get('current_price'),
+                            coin.get('price_change_percentage_24h'),
+                            coin.get('total_volume'),
+                            sparkline,
+                            rsi_fallback=True,
+                        )
+                        if not payload:
+                            continue
+                        out[ticker] = payload
+                        if use_cache:
+                            self.cache.set(f"cg_{ticker}", payload,
+                                           ttl=_COINGECKO_CACHE_TTL)
+
+                    if breaker:
+                        breaker.record_success()
+                    break
+                except Exception as e:
+                    if breaker:
+                        breaker.record_failure()
+                    if attempt < retry - 1:
+                        logger.warning(
+                            f"CoinGecko bulk error: {type(e).__name__}: {e}, "
+                            f"retry {attempt + 1}/{retry}")
+                        time.sleep(exponential_backoff(attempt, base_delay=1.0, max_delay=30))
+                        continue
+                    logger.warning(
+                        f"CoinGecko bulk gagal setelah {retry} percobaan: "
+                        f"{type(e).__name__}: {e}")
+                    break
+
+        logger.info(f"CoinGecko bulk: {len(out)}/{len(wanted)} ticker "
+                    f"diambil dalam {len(wanted) // _COINGECKO_BULK_CHUNK + 1} chunk")
+        return out
 
 
 # Singleton instance

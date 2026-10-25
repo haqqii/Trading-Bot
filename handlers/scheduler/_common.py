@@ -190,12 +190,18 @@ def get_stock_data_with_fallback(ticker: str, interval: str = '5m', period: str 
     return None, False
 
 
+# Jeda antar pesan yang dikirim ke user. Telegram mengizinkan 1 pesan/detik
+# per chat, jadi 5 detik cukup jauh aman - dan scan tidak tertahan 2 menit
+# hanya untuk mengirim 3 pesan.
+SEND_DELAY_SECONDS = 5
+
+
 def get_crypto_data_with_fallback(ticker: str, interval: str = '1h', period: str = '1d'):
     """Get crypto data with stale cache fallback.
 
     Returns (data, is_stale) tuple.
     """
-    cache_key = f"crypto_{ticker}_{interval}_{period}"
+    cache_key = crypto_scan_cache_key(ticker, interval, period)
 
     # Check cache first before API call
     cached = _price_cache.get(cache_key)
@@ -213,19 +219,43 @@ def get_crypto_data_with_fallback(ticker: str, interval: str = '1h', period: str
     d = crypto_service.get_crypto_data_combined(ticker, interval, period,
                                                  skip_if_missing=True)
     if d and d.get('candles', 0) >= 5:
-        _price_cache.set(cache_key, d, ttl=300)  # 5 min cache
+        store_crypto_scan_data(ticker, interval, period, d)
         return d, False
 
     # Try stale cache
-    stale_d = _price_cache.get_stale(cache_key)
+    stale_d = get_stale_crypto_scan_data(ticker, interval, period)
     if stale_d:
-        if isinstance(stale_d, StockDataResult):
-            stale_d = stale_d.data if stale_d.success else None
-        if stale_d and stale_d.get('candles', 0) >= 5:
-            logger.warning(f"Using stale crypto cache for {ticker} (API may be down)")
-            return stale_d, True
+        logger.warning(f"Using stale crypto cache for {ticker} (API may be down)")
+        return stale_d, True
 
     return None, False
+
+
+# Cache layer khusus hasil scan crypto. Dipisah dari cache provider
+# (services/crypto_service.py) supaya hasil scan bisa dipakai ulang saat
+# mengirim sinyal tanpa perlu request provider lagi.
+CRYPTO_SCAN_CACHE_TTL = 300
+
+
+def crypto_scan_cache_key(ticker: str, interval: str, period: str) -> str:
+    return f"crypto_{ticker}_{interval}_{period}"
+
+
+def store_crypto_scan_data(ticker: str, interval: str, period: str, data,
+                           ttl: int = CRYPTO_SCAN_CACHE_TTL):
+    """Simpan hasil scan crypto supaya bisa dipakai ulang."""
+    _price_cache.set(crypto_scan_cache_key(ticker, interval, period), data, ttl=ttl)
+
+
+def get_stale_crypto_scan_data(ticker: str, interval: str, period: str):
+    """Data scan terakhir yang masih tersimpan, dipakai kalau provider bermasalah."""
+    stale = _price_cache.get_stale(crypto_scan_cache_key(ticker, interval, period))
+    if stale:
+        if isinstance(stale, StockDataResult):
+            stale = stale.data if stale.success else None
+        if stale and stale.get('candles', 0) >= 5:
+            return stale
+    return None
 
 
 def _get_user_db():

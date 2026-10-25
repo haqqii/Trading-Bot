@@ -8,9 +8,12 @@ Owns:
 """
 import asyncio
 import logging
+import math
+import time
 
 from services.crypto_service import crypto_service, is_stablecoin
 from services.signal_service import calc_tPSL, signal_service
+from services import crypto_yahoo_missing
 from utils.formatters import format_unified_crypto_notification, escape_md
 from db import db
 from utils.cache import _price_cache
@@ -18,7 +21,10 @@ from utils.cache import _price_cache
 from handlers.scheduler._common import (
     now_wib,
     CRYPTO_TF_TO_INTERVAL,
+    SEND_DELAY_SECONDS,
     get_crypto_data_with_fallback,
+    store_crypto_scan_data,
+    get_stale_crypto_scan_data,
     _get_user_db,
     _get_last_buy_signals,
     _remove_signal,
@@ -31,6 +37,107 @@ from handlers.scheduler._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Berapa ticker besar yang dipanaskan cache-nya tiap siklus prefetch.
+PREFETCH_MAJOR_COUNT = 10
+
+# Alert "scan degrade" dikirim sparing - satu per 6 jam. Scan degrade
+# biasanya berlangsung lama (provider sedang bermasalah), jadi alert tiap
+# 15 menit cuma jadi spam.
+_DEGRADE_ALERT_INTERVAL = 6 * 60 * 60
+_last_degrade_alert = 0.0
+
+
+def _has_valid_rsi(data) -> bool:
+    """True kalau data punya RSI yang masuk akal (dipakai buat validasi)."""
+    if not data:
+        return False
+    try:
+        rsi = float(data.get('rsi', 0))
+    except (TypeError, ValueError):
+        return False
+    return rsi > 0 and not math.isnan(rsi)
+
+
+def _alert_degraded_scan(reason: str, detail: str) -> bool:
+    """Beri tahu admin kalau scan berjalan jauh di bawah cakupan normal.
+
+    Dipakai logger.error supaya masuk ke alert admin (TelegramLogHandler),
+    bukan dikirim manual - supaya tetap jalan kalau bot-nya sendiri sibuk.
+    """
+    global _last_degrade_alert
+    now = time.time()
+    if now - _last_degrade_alert < _DEGRADE_ALERT_INTERVAL:
+        return False
+    _last_degrade_alert = now
+    logger.error(f"[CRYPTO] Scan degrade: {reason}. {detail}")
+    return True
+
+
+async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
+    """Ambil data harga untuk banyak ticker.
+
+    Tahap 1: Yahoo Finance per ticker (dibatasi 20 request/menit).
+    Tahap 2: ticker yang gagal diambil dari CoinGecko sekaligus - satu
+             request untuk ~100 ticker. Tanpa ini, rate limit CoinGecko
+             (5 request/menit) yang menentukan lamanya scan: 83 ticker
+             butuh 16 menit.
+    Tahap 3: ticker yang gagal total memakai data scan terakhir yang masih
+             tersimpan, supaya scan tetap menghasilkan sinyal saat provider
+             sedang bermasalah.
+
+    Returns:
+        dict ticker -> data.
+    """
+    semaphore = asyncio.Semaphore(20)
+
+    def fetch_yahoo(ticker):
+        """Ambil data Yahoo untuk satu ticker (blocking, dipanggil di thread)."""
+        try:
+            d = crypto_service.get_crypto_data(ticker, interval, period,
+                                               skip_if_missing=True)
+            if _has_valid_rsi(d):
+                d['source'] = 'yahoo'
+                return ticker, d
+        except Exception as e:
+            logger.warning(f"[CRYPTO] Gagal ambil data Yahoo {ticker}: {e}")
+        return ticker, None
+
+    async def fetch_with_limit(ticker):
+        async with semaphore:
+            return await asyncio.to_thread(fetch_yahoo, ticker)
+
+    data_map: dict = {}
+    failed: list = []
+
+    for fut in asyncio.as_completed([fetch_with_limit(t) for t in tickers]):
+        ticker, d = await fut
+        if d:
+            data_map[ticker] = d
+            store_crypto_scan_data(ticker, interval, period, d)
+        else:
+            failed.append(ticker)
+
+    if failed:
+        logger.info(f"[CRYPTO] {len(failed)} ticker tanpa data Yahoo, "
+                    f"diambil dari CoinGecko sekaligus")
+        cg_data = await asyncio.to_thread(
+            crypto_service.get_crypto_data_coingecko_bulk, failed)
+        for ticker, payload in cg_data.items():
+            if _has_valid_rsi(payload):
+                data_map[ticker] = payload
+                store_crypto_scan_data(ticker, interval, period, payload)
+
+    for ticker in failed:
+        if ticker in data_map:
+            continue
+        stale = get_stale_crypto_scan_data(ticker, interval, period)
+        if stale:
+            data_map[ticker] = stale
+            logger.warning(f"[CRYPTO] Pakai data scan terakhir untuk {ticker} "
+                           f"(provider bermasalah)")
+
+    return data_map
 
 
 async def check_crypto_signals(app):
@@ -61,6 +168,10 @@ async def check_crypto_signals(app):
 
         signals = _get_last_buy_signals()
 
+        # Cakupan scan per TF (dipakai untuk deteksi scan degrade).
+        worst_coverage = 1.0
+        worst_tf = None
+
         # Process each TF group separately
         for tf_key, group_users in tf_groups.items():
             interval, period = CRYPTO_TF_TO_INTERVAL.get(tf_key, ('1h', '1mo'))
@@ -70,13 +181,21 @@ async def check_crypto_signals(app):
             # Penghitung stablecoin yang dilewati (dipakai di thread, jadi list).
             stable_skipped = [0]
 
+            # Pengambilan data dulu (Yahoo per ticker + CoinGecko bulk),
+            # baru semua ticker dianalisis. Kalau pengambilan dan analisis
+            # dicampur, ticker yang datanya dari CoinGecko harus waited satu
+            # per satu dan limiter CoinGecko jadi bottleneck scan.
+            data_map = await fetch_crypto_prices(all_crypto, interval, period)
+
+            coverage = len(data_map) / max(1, len(all_crypto))
+            if coverage < worst_coverage:
+                worst_coverage = coverage
+                worst_tf = tf_key
+
             def analyze_crypto_for_tf(ticker):
                 """Blocking crypto analysis for specific TF."""
                 try:
-                    import time as _time
-                    _time.sleep(0.3)
-
-                    d, is_stale = get_crypto_data_with_fallback(ticker, interval, period)
+                    d = data_map.get(ticker)
                     if not d or d.get('candles', 0) < 5:
                         return None
 
@@ -113,11 +232,11 @@ async def check_crypto_signals(app):
                     return None
 
             semaphore = asyncio.Semaphore(20)
-            async def fetch_crypto(ticker):
+            async def analyze_crypto(ticker):
                 async with semaphore:
                     return await asyncio.to_thread(analyze_crypto_for_tf, ticker)
 
-            tasks = [fetch_crypto(t) for t in all_crypto]
+            tasks = [analyze_crypto(t) for t in all_crypto]
             results = await asyncio.gather(*tasks)
 
             for r in results:
@@ -175,10 +294,14 @@ async def check_crypto_signals(app):
 
                     for i, (ticker, name, d, s) in enumerate(top_signals):
                         if i > 0:
-                            await asyncio.sleep(60)
+                            await asyncio.sleep(SEND_DELAY_SECONDS)
 
-                        # Fetch freshest data using user's TF
-                        fresh_d, _ = get_crypto_data_with_fallback(ticker, interval, period)
+                        # Fetch freshest data using user's TF.
+                        # Blocking (request Yahoo/CoinGecko + limiter) jadi
+                        # dijalankan di thread - kalau di-await langsung, event
+                        # loop bot tertahan dan job lain (mis. TP/SL) terlambat.
+                        fresh_d, _ = await asyncio.to_thread(
+                            get_crypto_data_with_fallback, ticker, interval, period)
 
                         if fresh_d:
                             d = fresh_d
@@ -341,6 +464,21 @@ async def check_crypto_signals(app):
                 except Exception as e:
                     logger.error(f"Failed to send crypto signals to user {uid}: {e}", exc_info=True)
 
+        # Scan degrade: cakupan ticker jauh lebih kecil dari seharusnya, atau
+        # daftar pair-nya jatuh ke daftar cadangan. Tanpa ini, bot bisa
+        # menampilkan "hanya 11 sinyal" tanpa ada yang tahu kenapa.
+        if crypto_service.used_fallback_pairs:
+            _alert_degraded_scan(
+                "daftar ticker crypto jatuh ke daftar cadangan",
+                f"Hanya {len(all_crypto)} koin yang dipantau, bukan "
+                f"{len(crypto_service.crypto_pairs)}. Daftar akan dicoba "
+                f"lagi otomatis oleh job prefetch.")
+        elif worst_coverage < 0.5:
+            _alert_degraded_scan(
+                "cakupan scan terlalu kecil",
+                f"Hanya {worst_coverage:.0%} ticker yang punya data "
+                f"(TF {worst_tf}, {len(all_crypto)} ticker dipantau).")
+
     except Exception as e:
         logger.error(f"Error in check_crypto_signals: {e}", exc_info=True)
 
@@ -369,8 +507,12 @@ async def check_crypto_tp_sl(app):
                     # Get user's TF for per-user TP/SL calculation
                     user_tf = u.get('timeframe', '60')
                     interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
-                    d = crypto_service.get_crypto_data_combined(ticker, interval, period,
-                                                             skip_if_missing=True)
+                    # Blocking (request provider + limiter) - kalau dipanggil
+                    # langsung di event loop, bot stutter dan job lain
+                    # (mis. notifikasi harga) ikut terlambat.
+                    d = await asyncio.to_thread(
+                        crypto_service.get_crypto_data_combined, ticker, interval,
+                        period, skip_if_missing=True)
                     if not d:
                         continue
 
@@ -589,8 +731,11 @@ async def check_crypto_favorit_alerts(app):
                     continue
 
                 try:
-                    d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d',
-                                                             skip_if_missing=True)
+                    # Blocking (request provider + limiter) - dijalankan di
+                    # thread supaya event loop bot tidak tertahan.
+                    d = await asyncio.to_thread(
+                        crypto_service.get_crypto_data_combined, ticker, '1h',
+                        '1d', skip_if_missing=True)
                     if not d:
                         continue
 
@@ -628,43 +773,83 @@ async def check_crypto_favorit_alerts(app):
 
 
 async def prefetch_crypto_cache(app):
-    """Prefetch major crypto pairs to warm cache.
+    """Pemanasan cache crypto.
 
-    Runs every 5 minutes (reduced due to CoinGecko rate limits).
+    Tiga hal yang dikerjakan di sini:
+    1. Coba lagi ambil daftar pair kalau sebelumnya jatuh ke daftar cadangan
+       (12 koin). Tanpa retry, daftar itu tidak pulih sampai restart.
+    2. Panaskan ticker besar untuk timeframe yang benar-benar dipakai user.
+       Memanaskan timeframe lain tidak-gunanya - scan tetap request ulang.
+    3. Ambil data CoinGecko untuk ticker yang tidak ada di Yahoo, sekaligus
+       (satu request untuk ~100 ticker). Ini yang membuat scan tidak lagi
+       dibatasi rate limit CoinGecko (5 request/menit).
+
     Cache key format: ``{ticker}_{interval}_{period}`` (matches ``crypto_service.py``).
     """
     try:
-        # Get top 10 major crypto only (reduced due to rate limits)
-        major_crypto = list(crypto_service.crypto_pairs.keys())[:10]
+        # 1. Pulihkan daftar pair kalau sempat jatuh ke daftar cadangan.
+        await asyncio.to_thread(crypto_service.retry_load_crypto_pairs)
 
-        def prefetch_crypto(ticker):
+        pairs = list(crypto_service.crypto_pairs.keys())
+
+        # 2. Timeframe yang dipakai user (bukan 1h/1d asumsi).
+        intervals = set()
+        for u in _get_user_db().values():
+            if not u.get('notif_crypto', False):
+                continue
+            tf = u.get('timeframe', '60')
+            intervals.add(CRYPTO_TF_TO_INTERVAL.get(tf, ('1h', '1mo')))
+        if not intervals:
+            intervals = {('1h', '1d')}
+
+        # Ticker besar saja (10) supaya tidak makan jatah rate limit Yahoo
+        # (20 request/menit) - ticker lain dikerjakan scan sendiri.
+        major_crypto = pairs[:PREFETCH_MAJOR_COUNT]
+
+        def prefetch_crypto(ticker, interval, period):
             """Prefetch single crypto data."""
             try:
                 # Check if already cached (crypto_service handles this)
-                cache_key = f"{ticker}_1h_1d"
+                cache_key = f"{ticker}_{interval}_{period}"
                 if _price_cache.get(cache_key):
                     return None
 
                 # Fetch fresh data - this will auto-cache via crypto_service
-                d = crypto_service.get_crypto_data_combined(ticker, '1h', '1d',
+                d = crypto_service.get_crypto_data_combined(ticker, interval, period,
                                                              skip_if_missing=True)
                 if d and d.get('candles', 0) >= 5:
                     return ticker
             except Exception as e:
-                logger.debug(f"favorit crypto probe failed for {ticker}: {e}")
+                logger.debug(f"prefetch crypto probe failed for {ticker}: {e}")
             return None
 
         semaphore = asyncio.Semaphore(3)  # Reduced from 10 to 3 to avoid rate limits
-        async def prefetch_with_limit(ticker):
+        async def prefetch_with_limit(ticker, interval, period):
             async with semaphore:
-                return await asyncio.to_thread(prefetch_crypto, ticker)
+                return await asyncio.to_thread(prefetch_crypto, ticker, interval, period)
 
-        tasks = [prefetch_with_limit(t) for t in major_crypto]
+        tasks = []
+        for interval, period in intervals:
+            for ticker in major_crypto:
+                tasks.append(prefetch_with_limit(ticker, interval, period))
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         cached_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
         if cached_count > 0:
-            logger.info(f"[PREFETCH] Crypto cache warmed: {cached_count}/{len(major_crypto)} pairs")
+            logger.info(f"[PREFETCH] Crypto cache warmed: {cached_count}/{len(tasks)} pairs "
+                        f"untuk timeframe {sorted(intervals)}")
+
+        # 3. Ticker yang tidak ada di Yahoo: ambil dari CoinGecko sekaligus.
+        for interval, _ in intervals:
+            missing = [t for t in pairs
+                       if crypto_yahoo_missing.is_missing(t, interval)]
+            if not missing:
+                continue
+            cg_data = await asyncio.to_thread(
+                crypto_service.get_crypto_data_coingecko_bulk, missing)
+            if cg_data:
+                logger.info(f"[PREFETCH] CoinGecko bulk: {len(cg_data)} ticker "
+                            f"dipanaskan ({interval})")
 
     except Exception as e:
         logger.error(f"Prefetch crypto cache error: {e}", exc_info=True)

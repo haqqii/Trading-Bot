@@ -161,9 +161,18 @@ def crypto_scan(monkeypatch):
 
     class FakeCryptoService:
         crypto_pairs = {'BDX-USD': 'Beldex'}
+        used_fallback_pairs = False
 
         def get_usd_idr_rate(self):
             return 16000
+
+        def get_crypto_data(self, ticker, interval, period,
+                            skip_if_missing=False):
+            return fake_crypto_data(state['price'])
+
+        def get_crypto_data_coingecko_bulk(self, tickers, retry=3,
+                                           use_cache=True):
+            return {}
 
     class FakeSignalService:
         def generate_crypto_signal(self, d):

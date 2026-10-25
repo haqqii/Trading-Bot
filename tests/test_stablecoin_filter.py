@@ -252,9 +252,18 @@ class TestScanSkipsStablecoin:
 
         class FakeCryptoService:
             crypto_pairs = {'USDC-USD': 'USDC', 'FIL-USD': 'Filecoin'}
+            used_fallback_pairs = False
 
             def get_usd_idr_rate(self):
                 return 16000
+
+            def get_crypto_data(self, ticker, interval, period,
+                                skip_if_missing=False):
+                return fake_data(ticker, interval, period)[0]
+
+            def get_crypto_data_coingecko_bulk(self, tickers, retry=3,
+                                               use_cache=True):
+                return {}
 
         class FakeSignalService:
             def generate_crypto_signal(self, d):

@@ -25,6 +25,7 @@ from db import db
 from handlers.scheduler._common import (
     now_wib,
     TF_TO_INTERVAL,
+    SEND_DELAY_SECONDS,
     _unwrap_stock_result,
     get_stock_data_with_fallback,
     _get_user_db,
@@ -343,7 +344,7 @@ async def check_stock_signals(app):
 
                     for i, (ticker, name, d, s) in enumerate(top_signals):
                         if i > 0:
-                            await asyncio.sleep(60)
+                            await asyncio.sleep(SEND_DELAY_SECONDS)
 
                         # Use cached scan data (no re-fetch)
                         d = d  # Use data from scan cache
