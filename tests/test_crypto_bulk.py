@@ -639,6 +639,42 @@ class TestCoingeckoLimiterState:
         assert len(saved) == 1
 
 
+class TestTpSlPriceReference:
+    """Harga CoinGecko hanya boleh dipakai kalau harga asetnya sama.
+
+    Simbol di CoinGecko dan Yahoo tidak selalu menunjuk aset yang sama
+    (mis. JUP-USD). Kalau harga yang salah dipakai, level TP/SL dihitung
+    dari aset yang keliru dan notifikasi ke user jadi bohong.
+    """
+
+    def test_same_price_is_accepted(self):
+        from handlers.scheduler.jobs_crypto import _price_matches_reference
+        assert _price_matches_reference(102.0, 100.0)
+        assert _price_matches_reference(100.0, 102.0)
+
+    def test_small_deviation_is_accepted(self):
+        from handlers.scheduler.jobs_crypto import _price_matches_reference
+        assert _price_matches_reference(103.0, 100.0)
+        assert _price_matches_reference(97.0, 100.0)
+
+    def test_different_asset_is_rejected(self):
+        from handlers.scheduler.jobs_crypto import _price_matches_reference
+        assert not _price_matches_reference(0.3, 100.0)
+        assert not _price_matches_reference(100.0, 0.3)
+
+    def test_missing_reference_is_rejected(self):
+        """Tanpa harga pembanding, pakai Yahoo (jawaban yang aman)."""
+        from handlers.scheduler.jobs_crypto import _price_matches_reference
+        assert not _price_matches_reference(102.0, None)
+        assert not _price_matches_reference(102.0, 0)
+
+    def test_broken_values_are_rejected(self):
+        from handlers.scheduler.jobs_crypto import _price_matches_reference
+        assert not _price_matches_reference(None, 100.0)
+        assert not _price_matches_reference('abc', 100.0)
+        assert not _price_matches_reference(102.0, 'abc')
+
+
 class TestCryptoPairsRecoveryJob:
     """Job pemulihan daftar pair harus mencoba lagi lalu melapor."""
 

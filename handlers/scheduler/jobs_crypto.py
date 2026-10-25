@@ -41,6 +41,13 @@ logger = logging.getLogger(__name__)
 # Berapa ticker besar yang dipanaskan cache-nya tiap siklus prefetch.
 PREFETCH_MAJOR_COUNT = 10
 
+# Seberapa jauh harga CoinGecko boleh berbeda dari harga scan terakhir
+# sebelum dipakai untuk cek TP/SL. Simbol di Yahoo dan di CoinGecko tidak
+# selalu menunjuk aset yang sama (mis. JUP-USD), jadi harga CoinGecko
+# hanya dipakai kalau masih cocok dengan data scan terakhir. Kalau beda
+# lebih dari ini, harga diambil dari Yahoo (sumber harga entry sinyal).
+_TP_SL_PRICE_TOLERANCE = 0.05
+
 # Alert "scan degrade" dikirim sparing - satu per 6 jam. Scan degrade
 # biasanya berlangsung lama (provider sedang bermasalah), jadi alert tiap
 # 15 menit cuma jadi spam.
@@ -487,15 +494,21 @@ async def check_crypto_signals(app):
 async def _fetch_prices_for_tp_sl(user_db, signals):
     """Ambil harga semua sinyal crypto yang dipantau, sekaligus.
 
-    Kalau diambil satu per satu, tiap sinyal harus antre di limiter
-    provider. Saat scan crypto sedang jalan limiter itu penuh, jadi satu
-    siklus cek TP/SL bisa lewat 2 menit - job berikutnya lalu kena
-    "maximum number of running instances reached" dan notifikasi TP/SL
-    telat.
+    Kalau diambil satu per satu dari Yahoo, tiap sinyal harus antre di
+    limiter provider. Saat scan crypto sedang jalan limiter itu penuh,
+    jadi satu siklus cek TP/SL bisa lewat 2 menit - job berikutnya lalu
+    kena "maximum number of running instances reached" dan notifikasi
+    TP/SL telat.
 
-    Pengambilan pakai fetch_crypto_prices: ticker yang tidak ada di Yahoo
-    diambil dari CoinGecko sekaligus (satu request untuk banyak ticker),
-    bukan satu request per ticker.
+    Jalur pengambilan:
+    1. Satu request bulk CoinGecko untuk semua ticker yang dipantau.
+       Endpoint /coins/markets bisa membawa puluhan ticker sekaligus,
+       jadi satu request cukup untuk seluruh sinyal yang dilacak.
+    2. Harga CoinGecko dipakai hanya kalau cocok dengan harga scan
+       terakhir (dalam _TP_SL_PRICE_TOLERANCE). Kalau ticker-nya di
+       Yahoo menunjuk aset yang lain, price-nya bukan harga yang dicari
+       - ticker seperti itu diambil dari Yahoo.
+    3. Ticker yang tidak ada di CoinGecko juga diambil dari Yahoo.
 
     Returns:
         dict key sinyal -> data harga (hanya yang datanya berhasil diambil).
@@ -519,15 +532,72 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
     if not wanted:
         return {}
 
+    # Harga entry sinyal dipakai sebagai pembanding kalau data scan
+    # terakhir tidak ada (mis. tepat setelah container start). Entry
+    # dihitung dari sumber yang sama dengan harga scan, jadi cocok
+    # untuk memastikan ticker-nya bukan aset yang berbeda.
+    entry_prices = {}
+    for key, signal_data in list(signals.items()):
+        try:
+            entry_prices[key] = float(signal_data.get('entry') or 0)
+        except (TypeError, ValueError):
+            entry_prices[key] = 0
+
     # Kelompokkan per timeframe - tiap kelompok cukup satu pengambilan.
     groups: dict = {}
     for key, ticker, interval, period in wanted:
         groups.setdefault((interval, period), []).append((key, ticker))
 
     async def _fetch_group(interval, period, items):
-        data_map = await fetch_crypto_prices(
-            [ticker for _, ticker in items], interval, period)
-        return {key: data_map.get(ticker) for key, ticker in items}
+        tickers = [ticker for _, ticker in items]
+        result: dict = {}
+
+        # Satu request untuk semua ticker yang dipantau.
+        # use_cache=False supaya harganya benar-benar segar - cache
+        # CoinGecko bertahan 5 menit, terlalu lama untuk cek TP/SL.
+        cg_data = await asyncio.to_thread(
+            crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
+
+        need_yahoo = []
+        for key, ticker in items:
+            payload = cg_data.get(ticker)
+            if not payload or not _has_valid_rsi(payload):
+                need_yahoo.append(ticker)
+                continue
+            ref = get_stale_crypto_scan_data(ticker, interval, period)
+            price_ref = ref.get('price') if ref else None
+            if not price_ref:
+                price_ref = entry_prices.get(key)
+            if _price_matches_reference(payload.get('price'), price_ref):
+                result[ticker] = payload
+            else:
+                # Harga CoinGecko beda jauh dari data scan - ticker ini
+                # bisa jadi aset yang berbeda di Yahoo. Ambil dari Yahoo
+                # dulu; harga CoinGecko dipakai kalau Yahoo tidak punya.
+                need_yahoo.append(ticker)
+
+        # Ticker yang tidak ada di CoinGecko, atau yang harganya beda jauh
+        # dari data scan terakhir, diambil dari Yahoo.
+        if need_yahoo:
+            async def _fetch_yahoo(ticker):
+                d = await asyncio.to_thread(
+                    crypto_service.get_crypto_data, ticker, interval, period,
+                    skip_if_missing=True)
+                return ticker, d
+
+            fetched = await asyncio.gather(
+                *[_fetch_yahoo(t) for t in need_yahoo])
+            for ticker, d in fetched:
+                if d and _has_valid_rsi(d):
+                    result[ticker] = d
+                else:
+                    # Yahoo tidak punya ticker ini - CoinGecko satu-satunya
+                    # sumber harga yang ada.
+                    payload = cg_data.get(ticker)
+                    if payload and _has_valid_rsi(payload):
+                        result[ticker] = payload
+
+        return {key: result.get(ticker) for key, ticker in items}
 
     results = await asyncio.gather(*[
         _fetch_group(interval, period, items)
@@ -540,6 +610,23 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
             if data:
                 price_cache[key] = data
     return price_cache
+
+
+def _price_matches_reference(price, reference) -> bool:
+    """True kalau dua harga dianggap harga dari aset yang sama.
+
+    CoinGecko dan Yahoo bisa punya harga yang beda jauh untuk simbol
+    yang sama, kalau simbolnya menunjuk aset berbeda. Kalau tidak ada
+    harga pembanding, hasilnya False - pemanggil lalu pakai Yahoo.
+    """
+    try:
+        price = float(price)
+        reference = float(reference)
+    except (TypeError, ValueError):
+        return False
+    if price <= 0 or reference <= 0:
+        return False
+    return abs(price / reference - 1) <= _TP_SL_PRICE_TOLERANCE
 
 
 async def check_crypto_tp_sl(app):

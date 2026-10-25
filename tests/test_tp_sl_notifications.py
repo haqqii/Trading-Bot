@@ -224,6 +224,10 @@ class TestTpSlFetchesPricesInParallel:
     crypto sedang jalan limiter itu penuh, jadi satu siklus cek TP/SL bisa
     lewat 2 menit - job berikutnya lalu kena "maximum number of running
     instances reached" dan notifikasi TP/SL telat.
+
+    Karena itu harga diambil lewat satu request bulk CoinGecko, bukan satu
+    request Yahoo per ticker. Yahoo hanya dipakai untuk ticker yang tidak
+    ada di CoinGecko atau yang harganya beda jauh dari harga scan terakhir.
     """
 
     def test_prices_are_fetched_together(self, monkeypatch):
@@ -268,24 +272,15 @@ class TestTpSlFetchesPricesInParallel:
         assert state['max_inflight'] > 1, \
             "harga harus diambil paralel, bukan satu per satu"
 
-    def test_missing_tickers_are_fetched_in_one_bulk_request(self, monkeypatch):
-        """Ticker yang tidak ada di Yahoo diambil CoinGecko sekaligus.
-
-        Kalau satu per satu, tiap ticker kena limiter CoinGecko (5/menit)
-        dan satu siklus cek TP/SL bisa lewat beberapa menit.
-        """
+    def test_all_tickers_go_in_one_bulk_request(self, monkeypatch):
+        """Semua ticker yang dipantau masuk satu request bulk CoinGecko."""
         from handlers.scheduler import jobs_crypto
 
         bulk_calls = []
 
-        def fake_fetch(ticker, interval, period, skip_if_missing=False):
-            if ticker == 'ETH-USD':
-                return None
-            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
-
         def fake_bulk(tickers, retry=3, use_cache=True):
-            bulk_calls.append(list(tickers))
-            return {'ETH-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+            bulk_calls.append((list(tickers), use_cache))
+            return {}
 
         signals = {
             'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD'),
@@ -293,7 +288,9 @@ class TestTpSlFetchesPricesInParallel:
         }
 
         monkeypatch.setattr(jobs_crypto.crypto_service,
-                            'get_crypto_data', fake_fetch)
+                            'get_crypto_data',
+                            lambda t, i, p, skip_if_missing=False:
+                            {'price': 103.0, 'candles': 50, 'rsi': 45.0})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk', fake_bulk)
         monkeypatch.setattr(jobs_crypto.crypto_service,
@@ -308,8 +305,171 @@ class TestTpSlFetchesPricesInParallel:
 
         asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
 
-        assert len(bulk_calls) == 1, "ticker yang gagal harus 1 request bulk"
-        assert bulk_calls[0] == ['ETH-USD']
+        assert len(bulk_calls) == 1, "semua ticker harus 1 request bulk"
+        assert sorted(bulk_calls[0][0]) == ['BTC-USD', 'ETH-USD']
+        assert bulk_calls[0][1] is False, \
+            "harga TP/SL harus segar, bukan dari cache CoinGecko"
+
+    def test_coingecko_price_is_used_when_it_matches_the_scan_price(
+            self, monkeypatch):
+        """Harga CoinGecko yang cocok dengan data scan dipakai langsung."""
+        from handlers.scheduler import jobs_crypto
+
+        yahoo_calls = []
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            yahoo_calls.append(ticker)
+            return {'price': 999.0, 'candles': 50, 'rsi': 45.0}
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+                            lambda t, i, p: {'price': 102.0, 'candles': 50})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert yahoo_calls == [], \
+            "harga CoinGecko sudah cocok, tidak perlu request Yahoo"
+        assert len(app.bot.sent) == 1
+        assert 'TP1' in app.bot.sent[0][1]
+
+    def test_mismatched_price_falls_back_to_yahoo(self, monkeypatch):
+        """Kalau harga CoinGecko beda jauh, pakai harga Yahoo.
+
+        Simbol yang sama bisa menunjuk aset berbeda di CoinGecko dan
+        Yahoo. Kalau harga CoinGecko dipakai, level TP/SL dihitung dari
+        aset yang salah.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        yahoo_calls = []
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            yahoo_calls.append(ticker)
+            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            return {'BTC-USD': {'price': 0.3, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+                            lambda t, i, p: {'price': 102.0, 'candles': 50})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert yahoo_calls == ['BTC-USD'], \
+            "harga yang tidak cocok harus diambil dari Yahoo"
+        assert len(app.bot.sent) == 1
+        assert 'TP1' in app.bot.sent[0][1]
+
+    def test_ticker_missing_from_coingecko_falls_back_to_yahoo(self,
+                                                                monkeypatch):
+        """Ticker yang tidak dikenal CoinGecko diambil dari Yahoo."""
+        from handlers.scheduler import jobs_crypto
+
+        yahoo_calls = []
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            yahoo_calls.append(ticker)
+            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            return {}
+
+        signals = {
+            'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD'),
+            'CRYPTO_ETH-USD_1': make_signal(ticker_raw='ETH-USD'),
+        }
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+                            lambda t, i, p: None)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
+
+        assert sorted(yahoo_calls) == ['BTC-USD', 'ETH-USD']
+
+    def test_coingecko_price_used_when_yahoo_has_no_data(self, monkeypatch):
+        """Ticker yang tidak ada di Yahoo tetap punya harga dari CoinGecko.
+
+        Kalau tidak, sinyal ticker itu tidak pernah dicek TP/SL sama sekali.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            return None
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+                            lambda t, i, p: None)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert len(app.bot.sent) == 1, \
+            "sinyal harus tetap dicek TP/SL walau Yahoo tidak punya data"
+        assert 'TP1' in app.bot.sent[0][1]
 
 
 class TestStockLoop:
