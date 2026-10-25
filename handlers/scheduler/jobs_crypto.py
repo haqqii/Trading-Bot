@@ -17,6 +17,7 @@ from services import crypto_yahoo_missing
 from utils.formatters import format_unified_crypto_notification, escape_md
 from db import db
 from utils.cache import _price_cache
+from utils.rate_limiter import coingecko_can_call_now
 
 from handlers.scheduler._common import (
     now_wib,
@@ -24,7 +25,7 @@ from handlers.scheduler._common import (
     SEND_DELAY_SECONDS,
     get_crypto_data_with_fallback,
     store_crypto_scan_data,
-    get_stale_crypto_scan_data,
+    get_crypto_scan_data,
     _get_user_db,
     _get_last_buy_signals,
     _remove_signal,
@@ -138,7 +139,11 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
     for ticker in failed:
         if ticker in data_map:
             continue
-        stale = get_stale_crypto_scan_data(ticker, interval, period)
+        # Data scan terakhir (basi pun boleh). Pakai get_crypto_scan_data
+        # supaya entri yang masih ada di cache "segar" tapi sudah lewat
+        # TTL-nya juga ketemu - get_stale_crypto_scan_data hanya melihat
+        # entri yang sudah dipindah ke cache basi.
+        stale = get_crypto_scan_data(ticker, interval, period)
         if stale:
             data_map[ticker] = stale
             logger.warning(f"[CRYPTO] Pakai data scan terakhir untuk {ticker} "
@@ -504,11 +509,17 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
     1. Satu request bulk CoinGecko untuk semua ticker yang dipantau.
        Endpoint /coins/markets bisa membawa puluhan ticker sekaligus,
        jadi satu request cukup untuk seluruh sinyal yang dilacak.
+       Kalau limiter CoinGecko penuh, pakai harga dari cache (5 menit
+       lalu) daripada menunggu slot - menunggu hampir semenit sudah
+       cukup untuk bikin siklus lewat batas 2 menit.
     2. Harga CoinGecko dipakai hanya kalau cocok dengan harga scan
        terakhir (dalam _TP_SL_PRICE_TOLERANCE). Kalau ticker-nya di
        Yahoo menunjuk aset yang lain, price-nya bukan harga yang dicari
        - ticker seperti itu diambil dari Yahoo.
-    3. Ticker yang tidak ada di CoinGecko juga diambil dari Yahoo.
+    3. Harga Yahoo diambil dari cache dulu (data scan terakhir, sumber
+       yang sama dengan harga entry sinyal). Request baru ke Yahoo
+       hanya kalau cache-nya kosong - request baru harus antre di
+       limiter yang sedang dipakai penuh oleh scan.
 
     Returns:
         dict key sinyal -> data harga (hanya yang datanya berhasil diambil).
@@ -555,8 +566,21 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
         # Satu request untuk semua ticker yang dipantau.
         # use_cache=False supaya harganya benar-benar segar - cache
         # CoinGecko bertahan 5 menit, terlalu lama untuk cek TP/SL.
-        cg_data = await asyncio.to_thread(
-            crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
+        #
+        # Kalau limiter CoinGecko sedang penuh, menunggu slot bisa memakan
+        # hampir semenit - itu sendiri sudah cukup untuk bikin siklus ini
+        # lewat batas 2 menit, jadi siklus berikutnya kena skip. Lebih
+        # baik pakai harga dari cache (5 menit lalu) daripada menunggu.
+        t0 = time.monotonic()
+        if coingecko_can_call_now():
+            cg_data = await asyncio.to_thread(
+                crypto_service.get_crypto_data_coingecko_bulk, tickers, 3, False)
+        else:
+            cg_data = crypto_service.get_crypto_data_coingecko_cached(tickers)
+            logger.info(
+                "[TP/SL] limiter CoinGecko penuh - pakai harga dari cache "
+                f"({len(cg_data)}/{len(tickers)} ticker)")
+        cg_secs = time.monotonic() - t0
 
         need_yahoo = []
         for key, ticker in items:
@@ -564,7 +588,7 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
             if not payload or not _has_valid_rsi(payload):
                 need_yahoo.append(ticker)
                 continue
-            ref = get_stale_crypto_scan_data(ticker, interval, period)
+            ref = get_crypto_scan_data(ticker, interval, period)
             price_ref = ref.get('price') if ref else None
             if not price_ref:
                 price_ref = entry_prices.get(key)
@@ -577,26 +601,50 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
                 need_yahoo.append(ticker)
 
         # Ticker yang tidak ada di CoinGecko, atau yang harganya beda jauh
-        # dari data scan terakhir, diambil dari Yahoo.
+        # dari data scan terakhir, butuh harga Yahoo.
         if need_yahoo:
-            async def _fetch_yahoo(ticker):
-                d = await asyncio.to_thread(
-                    crypto_service.get_crypto_data, ticker, interval, period,
-                    skip_if_missing=True)
-                return ticker, d
-
-            fetched = await asyncio.gather(
-                *[_fetch_yahoo(t) for t in need_yahoo])
-            for ticker, d in fetched:
-                if d and _has_valid_rsi(d):
-                    result[ticker] = d
+            # Cache harga provider dipakai dulu. Isinya berasal dari scan
+            # terakhir (sumber harga yang sama dengan harga entry sinyal),
+            # jadi tidak perlu request baru. Request baru harus antre di
+            # limiter Yahoo yang sedang dipakai penuh oleh scan - itu yang
+            # bikin satu siklus cek TP/SL lewat 2 menit dan siklus
+            # berikutnya kena skip.
+            still_need_fetch = []
+            for ticker in need_yahoo:
+                cached = _get_cached_yahoo_data(ticker, interval, period)
+                if cached and _has_valid_rsi(cached):
+                    result[ticker] = cached
                 else:
-                    # Yahoo tidak punya ticker ini - CoinGecko satu-satunya
-                    # sumber harga yang ada.
-                    payload = cg_data.get(ticker)
-                    if payload and _has_valid_rsi(payload):
-                        result[ticker] = payload
+                    still_need_fetch.append(ticker)
 
+            if still_need_fetch:
+                t1 = time.monotonic()
+                async def _fetch_yahoo(ticker):
+                    d = await asyncio.to_thread(
+                        crypto_service.get_crypto_data, ticker, interval, period,
+                        skip_if_missing=True)
+                    return ticker, d
+
+                fetched = await asyncio.gather(
+                    *[_fetch_yahoo(t) for t in still_need_fetch])
+                for ticker, d in fetched:
+                    if d and _has_valid_rsi(d):
+                        result[ticker] = d
+                    else:
+                        # Yahoo tidak punya ticker ini - CoinGecko satu-satunya
+                        # sumber harga yang ada.
+                        payload = cg_data.get(ticker)
+                        if payload and _has_valid_rsi(payload):
+                            result[ticker] = payload
+                yahoo_secs = time.monotonic() - t1
+                logger.info(
+                    f"[TP/SL] {len(still_need_fetch)} ticker butuh request "
+                    f"Yahoo baru (dari {len(need_yahoo)} yang tidak cocok "
+                    f"CoinGecko) - {yahoo_secs:.1f} detik")
+
+        logger.info(
+            f"[TP/SL] harga {len(result)}/{len(tickers)} ticker "
+            f"(CoinGecko bulk {cg_secs:.1f} detik)")
         return {key: result.get(ticker) for key, ticker in items}
 
     results = await asyncio.gather(*[
@@ -610,6 +658,23 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
             if data:
                 price_cache[key] = data
     return price_cache
+
+
+def _get_cached_yahoo_data(ticker: str, interval: str, period: str):
+    """Data harga Yahoo yang sudah ada di cache, tanpa request baru.
+
+    Cache harga provider disimpan dengan TTL 60 detik, lalu masih ada
+    300 detik lagi sebagai data basi. Selama scan berjalan, datanya
+    masih kepakai - dan sumbernya sama dengan harga entry sinyal
+    (Yahoo), jadi aman dipakai untuk cek TP/SL.
+
+    Data basi hanya bisa menghilangkan TP/SL (harga yang sudah balik),
+    tidak pernah memicu TP/SL palsu - jadi lebih baik daripada
+    menunggu request yang antre di limiter.
+    """
+    cache_key = f"{ticker}_{interval}_{period}"
+    return (crypto_service.cache.get(cache_key)
+            or crypto_service.cache.get_stale(cache_key))
 
 
 def _price_matches_reference(price, reference) -> bool:

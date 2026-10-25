@@ -258,6 +258,26 @@ def get_stale_crypto_scan_data(ticker: str, interval: str, period: str):
     return None
 
 
+def get_crypto_scan_data(ticker: str, interval: str, period: str):
+    """Data scan terakhir, baik yang masih segar maupun yang sudah basi.
+
+    Hasil scan disimpan di cache dengan TTL 300 detik, jadi selama scan
+    baru selesai datanya masih "segar" - tapi ``get_stale_crypto_scan_data``
+    hanya melihat entri yang sudah kedaluwarsa, bukan yang masih segar.
+    Pemanggil yang butuh harga referensi terbaru harus pakai fungsi ini:
+   ``get()`` dulu (entri yang basi otomatis pindah ke cache stale), lalu
+    ``get_stale()`` sebagai jaring pengaman.
+    """
+    key = crypto_scan_cache_key(ticker, interval, period)
+    data = _price_cache.get(key) or _price_cache.get_stale(key)
+    if data:
+        if isinstance(data, StockDataResult):
+            data = data.data if data.success else None
+        if data and data.get('candles', 0) >= 5:
+            return data
+    return None
+
+
 def _get_user_db():
     """Get user database - reads directly from command_handlers to ensure fresh data."""
     import handlers.command_handlers as ch

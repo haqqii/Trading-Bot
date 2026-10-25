@@ -1028,6 +1028,21 @@ class CryptoService:
                     f"diambil dalam {len(wanted) // _COINGECKO_BULK_CHUNK + 1} chunk")
         return out
 
+    def get_crypto_data_coingecko_cached(self, tickers):
+        """Data CoinGecko untuk banyak ticker, diambil HANYA dari cache.
+
+        Tidak ada request ke provider. Dipakai kalau limiter CoinGecko
+        sedang penuh dan menunggu slot akan terlalu lama - harga di
+        cache sudah dari 5 menit terakhir, dan harga basi hanya bisa
+        membuat TP/SL kelewat (bukan memicu TP/SL palsu).
+        """
+        out: dict[str, dict] = {}
+        for ticker in tickers:
+            cached = self.cache.get(f"cg_{ticker}")
+            if cached:
+                out[ticker] = cached
+        return out
+
 
 # Singleton instance
 crypto_service = CryptoService()

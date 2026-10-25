@@ -274,6 +274,16 @@ _circuit_breakers: Dict[str, CircuitBreaker] = {
 }
 
 
+def coingecko_can_call_now() -> bool:
+    """True kalau limiter CoinGecko punya slot kosong sekarang juga.
+
+    Dipakai pemanggil yang tidak boleh menunggu lama (job cek TP/SL):
+    menunggu slot bisa memakan hampir semenit, dan itu sendiri sudah
+    cukup untuk bikin satu siklus lewat batas 2 menit.
+    """
+    return _coingecko_limiter.can_call()
+
+
 def reset_all_circuit_breakers():
     """Reset all circuit breakers to CLOSED state"""
     for name, breaker in _circuit_breakers.items():

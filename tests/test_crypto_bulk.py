@@ -675,6 +675,56 @@ class TestTpSlPriceReference:
         assert not _price_matches_reference(102.0, 'abc')
 
 
+class TestCryptoScanCacheLookup:
+    """Harga acuan harus diambil dari cache scan, fresh maupun basi.
+
+    Hasil scan disimpan di cache dengan TTL 300 detik, jadi selama scan
+    baru selesai datanya masih "segar" - tapi pembacaan yang hanya
+    melihat cache basi tidak akan menemukannya. Akibatnya harga acuan
+    jadi kosong, semua ticker dianggap tidak cocok, dan satu siklus cek
+    TP/SL menembak provider satu per satu (lalu kena skip).
+    """
+
+    def test_fresh_scan_data_is_found(self):
+        from handlers.scheduler import _common
+        from handlers.scheduler._common import crypto_scan_cache_key
+
+        key = crypto_scan_cache_key('BTC-USD', '4h', '1mo')
+        _common._price_cache.set(key, {'price': 102.0, 'candles': 168},
+                                 ttl=300)
+        try:
+            data = _common.get_crypto_scan_data('BTC-USD', '4h', '1mo')
+            assert data is not None
+            assert data['price'] == 102.0
+        finally:
+            _common._price_cache._cache.pop(key, None)
+
+    def test_expired_scan_data_is_still_found(self):
+        """Entri yang sudah lewat TTL dipindah ke cache basi saat dibaca."""
+        import time
+        from handlers.scheduler import _common
+        from handlers.scheduler._common import crypto_scan_cache_key
+
+        key = crypto_scan_cache_key('ETH-USD', '4h', '1mo')
+        _common._price_cache.set(key, {'price': 103.0, 'candles': 168},
+                                 ttl=300)
+        # Paksa jadi kedaluwarsa.
+        _common._price_cache._cache[key] = (
+            {'price': 103.0, 'candles': 168}, time.time() - 1)
+        try:
+            data = _common.get_crypto_scan_data('ETH-USD', '4h', '1mo')
+            assert data is not None, \
+                "data scan yang basi tetap harus ketemu"
+            assert data['price'] == 103.0
+        finally:
+            _common._price_cache._cache.pop(key, None)
+            _common._price_cache._stale_cache.pop(key, None)
+
+    def test_missing_scan_data_returns_none(self):
+        from handlers.scheduler import _common
+        assert _common.get_crypto_scan_data('XXX-USD', '4h', '1mo') is None
+
+
 class TestCryptoPairsRecoveryJob:
     """Job pemulihan daftar pair harus mencoba lagi lalu melapor."""
 

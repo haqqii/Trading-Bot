@@ -230,6 +230,17 @@ class TestTpSlFetchesPricesInParallel:
     ada di CoinGecko atau yang harganya beda jauh dari harga scan terakhir.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_cached_yahoo_price(self, monkeypatch):
+        """Default: cache harga provider kosong.
+
+        Kalau tidak, test bisa ikut terpengaruh sisa cache dari test lain
+        (cache-nya global untuk satu proses).
+        """
+        from handlers.scheduler import jobs_crypto
+        monkeypatch.setattr(jobs_crypto, '_get_cached_yahoo_data',
+                            lambda t, i, p: None)
+
     def test_prices_are_fetched_together(self, monkeypatch):
         import time
         from handlers.scheduler import jobs_crypto
@@ -330,7 +341,7 @@ class TestTpSlFetchesPricesInParallel:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk', fake_bulk)
-        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: {'price': 102.0, 'candles': 50})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
@@ -374,7 +385,7 @@ class TestTpSlFetchesPricesInParallel:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk', fake_bulk)
-        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: {'price': 102.0, 'candles': 50})
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
@@ -391,6 +402,102 @@ class TestTpSlFetchesPricesInParallel:
 
         assert yahoo_calls == ['BTC-USD'], \
             "harga yang tidak cocok harus diambil dari Yahoo"
+        assert len(app.bot.sent) == 1
+        assert 'TP1' in app.bot.sent[0][1]
+
+    def test_cached_yahoo_price_avoids_new_request(self, monkeypatch):
+        """Harga Yahoo dari cache dipakai, tanpa request baru.
+
+        Request baru harus antre di limiter Yahoo yang sedang dipakai
+        penuh oleh scan crypto. Satu siklus yang tertunda >2 menit bikin
+        siklus berikutnya kena skip ("maximum number of running
+        instances"), jadi notifikasi TP/SL telat.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        yahoo_calls = []
+
+        def fake_fetch(ticker, interval, period, skip_if_missing=False):
+            yahoo_calls.append(ticker)
+            return {'price': 103.0, 'candles': 50, 'rsi': 45.0}
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            # Harga CoinGecko menunjuk aset lain (0.3 vs 102).
+            return {'BTC-USD': {'price': 0.3, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data', fake_fetch)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
+                            lambda t, i, p: {'price': 102.0, 'candles': 50})
+        # Cache harga provider ada isinya (dari scan terakhir).
+        monkeypatch.setattr(
+            jobs_crypto, '_get_cached_yahoo_data',
+            lambda t, i, p: {'price': 103.0, 'candles': 50, 'rsi': 45.0})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert yahoo_calls == [], \
+            "harga Yahoo sudah ada di cache, tidak perlu request baru"
+        assert len(app.bot.sent) == 1
+        assert 'TP1' in app.bot.sent[0][1]
+
+    def test_cached_coingecko_used_when_limiter_is_full(self, monkeypatch):
+        """Kalau limiter CoinGecko penuh, pakai harga cache, jangan tunggu.
+
+        Menunggu slot di limiter bisa memakan hampir semenit. Itu sendiri
+        sudah cukup untuk bikin siklus cek TP/SL lewat batas 2 menit,
+        sehingga siklus berikutnya kena skip.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        bulk_calls = []
+
+        def fake_bulk(tickers, retry=3, use_cache=True):
+            bulk_calls.append(list(tickers))
+            return {}
+
+        def fake_cached(tickers):
+            return {'BTC-USD': {'price': 103.0, 'candles': 168, 'rsi': 45.0}}
+
+        signals = {'CRYPTO_BTC-USD_1': make_signal(ticker_raw='BTC-USD')}
+
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_bulk', fake_bulk)
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_crypto_data_coingecko_cached', fake_cached)
+        monkeypatch.setattr(jobs_crypto, 'coingecko_can_call_now',
+                            lambda: False)
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
+                            lambda t, i, p: {'price': 102.0, 'candles': 50})
+        monkeypatch.setattr(jobs_crypto.crypto_service,
+                            'get_usd_idr_rate', lambda: 16000)
+        monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
+                            lambda *a, **k: None)
+        monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
+            '1': {'notif_crypto': True, 'timeframe': '60'}})
+        monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
+                            lambda: signals)
+        monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert bulk_calls == [], \
+            "limiter penuh harus pakai cache, bukan menunggu request baru"
         assert len(app.bot.sent) == 1
         assert 'TP1' in app.bot.sent[0][1]
 
@@ -417,7 +524,7 @@ class TestTpSlFetchesPricesInParallel:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk', fake_bulk)
-        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: None)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
@@ -452,7 +559,7 @@ class TestTpSlFetchesPricesInParallel:
                             'get_crypto_data', fake_fetch)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_crypto_data_coingecko_bulk', fake_bulk)
-        monkeypatch.setattr(jobs_crypto, 'get_stale_crypto_scan_data',
+        monkeypatch.setattr(jobs_crypto, 'get_crypto_scan_data',
                             lambda t, i, p: None)
         monkeypatch.setattr(jobs_crypto.crypto_service,
                             'get_usd_idr_rate', lambda: 16000)
