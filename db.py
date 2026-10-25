@@ -34,6 +34,30 @@ DEFAULT_NOTIFICATIONS = {
 }
 
 
+def normalize_signal_direction(value: str | None,
+                              signal_type: str | None = None) -> str:
+    """Normalisasi arah sinyal jadi 'LONG' atau 'SHORT'.
+
+    Loop TP/SL menentukan arah dari `direction == 'SHORT'`. Nilai yang
+    benar ('LONG'/'SHORT') disimpan di extra_data. Tapi kalau sinyal
+    ditulis ulang oleh auto-save dari state yang salah, isinya bisa
+    'BUY'/'SELL'/'REVERSAL' - itu nilai signal_type, bukan arah.
+
+    Kalau arah jadi salah, sinyal SHORT diperlakukan sebagai LONG:
+    TP/SL-nya terbalik (TP1 kena saat harga naik, SL tidak pernah kena)
+    dan notifikasinya jadi ngawur.
+    """
+    v = (value or '').upper()
+    if v in ('LONG', 'SHORT'):
+        return v
+    if v == 'SELL':
+        return 'SHORT'
+    st = (signal_type or '').upper()
+    if st == 'SELL':
+        return 'SHORT'
+    return 'LONG'
+
+
 class Database:
     """SQLite database wrapper with thread-safe operations."""
 
@@ -632,13 +656,19 @@ class Database:
 
         Returns dict matching the in-memory last_buy_signals format.
         Used on bot startup to restore signal tracking state.
+
+        Sinyal yang sudah kena TP1/TP2 (outcome 'tp1'/'tp2') juga
+        dimuat: posisinya masih hidup, jadi TP2/TP3 berikutnya masih
+        harus dipantau. Kalau tidak dimuat, setiap restart = notifikasi
+        TP2/TP3 untuk sinyal itu hilang permanen.
         """
         self.initialize()
         import json
         result = {}
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM signals WHERE outcome IS NULL OR outcome = 'open'"
+                "SELECT * FROM signals WHERE outcome IS NULL "
+                "OR outcome IN ('open', 'tp1', 'tp2')"
             ).fetchall()
 
         for row in rows:
@@ -666,7 +696,12 @@ class Database:
                     'tp3': bool(row.get('tp3_hit_at')),
                 },
                 'type': row.get('asset_type'),
-                'direction': row.get('signal_type', 'LONG'),
+                # Arah harus 'LONG'/'SHORT'. Kolom signal_type berisi
+                # 'BUY'/'SELL'/'REVERSAL' - bukan arah, dan kalau dipakai
+                # langsung, sinyal SHORT jadi dianggap LONG setelah
+                # restart (TP/SL terbalik).
+                'direction': normalize_signal_direction(
+                    extra.get('direction'), row.get('signal_type')),
                 'ticker_raw': row.get('ticker'),
                 'buy_score': row.get('score', 0),
                 'quality': row.get('quality', 'WEAK'),

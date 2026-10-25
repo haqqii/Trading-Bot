@@ -362,6 +362,88 @@ class TestSignalOperations:
         )
         assert result is True
 
+    def test_load_active_signals_keeps_short_direction(self, temp_db):
+        """Sinyal SELL harus tetap SHORT setelah dipulihkan dari DB.
+
+        Loop TP/SL menentukan arah dari `direction == 'SHORT'`. Kalau
+        arahnya jadi 'SELL', sinyal SHORT diperlakukan sebagai LONG:
+        TP/SL-nya terbalik dan notifikasinya ngawur.
+        """
+        db, _ = temp_db
+        db.save_active_signal(
+            key='STOCK_TOWR_123', ticker='TOWR', asset_type='stock',
+            signal_type='SELL', price=420, tp1=371, tp2=322, tp3=250,
+            sl=492, score=70, quality='STRONG', reason=' resistances',
+            extra_data={'user_id': '123', 'direction': 'SHORT', 'atr': 24.0},
+        )
+        restored = db.load_active_signals()
+        assert restored['STOCK_TOWR_123']['direction'] == 'SHORT'
+
+    def test_load_active_signals_maps_legacy_direction(self, temp_db):
+        """Arah yang tersimpan sebagai 'SELL' dipetakan jadi 'SHORT'.
+
+        Sinyal yang ditulis ulang oleh auto-save dari state yang salah
+        bisa menyimpan 'BUY'/'SELL' (nilai signal_type) di extra_data.
+        """
+        db, _ = temp_db
+        db.save_active_signal(
+            key='STOCK_TOWR_123', ticker='TOWR', asset_type='stock',
+            signal_type='SELL', price=420, tp1=371, tp2=322, tp3=250,
+            sl=492, score=70, quality='STRONG', reason='resistance',
+            extra_data={'user_id': '123', 'direction': 'SELL', 'atr': 24.0},
+        )
+        restored = db.load_active_signals()
+        assert restored['STOCK_TOWR_123']['direction'] == 'SHORT'
+
+    def test_load_active_signals_maps_buy_to_long(self, temp_db):
+        """'BUY' dipetakan jadi 'LONG'."""
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_BTC-USD_123', ticker='BTC-USD', asset_type='crypto',
+            signal_type='BUY', price=100, tp1=102, tp2=104, tp3=107,
+            sl=97, score=70, quality='STRONG', reason='oversold',
+            extra_data={'user_id': '123', 'direction': 'BUY', 'atr': 1.0},
+        )
+        restored = db.load_active_signals()
+        assert restored['CRYPTO_BTC-USD_123']['direction'] == 'LONG'
+
+    def test_load_active_signals_includes_partial_tp_signals(self, temp_db):
+        """Sinyal yang sudah kena TP1/TP2 masih harus dipantau.
+
+        Posisinya masih hidup, jadi TP2/TP3 berikutnya masih harus
+        dikirimi notifikasi. Kalau tidak dimuat, setiap restart =
+        notifikasi TP2/TP3 untuk sinyal itu hilang permanen.
+        """
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_BTC-USD_123', ticker='BTC-USD', asset_type='crypto',
+            signal_type='BUY', price=100, tp1=102, tp2=104, tp3=107,
+            sl=97, score=70, quality='STRONG', reason='oversold',
+            extra_data={'user_id': '123', 'direction': 'LONG', 'atr': 1.0},
+        )
+        db.save_signal_outcome('CRYPTO_BTC-USD_123', 'tp1')
+
+        restored = db.load_active_signals()
+        assert 'CRYPTO_BTC-USD_123' in restored
+        # TP1 sudah di-notifikasi, jadi tidak boleh di-notifikasi lagi.
+        assert restored['CRYPTO_BTC-USD_123']['tp_hit']['tp1'] is True
+
+    def test_load_active_signals_excludes_closed_signals(self, temp_db):
+        """Sinyal yang sudah tutup (SL/TP3/invalid) tidak dimuat lagi."""
+        db, _ = temp_db
+        for key, outcome in (('A', 'sl'), ('B', 'tp3'), ('C', 'invalid')):
+            db.save_active_signal(
+                key=f'CRYPTO_{key}_123', ticker=f'{key}-USD',
+                asset_type='crypto', signal_type='BUY', price=100,
+                tp1=102, tp2=104, tp3=107, sl=97, score=70,
+                quality='STRONG', reason='x',
+                extra_data={'user_id': '123', 'direction': 'LONG', 'atr': 1.0},
+            )
+            db.save_signal_outcome(f'CRYPTO_{key}_123', outcome)
+
+        restored = db.load_active_signals()
+        assert restored == {}
+
     def test_save_signal_update(self, temp_db):
         """Should update existing signal."""
         db, _ = temp_db

@@ -433,10 +433,14 @@ async def check_crypto_tp_sl(app):
 
                     # === CHECK TP (only if SL not hit) ===
                     # Check TP1 hit
+                    #
+                    # Urutannya penting: KIRIM dulu, baru tandai sudah kena.
+                    # Kalau tandanya disimpan sebelum pesan dikirim, satu
+                    # timeout saja sudah cukup untuk menghilangkan notifikasi:
+                    # state bilang "sudah di-notifikasi" padahal user tidak
+                    # pernah menerimanya, dan siklus berikutnya tidak mengirim
+                    # lagi.
                     if not tp_hit.get('tp1') and _is_tp_hit(tp1):
-                        tp_hit['tp1'] = True
-                        signals[key]['tp_hit'] = tp_hit
-                        db.save_signal_outcome(key, 'tp1')
                         profit_pct = _profit_pct(tp1)
 
                         name = signal_data.get('name', ticker)
@@ -454,13 +458,13 @@ async def check_crypto_tp_sl(app):
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        tp_hit['tp1'] = True
+                        signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp1')
                         logger.info(f"TP1 hit: {ticker} at {current_price}")
 
                     # Check TP2 hit
                     if not tp_hit.get('tp2') and _is_tp_hit(tp2):
-                        tp_hit['tp2'] = True
-                        signals[key]['tp_hit'] = tp_hit
-                        db.save_signal_outcome(key, 'tp2')
                         profit_pct = _profit_pct(tp2)
 
                         name = signal_data.get('name', ticker)
@@ -478,13 +482,13 @@ async def check_crypto_tp_sl(app):
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        tp_hit['tp2'] = True
+                        signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp2')
                         logger.info(f"TP2 hit: {ticker} at {current_price}")
 
                     # Check TP3 hit
                     if not tp_hit.get('tp3') and _is_tp_hit(tp3):
-                        tp_hit['tp3'] = True
-                        signals[key]['tp_hit'] = tp_hit
-                        db.save_signal_outcome(key, 'tp3', closed_price=current_price)
                         profit_pct = _profit_pct(tp3)
 
                         name = signal_data.get('name', ticker)
@@ -502,6 +506,9 @@ async def check_crypto_tp_sl(app):
                             usd_idr_rate=crypto_service.get_usd_idr_rate()
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
+                        tp_hit['tp3'] = True
+                        signals[key]['tp_hit'] = tp_hit
+                        db.save_signal_outcome(key, 'tp3', closed_price=current_price)
                         logger.info(f"TP3 hit: {ticker} at {current_price} - Position closed (target achieved)")
 
                         # Auto-remove from tracking after TP3 (position closed)
