@@ -66,6 +66,65 @@ _PRICE_REF_TTL = 600
 _PRICE_REF_CHUNK = 100
 
 
+# --- Deteksi stablecoin ------------------------------------------------------
+# Stablecoin = aset yang nilainya dipatok ke mata uang lain (biasanya $1).
+# Rekomendasi "beli" untuk stablecoin tidak berguna: volatilitasnya ~0, jadi
+# tidak ada peluang profit dan TP/SL-nya tidak pernah kena. Di produksi,
+# 12 dari 54 sinyal crypto/stablecoin yang terkirim selama sehari adalah
+# stablecoin - semuanya noise.
+#
+# Dua syarat, keduanya wajib:
+# 1. Harga dekat peg. Aset biasa yang kebetulan$~1 (FIL, DOT, BTSE) tidak ikut
+#    tersaring karena syarat kedua tidak terpenuhi.
+# 2. Bollinger band sangat sempit. Diukur dari LEBAR BAND, bukan dari ATR.
+#    ATR tidak bisa dipakai: jalur CoinGecko mengganti ATR di bawah 0.1% harga
+#    dengan 2.5% (lihat get_crypto_data_coingecko), jadi stablecoin yang
+#    diambil dari CoinGecko terlihat "bergerak". Lebar band dihitung dari seri
+#    harga yang sama di kedua jalur, jadi aman untuk provider apa pun.
+#
+# Data produksi (interval 4h, 25 Okt 2026):
+#   stablecoin : lebar band 0.016% - 0.288%
+#   aset biasa : 2.5% (BTSE, $1.07), 2.8% (BTC), 4.9% (ETH), 11.5% (FIL)
+# Ambang 1% ada di tengah celah 10x itu.
+STABLECOIN_PRICE_MIN = 0.85
+STABLECOIN_PRICE_MAX = 1.20
+STABLECOIN_MAX_BB_WIDTH = 0.01   # 1% dari harga
+
+
+def is_stablecoin(data: dict) -> bool:
+    """True kalau data harga menunjukkan aset yang nilainya dipatok.
+
+    `data` = dict hasil get_crypto_data / get_crypto_data_coingecko.
+    Mengembalikan False kalau data Bollinger tidak ada atau rusak, supaya
+    aset yang tidak bisa dinilai tidak ikut tersaring diam-diam.
+    """
+    try:
+        price = float(data.get('price') or 0)
+    except (TypeError, ValueError):
+        return False
+    if price <= 0:
+        return False
+    if not (STABLECOIN_PRICE_MIN <= price <= STABLECOIN_PRICE_MAX):
+        return False
+
+    upper = data.get('bb_upper')
+    lower = data.get('bb_lower')
+    middle = data.get('bb_middle')
+    if upper is None or lower is None or middle is None:
+        return False
+    try:
+        upper = float(upper)
+        lower = float(lower)
+        middle = float(middle)
+    except (TypeError, ValueError):
+        return False
+    if middle <= 0 or upper <= 0 or lower <= 0:
+        return False
+
+    width = (upper - lower) / middle
+    return width <= STABLECOIN_MAX_BB_WIDTH
+
+
 class CryptoService:
     """Service for fetching crypto data"""
 

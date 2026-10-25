@@ -9,7 +9,7 @@ Owns:
 import asyncio
 import logging
 
-from services.crypto_service import crypto_service
+from services.crypto_service import crypto_service, is_stablecoin
 from services.signal_service import calc_tPSL, signal_service
 from utils.formatters import format_unified_crypto_notification, escape_md
 from db import db
@@ -67,6 +67,8 @@ async def check_crypto_signals(app):
             logger.info(f"[CRYPTO] TF={tf_key} ({interval}): scanning for {len(group_users)} users")
 
             buy_signals = []
+            # Penghitung stablecoin yang dilewati (dipakai di thread, jadi list).
+            stable_skipped = [0]
 
             def analyze_crypto_for_tf(ticker):
                 """Blocking crypto analysis for specific TF."""
@@ -76,6 +78,15 @@ async def check_crypto_signals(app):
 
                     d, is_stale = get_crypto_data_with_fallback(ticker, interval, period)
                     if not d or d.get('candles', 0) < 5:
+                        return None
+
+                    # Stablecoin (harga dipatok) bukan aset yang layak
+                    # direkomendasikan beli - volatilitasnya ~0, jadi tidak
+                    # ada peluang profit dan TP/SL-nya tidak pernah kena.
+                    # Lewati sebelum sinyal dibuat supaya tidak ada
+                    # notifikasi maupun baris DB.
+                    if is_stablecoin(d):
+                        stable_skipped[0] += 1
                         return None
 
                     # Pass TF for timeframe-aware signal generation
@@ -116,12 +127,15 @@ async def check_crypto_signals(app):
                     logger.info(f"CRYPTO [{tf_key}] Signal: {ticker} @ ${s['entry']:,.2f}")
 
             if not buy_signals:
-                logger.info(f"[CRYPTO] TF={tf_key}: No BUY signals found")
+                logger.info(f"[CRYPTO] TF={tf_key}: No BUY signals found "
+                            f"({stable_skipped[0]} stablecoin dilewati)")
                 continue
 
             buy_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)
 
-            logger.info(f"[CRYPTO] TF={tf_key}: Found {len(buy_signals)} signals, sending TOP 3 to {len(group_users)} users")
+            logger.info(f"[CRYPTO] TF={tf_key}: Found {len(buy_signals)} signals, "
+                        f"sending TOP 3 to {len(group_users)} users "
+                        f"({stable_skipped[0]} stablecoin dilewati)")
 
             # Baris sinyal dari DB dipakai untuk cooldown: baris itu tetap ada
             # setelah sinyal ditutup (SL/TP3) dan setelah bot restart, jadi
@@ -395,6 +409,19 @@ async def check_crypto_tp_sl(app):
                             f"Signal {key} for {ticker}: entry {entry:.8f} vs "
                             f"current {current_price:.8f} - entry not trustworthy, "
                             f"closing without notification")
+                        db.save_signal_outcome(key, 'invalid',
+                                               closed_price=current_price)
+                        del signals[key]
+                        _remove_signal(key)
+                        continue
+
+                    # Stablecoin (harga dipatok) tidak punya TP/SL yang
+                    # bermakna - volatilitasnya ~0, jadi TP/SL-nya hanya
+                    # batas artefak. Sinyal seperti ini ditutup tanpa
+                    # notifikasi, sama seperti entry yang tidak bisa dipercaya.
+                    if is_stablecoin(d):
+                        logger.info(f"Signal {key} for {ticker}: stablecoin - "
+                                    f"closing without notification")
                         db.save_signal_outcome(key, 'invalid',
                                                closed_price=current_price)
                         del signals[key]

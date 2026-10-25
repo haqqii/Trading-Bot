@@ -5,7 +5,7 @@ import time
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from services.crypto_service import crypto_service
+from services.crypto_service import crypto_service, is_stablecoin
 from services.stock_service import stock_service
 from services.signal_service import signal_service
 from utils.formatters import format_crypto_msg, format_bsjp_msg, format_morning_msg
@@ -29,6 +29,10 @@ async def crypto(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             # Run sync fetch in thread so the event loop stays free
             d = await asyncio.to_thread(crypto_service.get_crypto_data_combined, ticker)
             if d:
+                # Stablecoin (harga dipatok) bukan aset yang layak
+                # direkomendasikan - volatilitasnya ~0.
+                if is_stablecoin(d):
+                    return None
                 s = signal_service.generate_crypto_signal(d)
                 if s.get('entry') and s['entry'] > 0:
                     return (ticker, crypto_service.crypto_pairs.get(ticker, ticker), s, ticker)
