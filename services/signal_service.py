@@ -35,11 +35,45 @@ FEATURES: Dict[str, bool] = {
     'vol_gate': True,       # volatilitas ekstrem menurunkan kualitas
     'degraded_cap': True,   # indikator tidak lengkap menurunkan kualitas
     'vwap_crypto': True,    # VWAP crypto hanya dinilai kalau datanya ada
+    # Regime gate MATI default: sudah diukur A/B (saham IDX 1h 6bln,
+    # crypto 1h 90d - lihat docs/SPEC.md 3.1.1) dan tidak memperbaiki
+    # hasil - di saham malah sedikit lebih buruk. Kode dan A/B-nya
+    # tetap ada; nyalakan lagi di sini kalau mau diukur ulang.
+    'regime_gate': False,   # ADX menentukan aturan yang dipakai (trend/range)
+    'exit_mgmt': True,      # SL bergerak: breakeven setelah TP1, trailing setelah TP2
 }
 
 # Batas ATR% untuk gate volatilitas ekstrem (ATR / harga * 100).
 VOL_GATE_STOCK_PCT = 6.0
 VOL_GATE_CRYPTO_PCT = 10.0
+
+# Regime pasar, ditentukan dari ADX.
+#   trend = ada arah yang jelas  -> aturan momentum (MA/MACD) yang dipakai
+#   range = sideways            -> aturan mean-reversion (RSI/BB) yang dipakai
+#   none  = ADX di tengah atau tidak ada -> aturan seperti biasa
+# Batasnya mengikuti konvensi ADX yang sudah dipakai di calculate_adx
+# (ADX > 25 = tren kuat), jadi angka ini tidak bentrok dengan indikator
+# 'adx_strong' yang sudah dipakai di mesin.
+REGIME_NONE = 'none'
+REGIME_TREND = 'trend'
+REGIME_RANGE = 'range'
+REGIME_ADX_TREND = 25.0
+REGIME_ADX_RANGE = 20.0
+
+# Pengali tiap komponen skor per regime.
+# Di pasar sideways, MA/MACD berbalik bolak-balik (noise) dan harga yang
+# menyentuh band Bollinger adalah peluang mean-reversion. Di pasar trending,
+# sebaliknya: harga yang menyentuh band itu normal, dan MA/MACD yang
+# menentukan arah.
+REGIME_MULTIPLIERS: Dict[str, Dict[str, float]] = {
+    REGIME_NONE:  {'ma': 1.0, 'macd': 1.0, 'bb': 1.0, 'momentum': 1.0},
+    REGIME_TREND: {'ma': 1.0, 'macd': 1.0, 'bb': 0.5, 'momentum': 1.0},
+    REGIME_RANGE: {'ma': 0.5, 'macd': 0.5, 'bb': 1.5, 'momentum': 0.5},
+}
+
+# Poin komponen yang berlawanan arah dengan tren saat regime=trend
+# (mis. RSI oversold sementara harga turun) dikurangi jadi seperempat.
+COUNTER_TREND_FACTOR = 0.3
 
 # Jarak aman TP dari resistance / SL dari support (0.3%).
 TPSR_BUFFER = 0.003
@@ -446,6 +480,42 @@ def _apply_caps(quality: str, caps: List[tuple[Optional[str], Optional[str]]],
     return cap_quality(quality, final_cap)
 
 
+def detect_regime(adx: Any) -> str:
+    """Regime pasar dari ADX: trend / range / none.
+
+    ADX tidak ada (data fallback) atau flag dimatikan -> 'none', artinya
+    skor dihitung persis seperti sebelumnya.
+    """
+    if not FEATURES['regime_gate']:
+        return REGIME_NONE
+    value = finite_or_none(adx)
+    if value is None:
+        return REGIME_NONE
+    if value > REGIME_ADX_TREND:
+        return REGIME_TREND
+    if value < REGIME_ADX_RANGE:
+        return REGIME_RANGE
+    return REGIME_NONE
+
+
+def _scale_points(points: int, factor: float) -> int:
+    """Kalikan poin komponen skor dengan faktor regime."""
+    if not points or factor == 1.0:
+        return points
+    return int(round(points * factor))
+
+
+def _trend_alignment(price: float, ma_slow: Optional[float]) -> Optional[bool]:
+    """True kalau harga di atas MA lambat (tren naik), False kalau di bawah.
+
+    None kalau MA lambat tidak ada - tanpa itu arah tren tidak diketahui
+    dan aturan counter-trend tidak boleh ditebak.
+    """
+    if ma_slow is None or not price:
+        return None
+    return price > ma_slow
+
+
 class SignalService:
     """Service for generating trading signals"""
 
@@ -478,11 +548,26 @@ class SignalService:
         sell_score = 0
         reasons: List[str] = []
 
+        # Regime pasar (dari ADX) menentukan aturan mana yang dipakai.
+        # Tanpa ADX -> 'none' -> skor persis seperti sebelumnya.
+        regime = detect_regime(data.get('adx'))
+        mult = REGIME_MULTIPLIERS[regime]
+        price_above_ma = _trend_alignment(price, ma_s)
+
         # RSI Score (weight: 25%)
         if rsi_raw is None:
             missing.append('rsi')
         else:
             b, s, r = score_rsi(rsi, (30, 40), (70, 60), (25, 10), (25, 10))
+            if regime == REGIME_TREND and price_above_ma is not None:
+                # RSI ekstrem berlawanan arah dengan tren = jebakan klasik
+                # "menangkap pisau jatuh", bukan pembalikan.
+                if b and not price_above_ma:
+                    b = _scale_points(b, COUNTER_TREND_FACTOR)
+                    reasons.append('RSI ekstrem saat tren turun - counter-trend, dikurangi')
+                elif s and price_above_ma:
+                    s = _scale_points(s, COUNTER_TREND_FACTOR)
+                    reasons.append('RSI ekstrem saat tren naik - counter-trend, dikurangi')
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MA Score (weight: 20%)
@@ -490,6 +575,17 @@ class SignalService:
             missing.append('ma')
         else:
             b, s, r = score_ma(ma_f, ma_s)
+            b = _scale_points(b, mult['ma'])
+            s = _scale_points(s, mult['ma'])
+            if regime == REGIME_TREND and price_above_ma is not None:
+                # Golden cross di tengah penurunan (harga di bawah MA lambat)
+                # sering berbalik - kurangi poinnya.
+                if b and not price_above_ma:
+                    b = _scale_points(b, COUNTER_TREND_FACTOR)
+                    reasons.append('MA cross saat tren turun - counter-trend, dikurangi')
+                elif s and price_above_ma:
+                    s = _scale_points(s, COUNTER_TREND_FACTOR)
+                    reasons.append('MA cross saat tren naik - counter-trend, dikurangi')
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MACD Score (weight: 25%)
@@ -497,6 +593,8 @@ class SignalService:
             missing.append('macd')
         else:
             b, s, r = score_macd(macd, macd_signal, macd_hist, (25, 15))
+            b = _scale_points(b, mult['macd'])
+            s = _scale_points(s, mult['macd'])
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Bollinger Bands Score (weight: 15%)
@@ -504,6 +602,8 @@ class SignalService:
             missing.append('bb')
         else:
             b, s, r = score_bb(price, bb_upper, bb_lower, 15)
+            b = _scale_points(b, mult['bb'])
+            s = _scale_points(s, mult['bb'])
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Volume Score (weight: 15%) - volume_ratio selalu punya nilai netral 1.0
@@ -559,6 +659,7 @@ class SignalService:
             'volume_ratio': volume_ratio,
             'vwap': vwap,
             'htf_trend': htf_trend,
+            'regime': regime,
             'missing_indicators': sorted(set(missing)),
         }
 
@@ -601,38 +702,67 @@ class SignalService:
         sell_score = 0
         reasons: List[str] = []
 
+        # Regime pasar (dari ADX) menentukan aturan mana yang dipakai.
+        regime = detect_regime(data.get('adx'))
+        mult = REGIME_MULTIPLIERS[regime]
+        price_above_ma = _trend_alignment(price, ma_s)
+
         # RSI Score (weight: 20%) - INCREASED from 15%
         # Option A: More aggressive RSI oversold scoring
         if rsi_raw is None:
             missing.append('rsi')
         else:
+            rsi_buy = 0
+            rsi_sell = 0
             if rsi < 30:
-                buy_score += 20
+                rsi_buy = 20
                 reasons.append(f'RSI {rsi:.0f} STRONG oversold')
             elif rsi < 35:
-                buy_score += 15
+                rsi_buy = 15
                 reasons.append(f'RSI {rsi:.0f} oversold')
             elif rsi < 45:
-                buy_score += 10
+                rsi_buy = 10
                 reasons.append(f'RSI {rsi:.0f} bullish')
             elif rsi < 50:
-                buy_score += 5
+                rsi_buy = 5
                 reasons.append(f'RSI {rsi:.0f} near oversold')
             elif rsi > 70:
-                sell_score += 20
+                rsi_sell = 20
                 reasons.append(f'RSI {rsi:.0f} STRONG overbought')
             elif rsi > 65:
-                sell_score += 15
+                rsi_sell = 15
                 reasons.append(f'RSI {rsi:.0f} overbought')
             elif rsi > 60:
-                sell_score += 8
+                rsi_sell = 8
                 reasons.append(f'RSI {rsi:.0f} bearish')
+
+            if regime == REGIME_TREND and price_above_ma is not None:
+                # RSI ekstrem berlawanan arah dengan tren = jebakan klasik
+                # "menangkap pisau jatuh", bukan pembalikan.
+                if rsi_buy and not price_above_ma:
+                    rsi_buy = _scale_points(rsi_buy, COUNTER_TREND_FACTOR)
+                    reasons.append('RSI ekstrem saat tren turun - counter-trend, dikurangi')
+                elif rsi_sell and price_above_ma:
+                    rsi_sell = _scale_points(rsi_sell, COUNTER_TREND_FACTOR)
+                    reasons.append('RSI ekstrem saat tren naik - counter-trend, dikurangi')
+
+            buy_score += rsi_buy
+            sell_score += rsi_sell
 
         # MA Score (weight: 10%) - same as stock
         if ma_f is None or ma_s is None:
             missing.append('ma')
         else:
             b, s, r = score_ma(ma_f, ma_s)
+            b = _scale_points(b, mult['ma'])
+            s = _scale_points(s, mult['ma'])
+            if regime == REGIME_TREND and price_above_ma is not None:
+                if b and not price_above_ma:
+                    b = _scale_points(b, COUNTER_TREND_FACTOR)
+                    reasons.append('MA cross saat tren turun - counter-trend, dikurangi')
+                elif s and price_above_ma:
+                    s = _scale_points(s, COUNTER_TREND_FACTOR)
+                    reasons.append('MA cross saat tren naik - counter-trend, dikurangi')
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # MACD Score (weight: 15%)
@@ -640,6 +770,8 @@ class SignalService:
             missing.append('macd')
         else:
             b, s, r = score_macd(macd, macd_signal, macd_hist, (15, 8))
+            b = _scale_points(b, mult['macd'])
+            s = _scale_points(s, mult['macd'])
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Bollinger Bands Score (weight: 10%)
@@ -647,6 +779,8 @@ class SignalService:
             missing.append('bb')
         else:
             b, s, r = score_bb(price, bb_upper, bb_lower, 10)
+            b = _scale_points(b, mult['bb'])
+            s = _scale_points(s, mult['bb'])
             buy_score += b; sell_score += s; reasons.append(r) if r else None
 
         # Stochastic Score (weight: 10%)
@@ -710,11 +844,12 @@ class SignalService:
 
         # Volume + Momentum Score (weight: 10%)
         if change >= 3:
+            momentum_pts = _scale_points(8, mult['momentum'])
             if buy_score > sell_score:
-                buy_score += 8
+                buy_score += momentum_pts
                 reasons.append(f'Momentum +{change:.1f}%')
             else:
-                sell_score += 8
+                sell_score += momentum_pts
                 reasons.append(f'Momentum -{abs(change):.1f}%')
 
         if volume_ratio > 1.5:
@@ -796,6 +931,7 @@ class SignalService:
             'adx': adx,
             'vwap': vwap,
             'htf_trend': htf_trend,
+            'regime': regime,
             'missing_indicators': sorted(set(missing)),
             'ichi_bullish': ichi_bullish,
             'ichi_bearish': ichi_bearish,

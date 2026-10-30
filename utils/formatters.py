@@ -366,6 +366,11 @@ NOTIF_HEADERS = {
     'TP2': '🎯 *₿ TP2 TERKUNCI! +4%*',
     'TP3': '💰 *₿ TP3 TERCAPAI!*',
     'SL': '🔴 *₿ CUT LOSS - SL TERKENA!*',
+    # BE/TRAIL menyebut mekanismenya, bukan hasilnya: harga bisa melompat
+    # melewati level stop, jadi exit tidak selalu di sisi profit. Angka
+    # P/L yang ditampilkan yang menentukan hasilnya.
+    'BE': '⚪ *₿ POSISI DITUTUP - STOP DI ENTRY*',
+    'TRAIL': '🔵 *₿ POSISI DITUTUP - TRAILING STOP*',
     'ALERT_BUY': '🟢 *ALERT BUY!*',
     'ALERT_SELL': '🔴 *ALERT SELL!*',
     'SCAN': '📊 *CRYPTO SCAN*',
@@ -412,13 +417,14 @@ def format_unified_crypto_notification(
     market_data: Dict | None = None,
     change_pct: float = 0,
     profit_loss: float = 0,
-    usd_idr_rate: float = 16000
+    usd_idr_rate: float = 16000,
+    exit_note: str = ''
 ) -> str:
     """
     Build rich unified notification message for crypto.
 
     Args:
-        notif_type: 'BUY' | 'TP1' | 'TP2' | 'TP3' | 'SL' | 'ALERT_BUY' | 'ALERT_SELL'
+        notif_type: 'BUY' | 'TP1' | 'TP2' | 'TP3' | 'SL' | 'BE' | 'ALERT_BUY' | 'ALERT_SELL'
         ticker: Symbol (e.g., 'BTC-USD')
         name: Full name (e.g., 'Bitcoin')
         entry: Entry price
@@ -460,13 +466,21 @@ def format_unified_crypto_notification(
         else:
             gain_str = f'+{profit_loss:.2f}% ⚡️'
 
+    # Pesan exit (SL / breakeven / trailing) menampilkan P/L yang benar-benar
+    # terjadi, bukan rentang rencana SL->TP3. Setelah posisi tutup, angka
+    # yang paling dibutuhkan user adalah hasil akhirnya.
+    is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+    if is_exit:
+        pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
+        gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
-    lines.append(f"💸 Gain: {gain_str}")
+    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
     lines.append("")
 
     # Special section for REVERSAL signals
@@ -565,8 +579,12 @@ def format_unified_crypto_notification(
         if sr_dist.get('support_pct'):
             lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
 
-    if notif_type in ('TP1', 'TP2', 'TP3', 'SL'):
+    if notif_type in ('TP1', 'TP2', 'TP3', 'SL', 'BE', 'TRAIL'):
         lines.append(f"💵 Current: {_fmt_price_dual(current_price, usd_idr_rate)}")
+
+    # Catatan aturan keluar (SL bergerak setelah TP1/TP2)
+    if exit_note:
+        lines.append(f"🔒 {escape_md(exit_note)}")
 
     lines.append("")
 
@@ -628,7 +646,8 @@ def format_unified_stock_notification(
     change_pct: float = 0,
     profit_loss: float = 0,
     entry_low: float = 0,
-    entry_high: float = 0
+    entry_high: float = 0,
+    exit_note: str = ''
 ) -> str:
     """
     Build rich unified notification for stock signals.
@@ -646,6 +665,10 @@ def format_unified_stock_notification(
         header = "🎯 *SAHAM TP3 TERCAPAI!*"
     elif notif_type == 'SL':
         header = "🛡️ *SAHAM SL TERCAPAI!*"
+    elif notif_type == 'BE':
+        header = "⚪ *SAHAM DITUTUP - STOP DI ENTRY*"
+    elif notif_type == 'TRAIL':
+        header = "🔵 *SAHAM DITUTUP - TRAILING STOP*"
     else:
         header = f"📊 *SAHAM SIGNAL - {notif_type}*"
 
@@ -662,13 +685,19 @@ def format_unified_stock_notification(
     else:
         gain_str = '+1% → +3% ⚡️'
 
+    # Pesan exit menampilkan P/L realisasi, bukan rentang rencana.
+    is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+    if is_exit:
+        pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
+        gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
-    lines.append(f"💸 Gain: {gain_str}")
+    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
     lines.append("")
 
     lines.append("🤖 *SAHAM SIGNAL DETECTED*")
@@ -778,8 +807,12 @@ def format_unified_stock_notification(
         if sr_dist.get('support_pct'):
             lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
 
-    if notif_type in ('TP1', 'TP2', 'TP3', 'SL'):
+    if notif_type in ('TP1', 'TP2', 'TP3', 'SL', 'BE', 'TRAIL'):
         lines.append(f"💵 Current: Rp {current_price:,.0f}")
+
+    # Catatan aturan keluar (SL bergerak setelah TP1/TP2)
+    if exit_note:
+        lines.append(f"🔒 {escape_md(exit_note)}")
 
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")

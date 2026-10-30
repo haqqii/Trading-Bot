@@ -104,6 +104,10 @@ def crypto_loop(monkeypatch):
     monkeypatch.setattr(
         jobs_crypto.crypto_service, 'get_usd_idr_rate', lambda: 16000)
     monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome', fake_save_outcome)
+    # Penting: kalau tidak dimock, level SL yang digeser ditulis ke DB
+    # bot yang sungguhan.
+    monkeypatch.setattr(jobs_crypto.db, 'update_signal_extra',
+                        lambda key, extra: True)
     monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
         '1': {'notif_crypto': True, 'timeframe': '60'}})
     monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
@@ -795,7 +799,7 @@ class TestStockLoop:
     def stock_loop(self, monkeypatch):
         from handlers.scheduler import jobs_stocks
 
-        state = {'signals': {}, 'outcomes': [], 'price': 103.0}
+        state = {'signals': {}, 'outcomes': [], 'locks': [], 'price': 103.0}
 
         def fake_fetch(ticker, interval, period):
             return {'price': state['price'], 'candles': 50}
@@ -803,12 +807,19 @@ class TestStockLoop:
         def fake_save_outcome(key, outcome, **kwargs):
             state['outcomes'].append((key, outcome))
 
+        def fake_update_extra(key, extra):
+            state['locks'].append((key, extra))
+            return True
+
         # Rabu, 10:00 WIB - hari kerja dan jam pasar.
         rabu = datetime(2026, 10, 21, 10, 0, tzinfo=WIB)
         monkeypatch.setattr(jobs_stocks, 'now_wib', lambda: rabu)
         monkeypatch.setattr(
             jobs_stocks.stock_service, 'get_stock_data_combined', fake_fetch)
         monkeypatch.setattr(jobs_stocks.db, 'save_signal_outcome', fake_save_outcome)
+        # Penting: kalau tidak dimock, level SL yang digeser ditulis ke
+        # DB bot yang sungguhan.
+        monkeypatch.setattr(jobs_stocks.db, 'update_signal_extra', fake_update_extra)
         monkeypatch.setattr(jobs_stocks, '_get_user_db', lambda: {
             '1': {'notif_saham': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_stocks, '_get_last_buy_signals',
