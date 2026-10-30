@@ -75,7 +75,8 @@ class TestBuildCryptoPayload:
         for key in ('ticker', 'name', 'price', 'change', 'ma_fast', 'ma_slow',
                     'rsi', 'volume', 'atr', 'range_24h', 'candles', 'source',
                     'macd', 'macd_signal', 'macd_hist', 'bb_upper',
-                    'bb_middle', 'bb_lower', 'volume_ma', 'volume_ratio'):
+                    'bb_middle', 'bb_lower', 'volume_ma', 'volume_ratio',
+                    'vwap', 'htf_trend'):
             assert key in payload, f"key {key} hilang dari payload"
 
         assert payload['ticker'] == 'AAA-USD'
@@ -84,6 +85,44 @@ class TestBuildCryptoPayload:
         assert payload['source'] == 'coingecko'
         assert payload['candles'] == 168
         assert 0 < payload['rsi'] <= 100
+
+    def test_vwap_proxy_is_24h_mean(self):
+        """VWAP jalur scan = rata-rata 24 titik terakhir sparkline.
+
+        Regression: dulu payload jalur CoinGecko tidak punya vwap sama
+        sekali, dan mesin sinyal menggantinya dengan nilai = harga -
+        menghasilkan +10 poin SELL gratis untuk semua koin.
+        """
+        from services.crypto_service import build_crypto_payload
+
+        spark = make_sparkline(n=168, start=100.0, step=1.0)
+        payload, _ = build_crypto_payload('AAA-USD', 'AAA', 167.0, 1.0,
+                                          1.0, spark)
+        expected = sum(spark[-24:]) / 24
+        assert payload['vwap'] == pytest.approx(expected)
+
+    def test_htf_trend_rising_sparkline(self):
+        from services.crypto_service import build_crypto_payload
+
+        spark = make_sparkline(n=168, start=100.0, step=0.5)  # naik terus
+        payload, _ = build_crypto_payload('AAA-USD', 'AAA', 183.5, 1.0,
+                                          1.0, spark)
+        assert payload['htf_trend'] == 'up'
+
+    def test_htf_trend_falling_sparkline(self):
+        from services.crypto_service import build_crypto_payload
+
+        # Turun dengan lonjakan kecil tiap 5 titik supaya RSI > 0
+        # (turun murni = RSI 0 = payload ditolak oleh validasi RSI).
+        vals = []
+        v = 200.0
+        for i in range(168):
+            vals.append(v)
+            v += -0.6 if (i % 5) else 0.1
+        payload, _ = build_crypto_payload('AAA-USD', 'AAA', vals[-1], 1.0,
+                                          1.0, vals)
+        assert payload is not None
+        assert payload['htf_trend'] == 'down'
 
     def test_rejects_bad_price(self):
         from services.crypto_service import build_crypto_payload

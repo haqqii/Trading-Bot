@@ -707,7 +707,7 @@ class Database:
                 'quality': row.get('quality', 'WEAK'),
                 'signal_type': row.get('signal_type'),
                 'is_reversal': extra.get('is_reversal', False),
-                'atr': extra.get('atr', 0),
+                'atr': extra.get('atr') or 0,
                 'user_id': extra.get('user_id'),
                 'timeframe': extra.get('timeframe'),
                 # Restore tp_hit status from DB

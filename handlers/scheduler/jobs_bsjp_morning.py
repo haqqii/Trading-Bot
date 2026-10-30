@@ -9,6 +9,7 @@ import asyncio
 import logging
 
 from utils.cache import _price_cache
+from services.signal_service import safe_num, finite_or_none
 
 from handlers.scheduler._common import (
     now_wib,
@@ -89,12 +90,14 @@ async def check_bsjp_signals(app):
                     using_stale_data[0] = True
 
                 price = d['price']
-                rsi = d.get('rsi', 50)
-                ma_fast = d.get('ma_fast', price)
-                ma_slow = d.get('ma_slow', price)
-                macd_hist = d.get('macd_hist', 0)
-                change = d.get('change', 0)
-                volume_ratio = d.get('volume_ratio', 1.0)
+                # Indikator dari jalur fallback boleh None - kondisinya
+                # dilewati, bukan dinilai pakai angka karangan.
+                rsi = finite_or_none(d.get('rsi'))
+                ma_fast = finite_or_none(d.get('ma_fast'))
+                ma_slow = finite_or_none(d.get('ma_slow'))
+                macd_hist = safe_num(d.get('macd_hist'), 0)
+                change = safe_num(d.get('change'), 0)
+                volume_ratio = safe_num(d.get('volume_ratio'), 1.0)
 
                 # BSJP criteria - more flexible:
                 # 1. Price above at least MA Fast (bullish)
@@ -106,15 +109,15 @@ async def check_bsjp_signals(app):
                 reasons = []
 
                 # MA condition: price above MA fast is minimum
-                if price > ma_fast:
+                if ma_fast is not None and price > ma_fast:
                     score += 2
                     reasons.append("Above MA Fast")
-                if ma_fast > ma_slow:
+                if ma_fast is not None and ma_slow is not None and ma_fast > ma_slow:
                     score += 1
                     reasons.append("Golden Cross")
 
                 # RSI: wider range (25-75)
-                if 25 < rsi < 75:
+                if rsi is not None and 25 < rsi < 75:
                     score += 1
                     reasons.append(f"RSI {rsi:.0f} OK")
 
@@ -271,27 +274,29 @@ async def check_morning_notification(app):
                     using_stale_data[0] = True
 
                 price = d['price']
-                rsi = d.get('rsi', 50)
-                ma_fast = d.get('ma_fast', price)
-                ma_slow = d.get('ma_slow', price)
-                change = d.get('change', 0)
+                rsi = finite_or_none(d.get('rsi'))
+                ma_fast = finite_or_none(d.get('ma_fast'))
+                ma_slow = finite_or_none(d.get('ma_slow'))
+                change = safe_num(d.get('change'), 0)
 
                 score = 0
                 reasons = []
 
-                if rsi < 35:
-                    score += 3
-                    reasons.append(f"RSI {rsi:.0f} oversold")
-                elif rsi < 45:
-                    score += 2
-                    reasons.append(f"RSI {rsi:.0f} bullish")
+                if rsi is not None:
+                    if rsi < 35:
+                        score += 3
+                        reasons.append(f"RSI {rsi:.0f} oversold")
+                    elif rsi < 45:
+                        score += 2
+                        reasons.append(f"RSI {rsi:.0f} bullish")
 
-                if price > ma_fast > ma_slow:
-                    score += 2
-                    reasons.append("Above MA")
-                elif price > ma_fast:
-                    score += 1
-                    reasons.append("Above Fast MA")
+                if ma_fast is not None and ma_slow is not None:
+                    if price > ma_fast > ma_slow:
+                        score += 2
+                        reasons.append("Above MA")
+                    elif price > ma_fast:
+                        score += 1
+                        reasons.append("Above Fast MA")
 
                 if change > 1:
                     score += 1

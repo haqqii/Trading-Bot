@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 
 from services.stock_service import stock_service, StockDataResult
 from services.crypto_service import crypto_service
-from services.signal_service import signal_service
+from services.signal_service import signal_service, finite_or_none
 from services.news_service import news_service
 from utils.formatters import format_analisa_simple, format_analisa_pemula
 from utils.cache import _price_cache
@@ -137,9 +137,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     priority=True
                 )
                 if probe and probe.get('candles', 0) >= 5:
-                    rsi = probe.get('rsi', float('nan'))
-                    import math as _math
-                    if not (isinstance(rsi, float) and _math.isnan(rsi)) and rsi > 0:
+                    rsi = finite_or_none(probe.get('rsi'))
+                    if rsi is not None and rsi > 0:
                         is_crypto = True
                         yahoo_probe = probe
                         yahoo_probe['source'] = 'yahoo'

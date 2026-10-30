@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from services.crypto_service import crypto_service, is_stablecoin
 from services.stock_service import stock_service
-from services.signal_service import signal_service
+from services.signal_service import signal_service, safe_num, finite_or_none
 from utils.formatters import format_crypto_msg, format_bsjp_msg, format_morning_msg
 from ._shared import ALL_STOCKS
 
@@ -75,13 +75,16 @@ async def bsjp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not d1h or d1h.get('candles', 0) < 10:
                 return None
 
-            rsi = d1h.get('rsi', 50)
+            rsi = finite_or_none(d1h.get('rsi'))
             price = d1h['price']
-            ma_fast = d1h.get('ma_fast', price)
-            ma_slow = d1h.get('ma_slow', price)
-            above_ma = price > ma_fast > ma_slow
-            rsi_ok = rsi < 65 and rsi > 30
-            change = d1h.get('change', 0)
+            ma_fast = finite_or_none(d1h.get('ma_fast'))
+            ma_slow = finite_or_none(d1h.get('ma_slow'))
+            # Indikator boleh hilang (jalur fallback tidak mengarang angka)
+            # - kondisinya dilewati, bukan dinilai pakai angka karangan.
+            above_ma = (ma_fast is not None and ma_slow is not None
+                         and price > ma_fast > ma_slow)
+            rsi_ok = rsi is not None and 30 < rsi < 65
+            change = safe_num(d1h.get('change'), 0)
 
             score = 0
             reasons = []
@@ -144,26 +147,28 @@ async def morning_watchlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not d or d.get('candles', 0) < 10:
                 return None
 
-            rsi = d.get('rsi', 50)
+            rsi = finite_or_none(d.get('rsi'))
             price = d['price']
-            ma_fast = d.get('ma_fast', price)
-            ma_slow = d.get('ma_slow', price)
-            change = d.get('change', 0)
+            ma_fast = finite_or_none(d.get('ma_fast'))
+            ma_slow = finite_or_none(d.get('ma_slow'))
+            change = safe_num(d.get('change'), 0)
 
             score = 0
             reasons = []
 
-            if rsi < 35:
-                score += 2
-                reasons.append(f"RSI {rsi:.0f} oversold")
-            elif rsi < 45:
-                score += 1
+            if rsi is not None:
+                if rsi < 35:
+                    score += 2
+                    reasons.append(f"RSI {rsi:.0f} oversold")
+                elif rsi < 45:
+                    score += 1
 
-            if price > ma_fast > ma_slow:
-                score += 2
-                reasons.append("Above MA")
-            elif price > ma_fast:
-                score += 1
+            if ma_fast is not None and ma_slow is not None:
+                if price > ma_fast > ma_slow:
+                    score += 2
+                    reasons.append("Above MA")
+                elif price > ma_fast:
+                    score += 1
 
             if change > 1:
                 score += 1

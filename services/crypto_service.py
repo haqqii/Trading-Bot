@@ -19,6 +19,7 @@ from utils.log_filters import install_provider_filters, no_data_reported
 from services import crypto_yahoo_missing
 from utils.indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
+    calculate_htf_trend,
     calculate_volume_metrics, calculate_vwap, calculate_stochastic,
     calculate_adx, calculate_ichimoku, calculate_fibonacci_retracement,
     calculate_sr_levels
@@ -269,11 +270,9 @@ def build_crypto_payload(ticker: str, name: str, price, change_24h, volume,
     ma_fast = prices.rolling(8).mean().iloc[-1]
     ma_slow = prices.rolling(21).mean().iloc[-1]
 
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    rsi = (100 - (100 / (1 + rs))).iloc[-1]
+    # RSI pakai smoothing Wilder yang sama dengan jalur Yahoo, supaya
+    # kedua sumber menghasilkan angka yang bisa dibandingkan.
+    rsi = calculate_rsi(prices).iloc[-1]
 
     if math.isnan(rsi) or rsi <= 0 or rsi > 100:
         if not rsi_fallback:
@@ -289,6 +288,16 @@ def build_crypto_payload(ticker: str, name: str, price, change_24h, volume,
 
     macd_data = calculate_macd(prices)
     bb_data = calculate_bollinger_bands(prices)
+
+    # VWAP proxy jalur CoinGecko: rata-rata harga 24 jam terakhir dari
+    # sparkline (tanpa data volume, jadi sebenarnya TWAP). Penting untuk
+    # mesin sinyal: dulu VWAP yang hilang diganti nilai = harga sehingga
+    # semua sinyal jalur scan dapat +10 poin SELL gratis. Sekarang ada
+    # nilai nyata yang mengukur harga vs rata-rata 24 jamnya.
+    vwap_proxy = prices.tail(24).mean() if len(prices) >= 24 else None
+
+    # Arah trend besar dari sparkline itu juga (EMA 24 jam vs EMA 96 jam).
+    htf_trend = calculate_htf_trend(prices, fast=24, slow=96, deadband_pct=0.3)
 
     # Rentang harga 24 jam (persen). Sparkline CoinGecko hourly 7 hari,
     # jadi 24 jam = 24 titik terakhir. Nilai ini dibandingkan dengan hasil
@@ -321,6 +330,8 @@ def build_crypto_payload(ticker: str, name: str, price, change_24h, volume,
         'bb_lower': bb_data['lower'].iloc[-1],
         'volume_ma': volume,
         'volume_ratio': 1.0,
+        'vwap': vwap_proxy,
+        'htf_trend': htf_trend,
     }, None
 
 
@@ -895,6 +906,7 @@ class CryptoService:
 
                 ichimoku_data = calculate_ichimoku(df['High'], df['Low'], df['Close'])
                 fib_data = calculate_fibonacci_retracement(df['High'], df['Low'])
+                htf_trend = calculate_htf_trend(df['Close'])
 
                 # Calculate Support & Resistance
                 try:
@@ -987,6 +999,7 @@ class CryptoService:
                     'volume_ratio': latest['VOLUME_RATIO'],
                     'vwap': vwap_data['current'],
                     'vwap_above': vwap_data['above'],
+                    'htf_trend': htf_trend,
                     'stoch_k': stoch_data['k_current'],
                     'stoch_d': stoch_data['d_current'],
                     'stoch_oversold': stoch_data['oversold'],
@@ -1039,14 +1052,18 @@ class CryptoService:
         data = self.get_crypto_data(ticker, interval, period,
                                     skip_if_missing=skip_if_missing,
                                     priority=priority)
-        if data and not math.isnan(data['rsi']) and data['rsi'] > 0:
-            data['source'] = 'yahoo'
-            return data
+        if data:
+            rsi = data.get('rsi')
+            if isinstance(rsi, (int, float)) and not math.isnan(rsi) and rsi > 0:
+                data['source'] = 'yahoo'
+                return data
 
         # Fallback to CoinGecko if Yahoo fails
         data = self.get_crypto_data_coingecko(ticker, priority=priority)
-        if data and not math.isnan(data.get('rsi', 50)) and data.get('rsi', 50) > 0:
-            return data
+        if data:
+            rsi = data.get('rsi')
+            if isinstance(rsi, (int, float)) and not math.isnan(rsi) and rsi > 0:
+                return data
 
         return None
 

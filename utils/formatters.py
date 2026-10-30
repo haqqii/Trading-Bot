@@ -29,6 +29,30 @@ def escape_md(text: Optional[str]) -> str:
     return s
 
 
+def fmt_num(value: Any, fmt: str = '.0f', default: str = '-') -> str:
+    """Format angka yang boleh hilang (jalur fallback tidak mengarang data).
+
+    Indikator dari sumber fallback bisa None/NaN. Menampilkan '-' lebih jujur
+    daripada memaksa angka netral, dan tidak meledak saat diformat.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if v != v:  # NaN
+        return default
+    return format(v, fmt)
+
+
+def _num_or(value: Any, default: float) -> float:
+    """Angka, atau ``default`` kalau hilang/NaN - untuk perbandingan."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return v if v == v else default
+
+
 # Separators
 SEP = "═" * 35
 SEP40 = "═" * 40
@@ -204,8 +228,8 @@ def format_bsjp_msg(signals: List) -> str:
     for i, s in enumerate(signals[:15], 1):
         msg += f"""{i}. *{escape_md(s['ticker'])}* - {escape_md(s['name'])}
    💵 Harga: Rp {s['price']:,.0f}
-   📈 Perubahan: {s['change']:+.1f}%
-   📊 RSI: {s['rsi']:.0f}
+   📈 Perubahan: {fmt_num(s.get('change'), '+.1f')}
+   📊 RSI: {fmt_num(s.get('rsi'))}
    ✅ Skor: {s['score']}/4
    🎯 TP: Rp {s['tp']:,.0f} (+2%)
    🛡️ SL: Rp {s['sl']:,.0f} (-1.5%)
@@ -250,8 +274,8 @@ def format_morning_msg(signals: List) -> str:
     for i, s in enumerate(signals[:10], 1):
         msg += f"""{i}. *{escape_md(s['ticker'])}* - {escape_md(s['name'])}
    💰 Harga: Rp {s['price']:,.0f}
-   📈 Perubahan: {s['change']:+.1f}%
-   📊 RSI: {s['rsi']:.0f}
+   📈 Perubahan: {fmt_num(s.get('change'), '+.1f')}
+   📊 RSI: {fmt_num(s.get('rsi'))}
    🎯 Target: {s['tp']:,.0f} (+3%)
    🛡️ SL: {s['sl']:,.0f} (-2%)
 
@@ -422,7 +446,7 @@ def format_unified_crypto_notification(
 
     # Calculate gain display
     ind = analysis_data.get('indicators') or {}
-    atr_val = ind.get('atr', 0) if ind else 0
+    atr_val = _num_or(ind.get('atr'), 0) if ind else 0
 
     if entry > 0 and atr_val > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
@@ -629,7 +653,7 @@ def format_unified_stock_notification(
 
     # Gain display
     ind = analysis_data.get('indicators') or {}
-    atr_val = ind.get('atr', 0) if ind else 0
+    atr_val = _num_or(ind.get('atr'), 0) if ind else 0
 
     if entry > 0 and atr_val > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
@@ -657,10 +681,10 @@ def format_unified_stock_notification(
     reliability = pattern.get('reliability', 50)
     score = analysis_data.get('score', 0)
     quality = analysis_data.get('quality', 'WEAK')
-    rsi = analysis_data.get('rsi', 0)
+    rsi = _num_or(analysis_data.get('rsi'), 0)
     reasons = analysis_data.get('reasons', [])
-    change = analysis_data.get('change', 0)
-    volume_ratio = analysis_data.get('volume_ratio', 1)
+    change = _num_or(analysis_data.get('change'), 0)
+    volume_ratio = _num_or(analysis_data.get('volume_ratio'), 1)
 
     if chart_pattern == 'UPTREND':
         pattern_emoji = "📈"
@@ -1196,13 +1220,15 @@ def _alasan_pemula(data: Dict, signal: Dict) -> list:
     """
     reasons = []
     signal_type = signal.get('signal', 'HOLD')
-    rsi = data.get('rsi', 50)
-    ma_fast = data.get('ma_fast', 0)
-    ma_slow = data.get('ma_slow', 0)
-    price = data.get('price', 0)
-    macd_hist = data.get('macd_hist', 0)
-    volume_ratio = data.get('volume_ratio', 1)
-    change = data.get('change', 0)
+    # Indikator bisa hilang (jalur fallback tidak mengarang angka) - pakai
+    # netral supaya perbandingan tidak meledak, bukanaslian.
+    rsi = _num_or(data.get('rsi'), 50)
+    ma_fast = _num_or(data.get('ma_fast'), 0)
+    ma_slow = _num_or(data.get('ma_slow'), 0)
+    price = _num_or(data.get('price'), 0)
+    macd_hist = _num_or(data.get('macd_hist'), 0)
+    volume_ratio = _num_or(data.get('volume_ratio'), 1)
+    change = _num_or(data.get('change'), 0)
     buy_score = signal.get('buy_score', 0)
     sell_score = signal.get('sell_score', 0)
 
@@ -1254,8 +1280,8 @@ def _intinya_pemula(signal_type: str, data: Dict, sentiment: Dict) -> str:
     """
     Ringkasan actionable untuk investor awam - saran konkret yang bisa langsung diambil.
     """
-    rsi = data.get('rsi', 50)
-    change = data.get('change', 0)
+    rsi = _num_or(data.get('rsi'), 50)
+    change = _num_or(data.get('change'), 0)
 
     if signal_type == 'BUY':
         if rsi < 30:

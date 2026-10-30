@@ -16,7 +16,7 @@ from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
-from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels
+from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels, calculate_vwap, calculate_htf_trend
 from utils.log_filters import install_provider_filters
 from services import ticker_health
 
@@ -160,6 +160,9 @@ class StockService:
                 df['VOLUME_MA'] = volume_data['ma']
                 df['VOLUME_RATIO'] = volume_data['ratio']
 
+                vwap_data = calculate_vwap(df['High'], df['Low'], df['Close'], df['Volume'])
+                htf_trend = calculate_htf_trend(df['Close'])
+
                 latest = df.iloc[-1]
                 atr_val = calculate_atr(df['High'], df['Low'], df['Close'], 14).iloc[-1]
 
@@ -200,6 +203,8 @@ class StockService:
                     'bb_lower': latest['BB_LOWER'],
                     'volume_ma': latest['VOLUME_MA'],
                     'volume_ratio': latest['VOLUME_RATIO'],
+                    'vwap': vwap_data['current'],
+                    'htf_trend': htf_trend,
                     'raw_df': df,  # For pattern detection
                     # Support & Resistance
                     'sr': sr_data or {},
@@ -273,6 +278,11 @@ class StockService:
                 if breaker:
                     breaker.record_success()
 
+                # Sumber fallback ini hanya menyediakan RSI + SMA. Dulu
+                # MACD/BB-nya dikarang dari angka change (macd = change*0.01,
+                # BB = harga +-3%) sehingga sinyal dinilai dari data palsu.
+                # Sekarang komponen itu dibiarkan kosong + ditandai degraded,
+                # dan mesin sinyal membatasi kualitasnya.
                 return {
                     'name': ticker,
                     'price': price,
@@ -284,14 +294,16 @@ class StockService:
                     'atr': price * 0.015,
                     'candles': 50,
                     'source': 'tradingview',
-                    'macd': change * 0.01 if change else 0,
-                    'macd_signal': 0,
-                    'macd_hist': change * 0.01 if change else 0,
-                    'bb_upper': price * 1.03,
-                    'bb_middle': price,
-                    'bb_lower': price * 0.97,
+                    'macd': None,
+                    'macd_signal': None,
+                    'macd_hist': None,
+                    'bb_upper': None,
+                    'bb_middle': None,
+                    'bb_lower': None,
                     'volume_ma': volume,
                     'volume_ratio': 1.0,
+                    'degraded': True,
+                    'indicator_missing': ['macd', 'bb'],
                     'raw_df': None,  # TradingView doesn't provide raw OHLCV
                 }
             except Exception as e:
@@ -395,6 +407,9 @@ class StockService:
             df['VOLUME_MA'] = volume_data['ma']
             df['VOLUME_RATIO'] = volume_data['ratio']
 
+            vwap_data = calculate_vwap(df['High'], df['Low'], df['Close'], df['Volume'])
+            htf_trend = calculate_htf_trend(df['Close'])
+
             latest = df.iloc[-1]
             atr_val = calculate_atr(df['High'], df['Low'], df['Close'], 14).iloc[-1]
 
@@ -432,6 +447,8 @@ class StockService:
                 'bb_lower': latest['BB_LOWER'],
                 'volume_ma': latest['VOLUME_MA'],
                 'volume_ratio': latest['VOLUME_RATIO'],
+                'vwap': vwap_data['current'],
+                'htf_trend': htf_trend,
                 'raw_df': df,  # For pattern detection
                 'sr': sr_data or {},
                 'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
@@ -600,19 +617,25 @@ class StockService:
                     return {
                         'price': price,
                         'change': change,
-                        'rsi': 50,
-                        'ma_fast': price,
-                        'ma_slow': price,
-                        'macd': 0,
-                        'macd_signal': 0,
-                        'macd_hist': 0,
-                        'bb_upper': price * 1.02,
-                        'bb_middle': price,
-                        'bb_lower': price * 0.98,
+                        # Finnhub hanya memberi harga - semua indikator
+                        # teknikal dulu di-hardcode netral. Sekarang dibiarkan
+                        # kosong + degraded supaya mesin sinyal tidak
+                        # menganggap ini data sungguhan.
+                        'rsi': None,
+                        'ma_fast': None,
+                        'ma_slow': None,
+                        'macd': None,
+                        'macd_signal': None,
+                        'macd_hist': None,
+                        'bb_upper': None,
+                        'bb_middle': None,
+                        'bb_lower': None,
                         'volume_ratio': 1.0,
                         'atr': price * 0.015,
                         'candles': 100,
-                        'source': 'finnhub'
+                        'source': 'finnhub',
+                        'degraded': True,
+                        'indicator_missing': ['rsi', 'ma', 'macd', 'bb'],
                     }
 
             except Exception as e:
