@@ -39,7 +39,14 @@ def _num(value: Any, default: float = 0.0) -> float:
 
 
 def _is_short(direction: Any) -> bool:
-    return str(direction or '').upper() == 'SHORT'
+    """Arah short?
+
+    Bot live memakai 'LONG'/'SHORT'. Tapi backtest dan data lama bisa
+    membawa 'SELL' - itu nama sinyal, bukan arah. Kalau 'SELL' tidak
+    dikenali, aturan keluar jalan dengan rumus LONG: SL digeser ke
+    atas (entah ke mana) dan trailing jadi salah arah.
+    """
+    return str(direction or '').upper() in ('SHORT', 'SELL')
 
 
 def breakeven_sl(entry: Any) -> float:
@@ -82,6 +89,11 @@ def update_sl(current_sl: Any, entry: Any, direction: str,
 
     entry = _num(entry)
     if hit.get('tp2'):
+        # ATR 0/NaN = trailing tidak bisa dihitung. SL dibiarkan di
+        # level sekarang; kalau bukan, trailing jatuh ke harga pasar
+        # dan posisi langsung tertutup di siklus itu juga.
+        if _num(atr) <= 0:
+            return current
         cand = trailing_sl(price, atr, entry, direction, tp1=tp1, mult=mult)
     else:
         cand = breakeven_sl(entry)

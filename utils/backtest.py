@@ -138,6 +138,23 @@ def simulate_outcome(df: pd.DataFrame, i: int, direction: str,
     return 'timeout', end - (i + 1)
 
 
+def _exit_fill_price(stop_level: float, close: float, is_short: bool) -> float:
+    """Harga isi exit SL - realistic, sama seperti bot live.
+
+    Bot live menutup posisi di harga yang terlihat saat polling, bukan
+    di level SL. Kalau bar ditutup di sisi yang lebih buruk dari stop,
+    harga itu yang dilihat bot - jadi exit dicatat di harga close
+    (lebih buruk dari stop). Kalau bar ditutup di sisi yang lebih baik,
+    asumsikan exit terjadi tepat di level stop (konservatif).
+
+    Tanpa ini, backtest selalu mencatat breakeven sebagai 0,00%
+    padahal bot live jarang sekali menutup persis di harga entry.
+    """
+    if is_short:
+        return close if close > stop_level else stop_level
+    return close if close < stop_level else stop_level
+
+
 def simulate_exit(df: pd.DataFrame, i: int, direction: str,
                   entry: float, tp1: float, tp2: float, tp3: float,
                   sl: float, atr: float, horizon: int,
@@ -182,7 +199,7 @@ def simulate_exit(df: pd.DataFrame, i: int, direction: str,
                     reason = 'beakeven'
                 else:
                     reason = 'sl'
-                return reason, sl_level, j - i
+                return reason, _exit_fill_price(sl_level, close, is_short), j - i
 
         if not tp1_hit:
             hit = low <= tp1 if is_short else high >= tp1
@@ -253,7 +270,7 @@ def simulate_ladder(df: pd.DataFrame, i: int, direction: str,
         if remaining > 0 and sl_level:
             hit_sl = high >= sl_level if is_short else low <= sl_level
             if hit_sl:
-                realized += remaining * ret(sl_level)
+                realized += remaining * ret(_exit_fill_price(sl_level, close, is_short))
                 if tp2_hit:
                     reason = 'trailing'
                 elif tp1_hit:
@@ -430,13 +447,20 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
 
     def is_win(t: Dict[str, Any]) -> bool:
         if live_model:
-            return t['outcome'] in ('tp3', 'trailing')
+            # Win/loss ditentukan dari hasil P/L, bukan dari jenis exit.
+            # Exit breakeven/trailing bisa menutup di harga yang lebih
+            # rendah dari entry (harga meloncat melewati level SL), jadi
+            # jenis exit tidak boleh jadi penentu: trade yang sama bisa
+            # tercatat 'sl' di satu lengan A/B dan 'beakeven' di lengan
+            # lain - win rate-nya jadi tidak bisa dibandingkan.
+            return float(t.get('exit_ret_pct', 0.0)) > 0
         return t['outcome'] == 'tp1'
 
     def is_loss(t: Dict[str, Any]) -> bool:
-        # Di model live, 'beakeven' bukan win dan bukan loss: modal
-        # kembali, jadi tidak masuk hitungan win rate yang dihitung dari
-        # trade yang sudah diputuskan.
+        if live_model:
+            # Semua exit yang sudah menutup posisi masuk hitungan: yang
+            # tutup di profit = win, sisanya (rugi atau impas) = loss.
+            return float(t.get('exit_ret_pct', 0.0)) <= 0
         return t['outcome'] == 'sl'
 
     rows = []
@@ -449,6 +473,11 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
         df['win'] = df['outcome'] == 'tp1'
         df['loss'] = df['outcome'] == 'sl'
 
+    # Kolom 'tp1'/'sl' di model lama memang apa adanya; di model live
+    # isinya sudah bukan 'kena TP1' dan 'kena SL', tapi win dan loss -
+    # judulnya ikut diganti supaya tidak menyesatkan.
+    win_col, loss_col = ('win', 'loss') if live_model else ('tp1', 'sl')
+
     for (signal, quality), g in df.groupby(['signal', 'quality']):
         n = len(g)
         wins = int(g['win'].sum())
@@ -459,8 +488,8 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
             'signal': signal,
             'quality': quality,
             'n': n,
-            'tp1': f"{wins / n * 100:.0f}%",
-            'sl': f"{losses / n * 100:.0f}%",
+            win_col: f"{wins / n * 100:.0f}%",
+            loss_col: f"{losses / n * 100:.0f}%",
             'timeout': f"{timeouts / n * 100:.0f}%",
             'win_rate_decided': f"{wins / decided * 100:.0f}%" if decided else '-',
             'avg_RR': f"{g['risk_reward'].mean():.2f}",
@@ -477,9 +506,9 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
     decided = wins + losses
     total = {
         'signal': 'TOTAL', 'quality': '-', 'n': len(df),
-        'tp1': f"{wins / len(df) * 100:.0f}%",
-        'sl': f"{losses / len(df) * 100:.0f}%",
-        'timeout': f"{(len(df) - decided) / len(df) * 100:.0f}%",
+        win_col: f"{wins / len(df) * 100:.0f}%",
+        loss_col: f"{losses / len(df) * 100:.0f}%",
+        'timeout': f"{int((df['outcome'] == 'timeout').sum()) / len(df) * 100:.0f}%",
         'win_rate_decided': f"{wins / decided * 100:.0f}%" if decided else '-',
         'avg_RR': f"{df['risk_reward'].mean():.2f}",
         'exp_net_%': f"{df['pnl'].mean():+.2f}",
