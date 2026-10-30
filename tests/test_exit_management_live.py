@@ -9,12 +9,29 @@ Tiga hal yang dijaga:
 import asyncio
 import os
 import sys
+import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tests.test_tp_sl_notifications import FakeApp, make_signal  # noqa: E402
+
+
+@pytest.fixture
+def temp_db():
+    """Database sementara - jangan sentuh DB bot yang sedang jalan."""
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+        db_path = f.name
+    from db import Database
+    database = Database(db_path)
+    database.initialize()
+    yield database, db_path
+    database.close()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture
@@ -176,11 +193,8 @@ class TestTrailingExit:
 class TestSlLockPersistence:
     """Level SL yang sudah digeser harus bertahan setelah restart."""
 
-    def test_sl_lock_is_restored_from_db(self):
-        import db as db_module
-
-        db = db_module.db
-        db.initialize()
+    def test_sl_lock_is_restored_from_db(self, temp_db):
+        db, _ = temp_db
         key = 'CRYPTO_TESTSL_1'
         db.save_active_signal(
             key=key, ticker='TESTSL', asset_type='crypto',
@@ -189,13 +203,78 @@ class TestSlLockPersistence:
             extra_data={'direction': 'LONG', 'atr': 1.0, 'user_id': '1',
                         'timeframe': '60', 'sl_lock': 104.5},
             name='Test SL')
-        try:
-            restored = db.load_active_signals()
-            assert key in restored, "sinyal aktif harus dimuat ulang"
-            assert restored[key]['sl_lock'] == 104.5, \
-                "SL trailing yang sudah dikunci harus dipulihkan"
-        finally:
-            db.delete_signal(key)
+
+        restored = db.load_active_signals()
+        assert key in restored, "sinyal aktif harus dimuat ulang"
+        assert restored[key]['sl_lock'] == 104.5, \
+            "SL trailing yang sudah dikunci harus dipulihkan"
+
+
+class TestTrailingWinCount:
+    """Trailing dihitung sebagai win hanya kalau benar-benar tutup profit.
+
+    Label 'trailing' menandai exit-nya SL yang bergerak. Tapi harga bisa
+    melompat melewati level SL, jadi exit-nya tidak selalu di sisi profit.
+    Kalau tidak dicek, win rate ikut dipangar.
+    """
+
+    @staticmethod
+    def _add(db, key, entry, closed, direction='LONG'):
+        db.save_active_signal(
+            key=key, ticker='TESTW', asset_type='crypto',
+            signal_type='BUY' if direction == 'LONG' else 'SELL',
+            price=entry, tp1=entry * 1.02, tp2=entry * 1.04, tp3=entry * 1.07,
+            sl=entry * 0.97, score=70, quality='STRONG', reason='test',
+            extra_data={'direction': direction, 'atr': entry * 0.01,
+                        'user_id': '1', 'timeframe': '60'},
+            name='Test Win')
+        db.save_signal_outcome(key, 'trailing', closed_price=closed)
+
+    def test_trailing_in_profit_is_a_win(self, temp_db):
+        db, _ = temp_db
+        self._add(db, 'CRYPTO_W1', 100.0, 104.0, 'LONG')
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['trailing_count'] == 1
+        assert stats['tp_rate'] == 100.0
+
+    def test_trailing_below_entry_is_not_a_win(self, temp_db):
+        db, _ = temp_db
+        # Harga melompat ke bawah entry - exit-nya loss, meski exit-nya
+        # dipicu trailing stop.
+        self._add(db, 'CRYPTO_W2', 100.0, 96.0, 'LONG')
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['trailing_count'] == 1
+        assert stats['tp_rate'] == 0.0
+
+    def test_short_trailing_in_profit_is_a_win(self, temp_db):
+        db, _ = temp_db
+        self._add(db, 'CRYPTO_W3', 100.0, 96.0, 'SHORT')
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['trailing_count'] == 1
+        assert stats['tp_rate'] == 100.0
+
+    def test_beakeven_is_not_counted_as_a_win(self, temp_db):
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_W4', ticker='TESTW', asset_type='crypto',
+            signal_type='BUY', price=100.0, tp1=102.0, tp2=104.0, tp3=107.0,
+            sl=97.0, score=70, quality='STRONG', reason='test',
+            extra_data={'direction': 'LONG', 'atr': 1.0, 'user_id': '1',
+                        'timeframe': '60'},
+            name='Test Win')
+        db.save_signal_outcome('CRYPTO_W4', 'beakeven', closed_price=100.0)
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['beakeven_count'] == 1
+        assert stats['tp_rate'] == 0.0
+
 
 
 

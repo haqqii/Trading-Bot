@@ -775,12 +775,39 @@ class Database:
             """, (marker_type, today, now.isoformat()))
         return True
 
+    @staticmethod
+    def _closed_in_profit(row) -> bool:
+        """Apakah sinyal ini benar-benar tutup di sisi profit.
+
+        Dipakai untuk exit 'trailing': labelnya menandai exit-nya SL yang
+        bergerak, tapi harga saat posisi ditutup bisa melompat ke sisi loss
+        (gap). Kalau tidak dicek, win rate ikut dipangar.
+        """
+        import json
+
+        entry = row['price']
+        closed = row['closed_price']
+        if entry is None or closed is None:
+            return False
+        extra = {}
+        if row['extra_data']:
+            try:
+                extra = json.loads(row['extra_data'])
+            except Exception:
+                extra = {}
+        direction = normalize_signal_direction(
+            extra.get('direction'), row['signal_type'])
+        if direction == 'SHORT':
+            return closed < entry
+        return closed > entry
+
     def get_signal_stats(self, asset_type: str | None = None) -> Dict:
         """Get aggregate win-rate stats for signals.
 
         Returns:
             dict with total, open, closed, tp1_count, tp2_count, tp3_count,
-            sl_count, tp_rate, sl_rate, avg_tp_hit
+            sl_count, beakeven_count, trailing_count, tp_rate, sl_rate,
+            avg_tp_hit
         """
         self.initialize()
         base = {
@@ -793,10 +820,12 @@ class Database:
             where = f"WHERE asset_type = '{asset_type}'" if asset_type else ""
             try:
                 rows = conn.execute(
-                    f"SELECT outcome FROM signals {where}").fetchall()
+                    f"SELECT outcome, price, closed_price, signal_type, "
+                    f"extra_data FROM signals {where}").fetchall()
             except Exception:
                 return base
             base['total'] = len(rows)
+            trailing_wins = 0
             for row in rows:
                 o = row['outcome']
                 if not o or o == 'open':
@@ -813,18 +842,23 @@ class Database:
                     base['beakeven_count'] += 1
                 elif o == 'trailing':
                     base['trailing_count'] += 1
+                    if self._closed_in_profit(row):
+                        trailing_wins += 1
             base['closed'] = (base['tp1_count'] + base['tp2_count'] +
                               base['tp3_count'] + base['sl_count'] +
                               base['beakeven_count'] + base['trailing_count'])
             if base['closed'] > 0:
-                # Trailing stop menutup posisi di profit (SL sudah naik di
-                # atas entry), jadi dihitung sebagai win - bukan cut loss.
+                # Trailing stop idealnya menutup di profit (SL-nya sudah naik
+                # di atas entry), tapi harga bisa melompat melewati level SL.
+                # Yang dihitung sebagai win hanya yang benar-benar tutup di
+                # sisi profit - kalau tidak, win rate-nya dipangar.
                 wins = (base['tp1_count'] + base['tp2_count'] + base['tp3_count'] +
-                        base['trailing_count'])
+                        trailing_wins)
                 base['tp_rate'] = round(wins / base['closed'] * 100, 1)
                 base['sl_rate'] = round(base['sl_count'] / base['closed'] * 100, 1)
                 tp_total = base['tp1_count'] + base['tp2_count'] * 2 + base['tp3_count'] * 3
-                base['avg_tp_hit'] = round(tp_total / wins, 2) if wins > 0 else 0
+                tp_wins = base['tp1_count'] + base['tp2_count'] + base['tp3_count']
+                base['avg_tp_hit'] = round(tp_total / tp_wins, 2) if tp_wins > 0 else 0
             return base
 
     def cleanup_old_signals(self, max_age_days: int = 7,

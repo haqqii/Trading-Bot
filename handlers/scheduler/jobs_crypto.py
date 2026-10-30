@@ -976,16 +976,17 @@ async def check_crypto_tp_sl(app):
                             exit_kind = exit_manager.exit_outcome(tp_hit)
                         else:
                             exit_kind = 'sl'
-                        # Exit dihitung di level SL yang aktif (entry atau
-                        # trailing), bukan harga terakhir yang bisa meleset.
-                        exit_price = current_price if exit_kind == 'sl' else sl_effective
+                        # Harga exit = harga yang benar-benar terlihat saat
+                        # cek, sama seperti TP3 dan SL biasa. Level SL yang
+                        # aktif ditampilkan terpisah sebagai info stop.
+                        exit_price = current_price
                         profit_pct = _profit_pct(exit_price)
 
                         notes = {
-                            'beakeven': ('Posisi ditutup di harga entry - TP1 sudah '
-                                         'pernah kena, jadi modal kembali.'),
-                            'trailing': ('Posisi ditutup trailing stop di harga '
-                                         'SL yang sudah naik - profit terkunci.'),
+                            'beakeven': ('SL sudah digeser ke harga entry setelah '
+                                         'TP1 kena - risiko kembali ke modal.'),
+                            'trailing': ('SL sudah naik (trailing stop) setelah TP2 '
+                                         'kena - profit terkunci.'),
                         }
                         notif_types = {'beakeven': 'BE', 'trailing': 'TRAIL'}
 
