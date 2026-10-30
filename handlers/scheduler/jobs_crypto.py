@@ -12,7 +12,7 @@ import math
 import time
 
 from services.crypto_service import crypto_service, is_stablecoin
-from services.signal_service import calc_tPSL, signal_service
+from services.signal_service import calc_tPSL, safe_num, signal_service
 from services import crypto_yahoo_missing
 from utils.formatters import format_unified_crypto_notification, escape_md
 from db import db
@@ -365,12 +365,14 @@ async def check_crypto_signals(app):
                         if fresh_d:
                             d = fresh_d
                             entry_price = d['price']
-                            atr = d.get('atr', entry_price * 0.02)
+                            atr = safe_num(d.get('atr'), entry_price * 0.02)
                             s['entry'] = entry_price
                             s['atr'] = atr
                             # Calculate TP/SL using user's TF — direction-aware for SELL
                             direction = 'SELL' if s['signal'] == 'SELL' else 'BUY'
-                            tpsl = calc_tPSL(direction, entry_price, atr, tf_key)
+                            tpsl = calc_tPSL(direction, entry_price, atr, tf_key,
+                                             support=d.get('support'),
+                                             resistance=d.get('resistance'))
                             s['tp1'] = tpsl['tp1']
                             s['tp2'] = tpsl['tp2']
                             s['tp3'] = tpsl['tp3']
@@ -383,26 +385,34 @@ async def check_crypto_signals(app):
                         quality = s.get('quality', 'WEAK')
 
                         # Build reasons list (drives dynamic reliability)
+                        # Angka boleh None dari jalur fallback - dibaca lewat
+                        # safe_num supaya perbandingannya tidak meledak.
                         crypto_reasons = []
-                        if d.get('rsi', 50) < 35:
-                            crypto_reasons.append(f"RSI Oversold ({d.get('rsi', 0):.0f})")
-                        elif d.get('rsi', 50) > 65:
-                            crypto_reasons.append(f"RSI Overbought ({d.get('rsi', 0):.0f})")
-                        if d.get('ma_fast', 0) > d.get('ma_slow', 0):
+                        rsi_val = safe_num(d.get('rsi'), 50)
+                        if rsi_val < 35:
+                            crypto_reasons.append(f"RSI Oversold ({rsi_val:.0f})")
+                        elif rsi_val > 65:
+                            crypto_reasons.append(f"RSI Overbought ({rsi_val:.0f})")
+                        ma_fast_val = safe_num(d.get('ma_fast'), 0)
+                        ma_slow_val = safe_num(d.get('ma_slow'), 0)
+                        if ma_fast_val > ma_slow_val:
                             crypto_reasons.append("MA Golden Cross")
-                        elif d.get('ma_fast', 0) < d.get('ma_slow', 0):
+                        elif ma_fast_val < ma_slow_val:
                             crypto_reasons.append("MA Death Cross")
-                        if s.get('macd_hist', 0) > 0:
+                        macd_hist_val = safe_num(s.get('macd_hist'), 0)
+                        if macd_hist_val > 0:
                             crypto_reasons.append("MACD Bullish")
-                        elif s.get('macd_hist', 0) < 0:
+                        elif macd_hist_val < 0:
                             crypto_reasons.append("MACD Bearish")
-                        if d.get('volume_ratio', 1) > 1.5:
-                            crypto_reasons.append(f"Volume Spike ({d.get('volume_ratio', 1):.1f}x)")
-                        if d.get('adx', 0) > 25:
-                            crypto_reasons.append(f"ADX Strong ({d.get('adx', 0):.0f})")
-                        if d.get('stoch_k', 50) < 20:
+                        volume_ratio_val = safe_num(d.get('volume_ratio'), 1)
+                        if volume_ratio_val > 1.5:
+                            crypto_reasons.append(f"Volume Spike ({volume_ratio_val:.1f}x)")
+                        if safe_num(d.get('adx'), 0) > 25:
+                            crypto_reasons.append(f"ADX Strong ({safe_num(d.get('adx'), 0):.0f})")
+                        stoch_k_val = safe_num(d.get('stoch_k'), 50)
+                        if stoch_k_val < 20:
                             crypto_reasons.append("Stochastic Oversold")
-                        elif d.get('stoch_k', 50) > 80:
+                        elif stoch_k_val > 80:
                             crypto_reasons.append("Stochastic Overbought")
 
                         # Detect chart patterns
@@ -429,7 +439,7 @@ async def check_crypto_signals(app):
                             quality=quality,
                             reasons=crypto_reasons,
                             patterns=crypto_patterns,
-                            volume_ratio=d.get('volume_ratio', 1),
+                            volume_ratio=safe_num(d.get('volume_ratio'), 1),
                         )
                         trend = compute_trend(d, s, change_threshold=2.0)
 
@@ -440,9 +450,9 @@ async def check_crypto_signals(app):
                             'patterns': crypto_patterns,
                             'leverage': 5 if quality == 'STRONG' else 3,
                             'indicators': {
-                                'rsi': d.get('rsi', 0),
-                                'macd': s.get('macd_hist', 0),
-                                'atr': s.get('atr', 0),
+                                'rsi': safe_num(d.get('rsi'), 0),
+                                'macd': safe_num(s.get('macd_hist'), 0),
+                                'atr': safe_num(s.get('atr'), 0),
                             },
                             'sr': d.get('sr', {}),
                             'support': d.get('support'),
@@ -868,12 +878,14 @@ async def check_crypto_tp_sl(app):
 
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
-                    atr = signal_data.get('atr', 0)
+                    atr = safe_num(signal_data.get('atr'), 0)
                     is_short = signal_data.get('direction', 'LONG') == 'SHORT'
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
-                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf)
+                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf,
+                                         support=d.get('support'),
+                                         resistance=d.get('resistance'))
                         tp1 = tpsl['tp1']
                         tp2 = tpsl['tp2']
                         tp3 = tpsl['tp3']

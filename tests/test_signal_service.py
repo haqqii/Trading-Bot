@@ -18,8 +18,19 @@ from services.signal_service import (
     signal_service,
     calc_tPSL,
     get_tPSL_multipliers,
-    score_rsi, score_ma, score_macd, score_bb, score_volume, determine_signal,
+    score_rsi, score_ma, score_macd, score_bb, score_volume, score_htf_trend,
+    determine_signal,
+    cap_quality,
+    set_features, FEATURES,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_features():
+    """Setiap tes dapat flag fitur default, apapun yang diubah tes lain."""
+    old = dict(FEATURES)
+    yield
+    set_features(**old)
 
 
 def make_stock_data(**overrides):
@@ -552,6 +563,317 @@ class TestCryptoSignalQuality:
         # Total: 20+10+15+10+10+10+10 = 85
         assert result['signal'] == 'BUY'
         assert result['quality'] in ['STRONG', 'MODERATE']
+
+
+# === Regression: bias SELL dari VWAP yang hilang ===
+
+class TestCryptoVwapBias:
+    """VWAP tanpa data harus netral, bukan +10 poin SELL.
+
+    Dulu default vwap = harga membuat `price > vwap` selalu False, jadi
+    seluruh jalur scan CoinGecko (yang tidak punya VWAP) menerima +10
+    poin SELL gratis - SELL lebih mudah nembak threshold dan BUY
+    terbebani.
+    """
+
+    def test_missing_vwap_is_neutral(self):
+        """Tanpa key vwap: tidak boleh ada +10 SELL dari VWAP."""
+        data = make_crypto_data()      # vwap=100 = price → dulu selalu +10 SELL
+        del data['vwap']
+        result = SignalService.generate_crypto_signal(data)
+        # Bandingkan dengan data yang sama tanpa komponen VWAP sama sekali
+        assert result['sell_score'] == 0
+        assert result['buy_score'] == 0
+
+    def test_missing_vwap_not_scored_as_sell(self):
+        """Sinyal buy murni tidak boleh menerima sell_score dari VWAP hilang."""
+        data = make_crypto_data(rsi=20)
+        del data['vwap']
+        result = SignalService.generate_crypto_signal(data)
+        assert result['sell_score'] == 0
+        assert result['buy_score'] >= 20
+
+    def test_present_vwap_still_scored(self):
+        """VWAP yang benar-benar ada tetap dinilai seperti dulu."""
+        data = make_crypto_data(vwap=90)
+        result = SignalService.generate_crypto_signal(data)
+        assert result['buy_score'] >= 10
+        data = make_crypto_data(vwap=110)
+        result = SignalService.generate_crypto_signal(data)
+        assert result['sell_score'] >= 10
+
+    def test_vwap_nan_is_neutral(self):
+        """VWAP NaN (bukan None) juga harus netral."""
+        data = make_crypto_data(vwap=float('nan'))
+        result = SignalService.generate_crypto_signal(data)
+        assert result['sell_score'] == 0
+        assert result['buy_score'] == 0
+
+    def test_feature_off_restores_classic_behavior(self):
+        """Flag vwap_crypto=False mem reproduksi perilaku lama (A/B backtest)."""
+        set_features(vwap_crypto=False)
+        data = make_crypto_data()
+        del data['vwap']
+        result = SignalService.generate_crypto_signal(data)
+        # Perilaku lama: vwap hilang = harga → +10 SELL
+        assert result['sell_score'] == 10
+
+
+# === Konfirmasi trend besar (HTF) ===
+
+class TestHtfTrendScoring:
+    """Sinyal searah trend besar dapat bonus, yang melawan kena penalti."""
+
+    def test_crypto_aligned_buy_gets_bonus(self):
+        data = make_crypto_data(rsi=20, htf_trend='up')
+        result = SignalService.generate_crypto_signal(data)
+        no_htf = SignalService.generate_crypto_signal({**data, 'htf_trend': None})
+        assert result['buy_score'] == no_htf['buy_score'] + 8
+
+    def test_crypto_against_downtrend_gets_penalty(self):
+        data = make_crypto_data(rsi=20, htf_trend='down')
+        result = SignalService.generate_crypto_signal(data)
+        no_htf = SignalService.generate_crypto_signal({**data, 'htf_trend': None})
+        # Penalti masuk ke skor lawan (SELL) - efeknya BUY butuh bukti lebih
+        assert result['sell_score'] == no_htf['sell_score'] + 8
+        assert result['buy_score'] == no_htf['buy_score']
+
+    def test_crypto_flat_is_neutral(self):
+        data = make_crypto_data(rsi=20, htf_trend='flat')
+        result = SignalService.generate_crypto_signal(data)
+        no_htf = SignalService.generate_crypto_signal({**data, 'htf_trend': None})
+        assert result['buy_score'] == no_htf['buy_score']
+
+    def test_crypto_feature_off_disables_htf(self):
+        set_features(htf_trend=False)
+        data = make_crypto_data(rsi=20, htf_trend='up')
+        result = SignalService.generate_crypto_signal(data)
+        no_htf = SignalService.generate_crypto_signal({**data, 'htf_trend': None})
+        assert result['buy_score'] == no_htf['buy_score']
+
+    def test_stock_aligned_sell_gets_bonus(self):
+        data = make_stock_data(rsi=80, ma_fast=90, ma_slow=100, htf_trend='down')
+        result = SignalService.generate_stock_signal(data)
+        no_htf = SignalService.generate_stock_signal({**data, 'htf_trend': None})
+        assert result['sell_score'] == no_htf['sell_score'] + 10
+
+    def test_score_htf_trend_helper(self):
+        assert score_htf_trend('up', 'BUY', 10, 10) == (10, 0, 'HTF uptrend aligned')
+        assert score_htf_trend('down', 'SELL', 10, 10) == (0, 10, 'HTF downtrend aligned')
+        # Melawan: poin jatuh ke sisi lawan
+        assert score_htf_trend('up', 'SELL', 10, 10) == (10, 0, 'Against HTF uptrend')
+        assert score_htf_trend('down', 'BUY', 10, 10) == (0, 10, 'Against HTF downtrend')
+        assert score_htf_trend('flat', 'BUY', 10, 10) == (0, 0, None)
+        assert score_htf_trend(None, 'BUY', 10, 10) == (0, 0, None)
+
+
+# === Data tidak lengkap menurunkan kualitas ===
+
+class TestDegradedDataCaps:
+    """Sinyal dari data bolong tidak boleh menyebut dirinya STRONG."""
+
+    def test_tradingview_style_degraded_capped_at_moderate(self):
+        """MACD+BB hilang (jalur fallback TV): sinyal kuat pun max MODERATE."""
+        data = make_stock_data(
+            rsi=20, ma_fast=110, ma_slow=100,
+            macd=None, macd_signal=None, macd_hist=None,
+            bb_upper=None, bb_lower=None,
+            volume_ratio=2.0, degraded=True,
+            indicator_missing=['macd', 'bb'],
+        )
+        result = SignalService.generate_stock_signal(data)
+        assert result['signal'] == 'BUY'
+        assert result['quality'] == 'MODERATE'
+        assert set(result['missing_indicators']) == {'macd', 'bb'}
+        assert 'Limited data' in result['reason']
+
+    def test_three_missing_capped_at_weak(self):
+        data = make_stock_data(
+            rsi=None, ma_fast=None, ma_slow=None, macd=None,
+            macd_signal=None, macd_hist=None,
+        )
+        result = SignalService.generate_stock_signal(data)
+        assert result['quality'] == 'WEAK'
+
+    def test_nan_detected_as_missing(self):
+        """NaN dari jalur Yahoo terhitung data hilang, bukan netral diam-diam."""
+        data = make_stock_data(macd=float('nan'), macd_signal=float('nan'),
+                               macd_hist=float('nan'))
+        result = SignalService.generate_stock_signal(data)
+        assert 'macd' in result['missing_indicators']
+
+    def test_complete_data_not_capped(self):
+        data = make_stock_data(rsi=20, ma_fast=110, ma_slow=100,
+                               macd=1.0, macd_signal=0.5, macd_hist=0.5,
+                               price=96, bb_upper=105, bb_lower=95,
+                               volume_ratio=2.0)
+        result = SignalService.generate_stock_signal(data)
+        assert result['quality'] == 'STRONG'
+        assert result['missing_indicators'] == []
+
+    def test_feature_off_disables_cap(self):
+        # Data lengkap minus MACD: cap ON → MODERATE, cap OFF → STRONG.
+        base = dict(rsi=20, ma_fast=110, ma_slow=100,
+                    macd=None, macd_signal=None, macd_hist=None,
+                    price=96, bb_upper=105, bb_lower=95,
+                    volume_ratio=2.0)
+        set_features(degraded_cap=False)
+        result = SignalService.generate_stock_signal(dict(base))
+        assert result['quality'] == 'STRONG'
+
+        set_features(degraded_cap=True)
+        result = SignalService.generate_stock_signal(dict(base))
+        assert result['quality'] == 'MODERATE'
+
+    def test_crypto_degraded_capped(self):
+        data = make_crypto_data(rsi=20, ma_fast=110, ma_slow=100,
+                                macd=None, macd_signal=None, macd_hist=None,
+                                bb_upper=None, bb_lower=None)
+        result = SignalService.generate_crypto_signal(data)
+        assert result['quality'] in ('WEAK', 'MODERATE')
+        assert 'macd' in result['missing_indicators']
+
+
+# === Gate volatilitas ekstrem ===
+
+class TestVolatilityGate:
+    """ATR% ekstrem menurunkan kualitas sinyal."""
+
+    def test_stock_extreme_vol_capped(self):
+        data = make_stock_data(price=96, atr=8.0,  # 8.3% > 6%
+                               rsi=20, ma_fast=110, ma_slow=100,
+                               macd=1.0, macd_signal=0.5, macd_hist=0.5,
+                               bb_upper=105, bb_lower=95,
+                               volume_ratio=2.0)
+        result = SignalService.generate_stock_signal(data)
+        assert result['signal'] == 'BUY'
+        assert result['quality'] == 'MODERATE'
+        assert 'Extreme volatility' in result['reason']
+
+    def test_crypto_extreme_vol_capped(self):
+        data = make_crypto_data(price=100, atr=12.0,  # 12% > 10%
+                                rsi=20, ma_fast=110, ma_slow=100,
+                                macd=1.0, macd_signal=0.5, macd_hist=0.5,
+                                vwap=90, adx_strong=True, plus_di=40,
+                                minus_di=20, ichi_bullish=True)
+        result = SignalService.generate_crypto_signal(data)
+        assert result['quality'] != 'STRONG'
+
+    def test_normal_vol_not_capped(self):
+        data = make_crypto_data(price=100, atr=2.5)  # 2.5% aman
+        result = SignalService.generate_crypto_signal(data)
+        assert 'Extreme volatility' not in result['reason']
+
+    def test_feature_off_disables_gate(self):
+        set_features(vol_gate=False)
+        data = make_stock_data(price=96, atr=8.0,
+                               rsi=20, ma_fast=110, ma_slow=100,
+                               macd=1.0, macd_signal=0.5, macd_hist=0.5,
+                               bb_upper=105, bb_lower=95,
+                               volume_ratio=2.0)
+        result = SignalService.generate_stock_signal(data)
+        assert result['quality'] == 'STRONG'
+
+
+# === TP/SL sadar support/resistance ===
+
+class TestCalcTPSLWithSR:
+    """TP diklem di depan resistance, SL dipindah ke balik struktur."""
+
+    def test_buy_tp_clamped_below_resistance(self):
+        # Entry 100, ATR 1, swing: tp1=102, tp2=104, tp3=107.
+        # Resistance di 105: tp3 menembus → diklem; tp1/tp2 di bawahnya: utuh.
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', resistance=105.0)
+        cap = 105 * (1 - 0.003)
+        assert tpsl['tp1'] == 102.0
+        assert tpsl['tp2'] == 104.0          # memang di bawah resistance
+        assert tpsl['tp3'] == cap
+        assert tpsl['tp1'] < tpsl['tp2'] < tpsl['tp3']
+
+    def test_buy_tp2_tp3_both_clamped_when_resistance_between(self):
+        # Resistance di 103.5: tp2 dan tp3 sama-sama menembus → dua-duanya
+        # diklem ke titik yang sama (sinyal: jangan berharap lebih).
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', resistance=103.5)
+        cap = 103.5 * (1 - 0.003)
+        assert tpsl['tp1'] == 102.0
+        assert tpsl['tp2'] == cap
+        assert tpsl['tp3'] == cap
+        assert tpsl['tp1'] < tpsl['tp2'] <= tpsl['tp3']
+
+    def test_buy_tp_untouched_when_resistance_far(self):
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', resistance=120.0)
+        assert tpsl['tp2'] == 104.0
+        assert tpsl['tp3'] == 107.0
+
+    def test_buy_tp_untouched_when_resistance_too_close(self):
+        # Resistance di bawah tp1: klem hanya akan meratakan semua target
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', resistance=101.0)
+        assert tpsl['tp2'] == 104.0
+        assert tpsl['tp3'] == 107.0
+
+    def test_buy_sl_moves_behind_support(self):
+        # ATR stop: 100 - 3 = 97. Support di 98.5 (1.5 ATR): SL pindah
+        # sedikit di bawah support (lebih rapat, RR lebih baik).
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', support=98.5)
+        assert tpsl['sl'] == pytest.approx(98.5 * (1 - 0.003))
+
+    def test_buy_sl_kept_when_support_too_close(self):
+        # Support hanya 0.3 ATR di bawah entry: dalam jangkauan noise,
+        # tetap pakai stop ATR.
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', support=99.7)
+        assert tpsl['sl'] == 97.0
+
+    def test_buy_sl_kept_when_support_beyond_atr_stop(self):
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', support=90.0)
+        assert tpsl['sl'] == 97.0
+
+    def test_sell_tp_floored_above_support(self):
+        # Entry 100, ATR 1, swing: tp1=98, tp2=96, tp3=93.
+        # Support di 95: tp3 menembus ke bawah → dinaikkan ke lantai support.
+        tpsl = calc_tPSL('SELL', 100, 1.0, '60', support=95.0)
+        floor = 95 * (1 + 0.003)
+        assert tpsl['tp1'] == 98.0
+        assert tpsl['tp2'] == 96.0           # memang di atas support
+        assert tpsl['tp3'] == floor
+        assert tpsl['tp1'] > tpsl['tp2'] > tpsl['tp3']
+
+    def test_sell_sl_moves_behind_resistance(self):
+        # ATR stop: 100 + 3 = 103. Resistance di 101.5: SL pindah ke
+        # sedikit di atas resistance.
+        tpsl = calc_tPSL('SELL', 100, 1.0, '60', resistance=101.5)
+        assert tpsl['sl'] == pytest.approx(101.5 * (1 + 0.003))
+
+    def test_no_sr_matches_plain_result(self):
+        with_sr = calc_tPSL('BUY', 100, 1.0, '60', support=None, resistance=None)
+        plain = calc_tPSL('BUY', 100, 1.0, '60')
+        assert with_sr == plain
+
+    def test_sr_feature_off_disables_adjustment(self):
+        set_features(sr_tpsl=False)
+        tpsl = calc_tPSL('BUY', 100, 1.0, '60', resistance=105.0)
+        assert tpsl['tp3'] == 107.0
+
+    def test_signal_output_uses_sr(self):
+        """Mesin sinyal meneruskan support/resistance data ke TP/SL."""
+        # Support 98.5 dari entry 100 = 1 ATR (default tf '5', sl 2 ATR = 97):
+        # dalam band struktur → SL pindah sedikit di bawah support.
+        data = make_stock_data(rsi=20, ma_fast=110, ma_slow=100,
+                               macd=1.0, macd_signal=0.5, macd_hist=0.5,
+                               support=98.5)
+        result = SignalService.generate_stock_signal(data)
+        assert result['signal'] == 'BUY'
+        assert result['sl'] == pytest.approx(98.5 * (1 - 0.003))
+
+
+# === Helper cap_quality ===
+
+class TestCapQuality:
+    def test_cap_lowering(self):
+        assert cap_quality('STRONG', 'MODERATE') == 'MODERATE'
+        assert cap_quality('MODERATE', 'WEAK') == 'WEAK'
+        assert cap_quality('WEAK', 'MODERATE') == 'WEAK'   # cap tidak menaikkan
+        assert cap_quality('STRONG', None) == 'STRONG'
+        assert cap_quality('MODERATE', 'MODERATE') == 'MODERATE'
 
 
 # === Singleton Test ===

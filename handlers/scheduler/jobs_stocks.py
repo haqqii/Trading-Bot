@@ -16,7 +16,7 @@ import asyncio
 import logging
 
 from services.stock_service import stock_service
-from services.signal_service import calc_tPSL
+from services.signal_service import calc_tPSL, safe_num
 from services.crypto_service import crypto_service
 from services import ticker_health
 from utils.formatters import format_unified_stock_notification, escape_md
@@ -349,17 +349,19 @@ async def check_stock_signals(app):
                         # Use cached scan data (no re-fetch)
                         d = d  # Use data from scan cache
                         entry_price = d['price']
-                        atr = d.get('atr', entry_price * 0.015)
+                        atr = safe_num(d.get('atr'), entry_price * 0.015)
                         entry_low = entry_price * 0.995
                         entry_high = entry_price * 1.005
                         s['entry'] = entry_price
                         s['entry_low'] = entry_low
                         s['entry_high'] = entry_high
                         s['atr'] = atr
-                        s['rsi'] = d.get('rsi', 50)
+                        s['rsi'] = safe_num(d.get('rsi'), 50)
                         # Calculate TP/SL using user's TF — direction-aware for SELL signals
                         direction = 'SELL' if s['signal'] == 'SELL' else 'BUY'
-                        tpsl = calc_tPSL(direction, entry_price, atr, tf_key)
+                        tpsl = calc_tPSL(direction, entry_price, atr, tf_key,
+                                         support=d.get('support'),
+                                         resistance=d.get('resistance'))
                         s['tp1'] = tpsl['tp1']
                         s['tp2'] = tpsl['tp2']
                         s['tp3'] = tpsl['tp3']
@@ -369,17 +371,23 @@ async def check_stock_signals(app):
                         quality = s.get('quality', 'WEAK')
 
                         # Build reasons
+                        # Angka dari provider boleh None (jalur fallback
+                        # sengaja tidak mengarang indikator) - dibaca lewat
+                        # safe_num supaya perbandingannya tidak meledak.
                         reasons = []
-                        if d.get('rsi', 50) < 40:
-                            reasons.append(f"RSI Oversold ({d.get('rsi', 0):.0f})")
-                        if d.get('ma_fast', 0) > d.get('ma_slow', 0):
+                        rsi_val = safe_num(d.get('rsi'), 50)
+                        if rsi_val < 40:
+                            reasons.append(f"RSI Oversold ({rsi_val:.0f})")
+                        if safe_num(d.get('ma_fast'), 0) > safe_num(d.get('ma_slow'), 0):
                             reasons.append("MA Golden Cross")
-                        if s.get('macd_hist', 0) > 0:
+                        if safe_num(s.get('macd_hist'), 0) > 0:
                             reasons.append("MACD Bullish")
-                        if d.get('volume_ratio', 1) > 1.5:
-                            reasons.append(f"Volume Spike ({d.get('volume_ratio', 1):.1f}x)")
-                        if d.get('change', 0) > 0:
-                            reasons.append(f"Price +{d.get('change', 0):.1f}%")
+                        volume_ratio_val = safe_num(d.get('volume_ratio'), 1)
+                        if volume_ratio_val > 1.5:
+                            reasons.append(f"Volume Spike ({volume_ratio_val:.1f}x)")
+                        change_val = safe_num(d.get('change'), 0)
+                        if change_val > 0:
+                            reasons.append(f"Price +{change_val:.1f}%")
                         if d.get('bb_position', 0.5) < 0.3:
                             reasons.append("Near Bollinger Lower")
 
@@ -405,7 +413,7 @@ async def check_stock_signals(app):
                             quality=quality,
                             reasons=reasons,
                             patterns=patterns_detected,
-                            volume_ratio=d.get('volume_ratio', 1),
+                            volume_ratio=safe_num(d.get('volume_ratio'), 1),
                         )
                         trend = compute_trend(d, s)
 
@@ -413,18 +421,18 @@ async def check_stock_signals(app):
                             'pattern': {'type': trend, 'reliability': quality_reliability},
                             'patterns': patterns_detected,
                             'indicators': {
-                                'rsi': d.get('rsi', 0),
-                                'macd': s.get('macd_hist', 0),
-                                'atr': s.get('atr', 0),
+                                'rsi': safe_num(d.get('rsi'), 0),
+                                'macd': safe_num(s.get('macd_hist'), 0),
+                                'atr': safe_num(s.get('atr'), 0),
                             },
                             'reasons': reasons,
                             'score': s.get('buy_score', 0),
                             'quality': quality,
-                            'rsi': d.get('rsi', 0),
-                            'volume_ratio': d.get('volume_ratio', 1),
-                            'change': d.get('change', 0),
-                            'ma_fast': d.get('ma_fast', 0),
-                            'ma_slow': d.get('ma_slow', 0),
+                            'rsi': safe_num(d.get('rsi'), 0),
+                            'volume_ratio': safe_num(d.get('volume_ratio'), 1),
+                            'change': safe_num(d.get('change'), 0),
+                            'ma_fast': safe_num(d.get('ma_fast'), 0),
+                            'ma_slow': safe_num(d.get('ma_slow'), 0),
                             'sr': d.get('sr', {}),
                             'support': d.get('support'),
                             'resistance': d.get('resistance'),
@@ -442,7 +450,7 @@ async def check_stock_signals(app):
                                 tp3=s['tp3'],
                                 sl=s['sl'],
                                 analysis_data=analysis_data,
-                                change_pct=d.get('change', 0),
+                                change_pct=safe_num(d.get('change'), 0),
                                 profit_loss=1.0,
                                 entry_low=s.get('entry_low', 0),
                                 entry_high=s.get('entry_high', 0)
@@ -554,12 +562,14 @@ async def check_stock_tp_sl(app):
 
                     current_price = d['price']
                     entry = signal_data.get('entry', 0)
-                    atr = signal_data.get('atr', 0)
+                    atr = safe_num(signal_data.get('atr'), 0)
                     is_short = signal_data.get('direction', 'LONG') == 'SHORT'
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
-                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf)
+                        tpsl = calc_tPSL('SELL' if is_short else 'BUY', entry, atr, user_tf,
+                                         support=d.get('support'),
+                                         resistance=d.get('resistance'))
                         tp1 = tpsl['tp1']
                         tp2 = tpsl['tp2']
                         tp3 = tpsl['tp3']

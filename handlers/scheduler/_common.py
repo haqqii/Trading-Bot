@@ -18,7 +18,7 @@ from typing import Any, cast
 
 from services.stock_service import stock_service, StockDataResult
 from services.crypto_service import crypto_service
-from services.signal_service import calc_tPSL
+from services.signal_service import calc_tPSL, safe_num
 from utils.cache import _price_cache
 from utils.time_utils import WIB, now_wib as _now_wib
 from db import normalize_signal_direction
@@ -450,15 +450,15 @@ def compute_trend(d: dict, s: dict, change_threshold: float = 1.5) -> str:
     rule, which rarely fired because momentum and oversold rarely
     coincide.
     """
-    change = d.get('change', 0)
+    change = safe_num(d.get('change'), 0)
     if change > change_threshold:
         return 'BREAKOUT'
     if change < -change_threshold:
         return 'PULLBACK'
 
-    macd_hist = s.get('macd_hist', 0)
-    ma_fast = d.get('ma_fast', 0)
-    ma_slow = d.get('ma_slow', 0)
+    macd_hist = safe_num(s.get('macd_hist'), 0)
+    ma_fast = safe_num(d.get('ma_fast'), 0)
+    ma_slow = safe_num(d.get('ma_slow'), 0)
 
     if macd_hist > 0 and ma_fast > ma_slow:
         return 'UPTREND'
