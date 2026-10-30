@@ -488,6 +488,36 @@ def _schedule_followup_scan(app, kind: str, delay: int = 60):
         logger.error(f"Failed to schedule follow-up {kind} scan: {e}", exc_info=True)
 
 
+# Sinyal punya dua bentuk waktu: yang dibuat di memori memakai now_wib()
+# (aware, UTC+7), yang dipulihkan dari DB memakai created_at SQLite
+# (string UTC tanpa offset - naive). Keduanya harus dinormalkan ke UTC dulu
+# sebelum dibandingkan, kalau tidak Python melempar
+# "can't compare offset-naive and offset-aware datetimes".
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _signal_datetime(value: Any, default: datetime) -> datetime:
+    """Waktu sinyal sebagai datetime aware (UTC).
+
+    Naive dianggap UTC: created_at SQLite CURRENT_TIMESTAMP = UTC, dan
+    container bot berjalan di UTC. Nilai yang tidak bisa dibaca dipakai
+    ``default``.
+    """
+    if value is None:
+        return default
+    parsed = parse_db_timestamp(value)
+    if parsed is None:
+        logger.debug(f"Unreadable signal time {value!r}; using default")
+        return default
+    return parsed
+
+
+def _signal_finished(signal: dict) -> bool:
+    """True kalau posisi sinyal sudah selesai (TP3 sudah kena)."""
+    tp_hit = signal.get('tp_hit') or {}
+    return bool(tp_hit.get('tp3'))
+
+
 def cleanup_old_signals():
     """Remove signals older than SIGNAL_MAX_AGE_DAYS to prevent memory leak.
 
@@ -495,7 +525,7 @@ def cleanup_old_signals():
     """
     signals = _get_last_buy_signals()
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     removed_count = 0
     cutoff_time = now.timestamp() - (SIGNAL_MAX_AGE_DAYS * 24 * 3600)
 
@@ -505,13 +535,7 @@ def cleanup_old_signals():
 
     # Clean stock signals
     for key in list(stock_signals.keys()):
-        signal_time = stock_signals[key].get('time')
-        if isinstance(signal_time, str):
-            try:
-                signal_time = datetime.fromisoformat(signal_time)
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Bad datetime for stock signal {key}: {e}; using now()")
-                signal_time = now
+        signal_time = _signal_datetime(stock_signals[key].get('time'), now)
 
         # Remove if too old
         if signal_time.timestamp() < cutoff_time:
@@ -521,34 +545,29 @@ def cleanup_old_signals():
 
     # Clean crypto signals
     for key in list(crypto_signals.keys()):
-        signal_time = crypto_signals[key].get('time')
-        if isinstance(signal_time, str):
-            try:
-                signal_time = datetime.fromisoformat(signal_time)
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Bad datetime for crypto signal {key}: {e}; using now()")
-                signal_time = now
+        signal_time = _signal_datetime(crypto_signals[key].get('time'), now)
 
         if signal_time.timestamp() < cutoff_time:
             del signals[key]
             removed_count += 1
 
-    # Enforce max limit per type (keep newest)
+    # Enforce max limit per type (keep newest).
+    # Posisi yang masih dipantau TIDAK boleh dibuang di sini: job TP/SL
+    # iterate peta yang sama, jadi sinyal yang dibuang diam-diam berhenti
+    # monitored dan user tidak lagi dapat notifikasi TP/SL-nya. Yang boleh
+    # dibuang hanya sinyal yang posisinya sudah tamat (TP3 sudah kena).
     for sig_type, sig_dict in [('stock', stock_signals), ('crypto', crypto_signals)]:
         prefix = sig_type.upper()
-        type_keys = [k for k in signals if k.startswith(prefix)]
+        finished = [k for k in signals
+                    if k.startswith(prefix) and _signal_finished(signals[k])]
 
-        if len(type_keys) > SIGNAL_MAX_PER_TYPE:
-            # Sort by time, keep newest
+        if len(finished) > SIGNAL_MAX_PER_TYPE:
+            # Sort by time, keep newest. Waktu dinormalkan ke UTC dulu,
+            # kalau tidak sinyal dari DB (naive) dan dari memori (aware)
+            # tidak bisa dibandingkan.
             sorted_keys = sorted(
-                type_keys,
-                key=lambda k: (
-                    signals[k].get('time', datetime.min)
-                    if isinstance(signals[k].get('time'), datetime)
-                    else datetime.fromisoformat(signals[k].get('time', datetime.min.isoformat()))
-                    if isinstance(signals[k].get('time'), str)
-                    else datetime.min
-                ),
+                finished,
+                key=lambda k: _signal_datetime(signals[k].get('time'), _EPOCH),
                 reverse=True
             )
             # Remove oldest beyond limit
