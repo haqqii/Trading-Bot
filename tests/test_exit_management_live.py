@@ -86,7 +86,7 @@ class TestBreakevenExit:
 
         assert crypto_loop['outcomes'] == [('CRYPTO_BTC-USD_1', 'beakeven')]
         assert len(app.bot.sent) == 1
-        assert 'BREAK EVEN' in app.bot.sent[0][1]
+        assert 'STOP DI ENTRY' in app.bot.sent[0][1]
 
     def test_without_flag_position_stays_open(self, crypto_loop, monkeypatch):
         from handlers.scheduler import jobs_crypto
@@ -116,7 +116,7 @@ class TestBreakevenExit:
         asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
 
         assert len(app.bot.sent) == 1
-        assert 'breakeven' in app.bot.sent[0][1].lower()
+        assert 'dipindah ke harga entry' in app.bot.sent[0][1].lower()
 
 
 class TestTrailingExit:
@@ -144,7 +144,7 @@ class TestTrailingExit:
 
         asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
 
-        assert 'BREAK EVEN' not in app.bot.sent[0][1]
+        assert 'STOP DI ENTRY' not in app.bot.sent[0][1]
 
     def test_without_flag_no_trailing_exit(self, crypto_loop, monkeypatch):
         from handlers.scheduler import jobs_crypto
@@ -278,6 +278,50 @@ class TestTrailingWinCount:
 
 
 
+class TestExitNotificationPL:
+    """Pesan exit harus menampilkan P/L yang benar-benar terjadi.
+
+    Sebelumnya pesan exit hanya menampilkan rentang rencana SL->TP3
+    ("Gain: -3.0% -> +7.0%"), jadi user tidak pernah tahu hasil
+    akhirnya - padahal bisa loss meski exit-nya triggered breakeven
+    atau trailing.
+    """
+
+    def test_breakeven_exit_shows_realized_pl(self, crypto_loop):
+        from handlers.scheduler import jobs_crypto
+
+        crypto_loop['signals'] = {'CRYPTO_BTC-USD_1': _signal(tp1=True)}
+        crypto_loop['price'] = 99.5          # entry 100 -> -0.5%
+        app = FakeApp()
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert 'P/L: -0.50%' in app.bot.sent[0][1]
+
+    def test_trailing_exit_shows_profit_pl(self, crypto_loop):
+        from handlers.scheduler import jobs_crypto
+
+        crypto_loop['signals'] = {'CRYPTO_BTC-USD_1': _signal(tp1=True, tp2=True)}
+        crypto_loop['price'] = 101.5         # entry 100 -> +1.5%
+        app = FakeApp()
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert 'P/L: +1.50%' in app.bot.sent[0][1]
+
+    def test_exit_message_drops_plan_range(self, crypto_loop):
+        """Rencana SL->TP3 tidak relevan lagi setelah posisi tutup."""
+        from handlers.scheduler import jobs_crypto
+
+        crypto_loop['signals'] = {'CRYPTO_BTC-USD_1': _signal(tp1=True)}
+        crypto_loop['price'] = 99.5
+        app = FakeApp()
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
+
+        assert 'Gain:' not in app.bot.sent[0][1]
+
+
 class TestShortBreakeven:
     """Sinyal SHORT: breakeven juga berlaku (SL turun ke entry)."""
 
@@ -292,4 +336,4 @@ class TestShortBreakeven:
         asyncio.run(jobs_crypto.check_crypto_tp_sl(app))
 
         assert crypto_loop['outcomes'] == [('CRYPTO_BTC-USD_1', 'beakeven')]
-        assert 'BREAK EVEN' in app.bot.sent[0][1]
+        assert 'STOP DI ENTRY' in app.bot.sent[0][1]

@@ -366,8 +366,11 @@ NOTIF_HEADERS = {
     'TP2': '🎯 *₿ TP2 TERKUNCI! +4%*',
     'TP3': '💰 *₿ TP3 TERCAPAI!*',
     'SL': '🔴 *₿ CUT LOSS - SL TERKENA!*',
-    'BE': '⚪ *₿ POSISI DITUTUP - BREAK EVEN*',
-    'TRAIL': '🟢 *₿ POSISI DITUTUP - TRAILING STOP*',
+    # BE/TRAIL menyebut mekanismenya, bukan hasilnya: harga bisa melompat
+    # melewati level stop, jadi exit tidak selalu di sisi profit. Angka
+    # P/L yang ditampilkan yang menentukan hasilnya.
+    'BE': '⚪ *₿ POSISI DITUTUP - STOP DI ENTRY*',
+    'TRAIL': '🔵 *₿ POSISI DITUTUP - TRAILING STOP*',
     'ALERT_BUY': '🟢 *ALERT BUY!*',
     'ALERT_SELL': '🔴 *ALERT SELL!*',
     'SCAN': '📊 *CRYPTO SCAN*',
@@ -463,13 +466,21 @@ def format_unified_crypto_notification(
         else:
             gain_str = f'+{profit_loss:.2f}% ⚡️'
 
+    # Pesan exit (SL / breakeven / trailing) menampilkan P/L yang benar-benar
+    # terjadi, bukan rentang rencana SL->TP3. Setelah posisi tutup, angka
+    # yang paling dibutuhkan user adalah hasil akhirnya.
+    is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+    if is_exit:
+        pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
+        gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
-    lines.append(f"💸 Gain: {gain_str}")
+    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
     lines.append("")
 
     # Special section for REVERSAL signals
@@ -655,9 +666,9 @@ def format_unified_stock_notification(
     elif notif_type == 'SL':
         header = "🛡️ *SAHAM SL TERCAPAI!*"
     elif notif_type == 'BE':
-        header = "⚪ *SAHAM DITUTUP - BREAK EVEN*"
+        header = "⚪ *SAHAM DITUTUP - STOP DI ENTRY*"
     elif notif_type == 'TRAIL':
-        header = "🟢 *SAHAM DITUTUP - TRAILING STOP*"
+        header = "🔵 *SAHAM DITUTUP - TRAILING STOP*"
     else:
         header = f"📊 *SAHAM SIGNAL - {notif_type}*"
 
@@ -674,13 +685,19 @@ def format_unified_stock_notification(
     else:
         gain_str = '+1% → +3% ⚡️'
 
+    # Pesan exit menampilkan P/L realisasi, bukan rentang rencana.
+    is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+    if is_exit:
+        pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
+        gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(header)
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
-    lines.append(f"💸 Gain: {gain_str}")
+    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
     lines.append("")
 
     lines.append("🤖 *SAHAM SIGNAL DETECTED*")

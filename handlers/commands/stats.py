@@ -39,9 +39,9 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append(f"   {bar} Win Rate: {wr}%")
             lines.append(f"   ✅ TP1: {tp1} | ✅ TP2: {tp2} | ✅ TP3: {tp3} | ❌ SL: {sl}")
             if be:
-                lines.append(f"   ⚪ Break Even (SL digeser ke entry): {be}")
+                lines.append(f"   ⚪ Stop di Entry (SL digeser ke entry): {be}")
             if trail:
-                lines.append(f"   🟢 Trailing stop (profit terkunci): {trail}")
+                lines.append(f"   🔵 Trailing stop (SL bergerak): {trail}")
             lines.append(f"   📐 Avg TP reached: {avg}x per win")
         else:
             lines.append("   ⏳ Belum ada sinyal yang ditutup")

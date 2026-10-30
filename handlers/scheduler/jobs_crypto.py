@@ -983,10 +983,10 @@ async def check_crypto_tp_sl(app):
                         profit_pct = _profit_pct(exit_price)
 
                         notes = {
-                            'beakeven': ('SL sudah digeser ke harga entry setelah '
-                                         'TP1 kena - risiko kembali ke modal.'),
-                            'trailing': ('SL sudah naik (trailing stop) setelah TP2 '
-                                         'kena - profit terkunci.'),
+                            'beakeven': ('SL digeser ke harga entry setelah TP1 '
+                                         'kena - modal jadi risiko utama.'),
+                            'trailing': ('SL trailing aktif setelah TP2 kena - '
+                                         'posisi ditutup di level stop bergerak.'),
                         }
                         notif_types = {'beakeven': 'BE', 'trailing': 'TRAIL'}
 
@@ -1041,8 +1041,8 @@ async def check_crypto_tp_sl(app):
                             change_pct=profit_pct,
                             profit_loss=profit_pct,
                             usd_idr_rate=crypto_service.get_usd_idr_rate(),
-                            exit_note=('SL dipindah ke breakeven (harga entry) - '
-                                       'risiko jadi 0.') if FEATURES['exit_mgmt'] else ''
+                            exit_note=('SL dipindah ke harga entry (breakeven) - '
+                                       'risiko balik ke modal.') if FEATURES['exit_mgmt'] else ''
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp1'] = True
