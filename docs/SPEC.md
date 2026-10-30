@@ -50,13 +50,22 @@
   - ADX < 20 (sideways): MA/MACD dikurangi (saling berbalik = noise),
     BB diperkuat (sentuh band = mean reversion)
   - Tanpa ADX (data fallback) skor dihitung seperti biasa
+  - Sudah diukur (lihat 3.1.1): tidak membaik, jadi default-nya MATI.
+    Nyalakan lagi: `FEATURES['regime_gate'] = True` di
+    `services/signal_service.py`
 - Aturan keluar (exit management) - SL bergerak, bukan diam:
   - TP1 kena -> SL digeser ke harga entry (breakeven)
   - TP2 kena -> SL trailing (1.5x ATR dari harga, minimal di level TP1)
   - SL yang sudah digeser tidak pernah turun lagi, jadi profit terkunci
     tidak hilang saat harga berbalik
-  - Exit dicatat dengan jenisnya: `sl` (cut loss), `beakeven` (modal kembali),
-    `trailing` (profit terkunci, dihitung sebagai win)
+  - SL yang sudah digeser langsung ditulis ke DB, jadi restart tidak
+    membuat SL dihitung ulang (lalu turun lagi)
+  - Exit dicatat dengan jenisnya: `sl` (cut loss), `beakeven` (SL di
+    entry), `trailing` (SL bergerak). Exit beakeven/trailing hanya
+    dihitung sebagai win kalau benar-benar menutup di sisi profit -
+    harga bisa meloncat melewati level SL
+  - Harga exit = harga pasar saat posisi ditutup (bukan level SL), dan
+    P/L realisasinya ditampilkan di pesan
 - Win rate diukur dengan backtest walk-forward (`scripts/backtest.py`),
   termasuk mode A/B klasik vs v2, A/B regime gate, dan A/B aturan keluar
   - `--compare features` (klasik vs v2), `--compare regime` (ADX on/off),
@@ -65,6 +74,16 @@
     `ladder` (partial profit 1/3 di TP1, 1/3 di TP2 - paling dekat
     dengan pemakaian bot)
   - Expectancy juga dihitung dalam R (1R = jarak entry ke SL awal)
+  - Asumsi harness (harus sama dengan bot live, kalau tidak hasil ukur
+    tidak berlaku untuk produksi):
+    - SL dicek sebelum TP di bar yang sama (pesimis)
+    - Exit SL diisi di harga close kalau bar ditutup di sisi buruk dari
+      stop, di level stop kalau bar ditutup di sisi baik - bot live
+      menutup di harga yang terlihat saat polling
+    - Win/loss ditentukan dari hasil P/L, bukan dari jenis exit, supaya
+      dua lengan A/B bisa dibandingkan
+    - Trailing di-backtest diikat ke ekstrem bar, bot live mengikatnya
+      ke harga polling terakhir
   - Contoh ukur aturan keluar (saham IDX):
     `python scripts/backtest.py --market stock --tickers BBCA.JK,BBRI.JK,TLKM.JK --interval 1h --period 6mo --compare exit`
   - Contoh ukur regime gate (crypto):
@@ -72,6 +91,47 @@
   - Cara menjalankan tiap fitur bisa dimatikan lewat flag `FEATURES` di
     `services/signal_service.py` (`regime_gate`, `exit_mgmt`), jadi A/B
     bisa dilakukan tanpa mengubah kode lain
+
+#### 3.1.1 Hasil ukur (30 Oktober 2026)
+
+Semua angka dari `scripts/backtest.py`, fee 0,30%/putaran untuk saham IDX
+dan 0,16% untuk crypto. Expectancy = rata-rata P/L per trade.
+
+Aturan keluar (model exit 'ladder'):
+
+| Pasar | Metrik | SL diam | SL bergerak |
+|---|---|---|---|
+| Saham IDX (BBCA/BBRI/TLKM, 1h, 6 bulan) | expectancy | -0,50 %/trade | -0,47 %/trade |
+| | total PnL | -38,7% | -37,0% |
+| | win rate (trade yang sudah diputuskan) | 20% | 47% |
+| | masih menggantung (timeout) | 28% | 6% |
+| Crypto (BTC/ETH/SOL/ADA/DOGE, 1h, 90 hari) | expectancy | -0,31 %/trade | -0,26 %/trade |
+| | total PnL | -74,1% | -63,4% |
+| | win rate (trade yang sudah diputuskan) | 19% | 46% |
+| | masih menggantung (timeout) | 33% | 15% |
+
+Yang berubah jelas: posisi yang sudah kena TP1 tidak lagi menggantung
+sampai akhir horizon, dan lebih banyak trade selesai di sisi profit.
+Peningkatan expectancy-nya kecil - jadi fitur ini memperbaiki risiko
+(posisi yang sudah profit tidak balik jadi loss penuh), bukan Expectancy
+Bot secara dramatis.
+
+Regime gate (model exit 'tp1'):
+
+| Pasar | Metrik | Gate mati | Gate hidup |
+|---|---|---|---|
+| Saham IDX (BBCA/BBRI/TLKM, 1h, 6 bulan) | expectancy | -0,07 %/trade | -0,11 %/trade |
+| | total PnL | -5,4% | -8,6% |
+| | win rate | 53% | 51% |
+| Crypto (BTC/ETH/SOL/ADA/DOGE, 1h, 90 hari) | expectancy | -0,12 %/trade | -0,12 %/trade |
+| | total PnL | -29,3% | -30,1% |
+| | win rate | 52% | 51% |
+
+Regime gate tidak membawa perbaikan di jendela yang diukur - di crypto
+netral, di saham IDX justru sedikit lebih buruk. Karena itu tidak
+dinyalakan default untuk trading sungguhan; kodenya tetap ada dan bisa
+diukur ulang kapan saja.
+
 
 #### 3.2 Daftar Harga Saham
 - Menampilkan harga real-time dari saham-saham populer
