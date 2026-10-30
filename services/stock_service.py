@@ -16,7 +16,7 @@ from urllib3.util.retry import Retry
 
 from utils.cache import _price_cache
 from utils.rate_limiter import _yahoo_limiter, _circuit_breakers, exponential_backoff
-from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels, calculate_vwap, calculate_htf_trend
+from utils.indicators import calculate_rsi, calculate_macd, calculate_bollinger_bands, calculate_volume_metrics, calculate_atr, calculate_sr_levels, calculate_vwap, calculate_htf_trend, calculate_adx
 from utils.log_filters import install_provider_filters
 from services import ticker_health
 
@@ -409,6 +409,8 @@ class StockService:
 
             vwap_data = calculate_vwap(df['High'], df['Low'], df['Close'], df['Volume'])
             htf_trend = calculate_htf_trend(df['Close'])
+            # ADX untuk regime gate di mesin sinyal (trend vs sideways).
+            adx_data = calculate_adx(df['High'], df['Low'], df['Close'])
 
             latest = df.iloc[-1]
             atr_val = calculate_atr(df['High'], df['Low'], df['Close'], 14).iloc[-1]
@@ -449,6 +451,10 @@ class StockService:
                 'volume_ratio': latest['VOLUME_RATIO'],
                 'vwap': vwap_data['current'],
                 'htf_trend': htf_trend,
+                'adx': adx_data['adx_current'],
+                'plus_di': adx_data['plus_di_current'],
+                'minus_di': adx_data['minus_di_current'],
+                'adx_strong': adx_data['strong_trend'],
                 'raw_df': df,  # For pattern detection
                 'sr': sr_data or {},
                 'support': sr_data.get('nearest_support', {}).get('level') if sr_data and sr_data.get('nearest_support') else None,
