@@ -322,6 +322,105 @@ class TestExitNotificationPL:
         assert 'Gain:' not in app.bot.sent[0][1]
 
 
+class TestStatsHonesty:
+    """Angka stats harus jujur soal posisi yang masih hidup."""
+
+    @staticmethod
+    def _add(db, key, outcome):
+        db.save_active_signal(
+            key=key, ticker='TESTW', asset_type='crypto',
+            signal_type='BUY', price=100.0, tp1=102.0, tp2=104.0, tp3=107.0,
+            sl=97.0, score=70, quality='STRONG', reason='test',
+            extra_data={'direction': 'LONG', 'atr': 1.0, 'user_id': '1',
+                        'timeframe': '60'},
+            name='Test Open')
+        db.save_signal_outcome(key, outcome)
+
+    def test_open_position_not_counted_as_closed(self, temp_db):
+        """Outcome 'tp1'/'tp2' = posisi masih hidup, belum tutup.
+
+        Kalau dihitung sebagai closed, win rate ikut dipangar: posisi
+        yang baru partial profit dihitung sama dengan yang sudah tutup
+        dan rugi.
+        """
+        db, _ = temp_db
+        self._add(db, 'CRYPTO_O1', 'tp1')
+        self._add(db, 'CRYPTO_O2', 'tp2')
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['closed'] == 0
+        assert stats['open'] == 2
+        assert stats['tp1_count'] == 1
+        assert stats['tp2_count'] == 1
+
+    def test_open_position_still_tracked_for_tp(self, temp_db):
+        """Posisi di TP1 harus tetap dipantau TP2/TP3-nya."""
+        db, _ = temp_db
+        self._add(db, 'CRYPTO_O3', 'tp1')
+
+        active = db.load_active_signals()
+
+        assert 'CRYPTO_O3' in active
+
+    def test_closed_position_counted(self, temp_db):
+        db, _ = temp_db
+        self._add(db, 'CRYPTO_O4', 'sl')
+
+        stats = db.get_signal_stats('crypto')
+
+        assert stats['closed'] == 1
+        assert stats['sl_count'] == 1
+        assert stats['tp_rate'] == 0.0
+
+
+class TestSlLockPersisted:
+    """Level SL yang digeser harus tersimpan di DB saat itu juga."""
+
+    def test_sl_lock_saved_immediately(self, temp_db):
+        """Auto-save baru jalan tiap 5 menit.
+
+        Kalau sl_lock cuma ada di memori, restart di antara dua
+        auto-save kehilangan lock itu - SL dihitung ulang dari harga
+        terbaru dan bisa turun, jadi profit yang sudah terkunci hilang.
+        """
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_L1', ticker='TESTL', asset_type='crypto',
+            signal_type='BUY', price=100.0, tp1=102.0, tp2=104.0, tp3=107.0,
+            sl=97.0, score=70, quality='STRONG', reason='test',
+            extra_data={'direction': 'LONG', 'atr': 1.0, 'user_id': '1',
+                        'timeframe': '60'},
+            name='Test Lock')
+
+        assert db.update_signal_extra('CRYPTO_L1', {'sl_lock': 104.5}) is True
+
+        restored = db.load_active_signals()
+        assert restored['CRYPTO_L1']['sl_lock'] == 104.5
+
+    def test_update_keeps_other_extra_data(self, temp_db):
+        """Data lama (arah, atr, user) tidak boleh hilang."""
+        db, _ = temp_db
+        db.save_active_signal(
+            key='CRYPTO_L2', ticker='TESTL', asset_type='crypto',
+            signal_type='BUY', price=100.0, tp1=102.0, tp2=104.0, tp3=107.0,
+            sl=97.0, score=70, quality='STRONG', reason='test',
+            extra_data={'direction': 'SHORT', 'atr': 2.5, 'user_id': '1',
+                        'timeframe': '60'},
+            name='Test Lock')
+
+        db.update_signal_extra('CRYPTO_L2', {'sl_lock': 95.5})
+
+        restored = db.load_active_signals()
+        assert restored['CRYPTO_L2']['sl_lock'] == 95.5
+        assert restored['CRYPTO_L2']['direction'] == 'SHORT'
+        assert restored['CRYPTO_L2']['atr'] == 2.5
+
+    def test_update_unknown_key_returns_false(self, temp_db):
+        db, _ = temp_db
+        assert db.update_signal_extra('CRYPTO_TIDAK_ADA', {'sl_lock': 1}) is False
+
+
 class TestShortBreakeven:
     """Sinyal SHORT: breakeven juga berlaku (SL turun ke entry)."""
 

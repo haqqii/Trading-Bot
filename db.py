@@ -544,6 +544,41 @@ class Database:
                     data['extra_data'] = None
             return data
 
+    def update_signal_extra(self, key: str, extra: Dict | None) -> bool:
+        """Gabung tambahan data ke extra_data sinyal yang sudah ada.
+
+        Dipakai untuk menyimpan level SL yang sudah digeser ('sl_lock')
+        begitu berubah. Kalau cuma disimpan di memori, restart sebelum
+        auto-save berikutnya (tiap 5 menit) kehilangan lock itu - SL
+        dihitung ulang dari harga terbaru dan bisa turun lagi, jadi
+        profit yang sudah terkunci hilang.
+
+        Data lama di extra_data (direction, atr, user_id, timeframe)
+        tidak ditimpa - cuma digabung.
+        """
+        self.initialize()
+        if not extra:
+            return False
+        import json
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT extra_data FROM signals WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return False
+            current: Dict = {}
+            if row['extra_data']:
+                try:
+                    current = json.loads(row['extra_data'])
+                except Exception:
+                    current = {}
+            if not isinstance(current, dict):
+                current = {}
+            current.update(extra)
+            conn.execute("UPDATE signals SET extra_data = ? WHERE key = ?",
+                         (json.dumps(current), key))
+            return True
+
     def get_all_signals(self) -> Dict[str, Dict]:
         """Get all signals as a dict keyed by signal key."""
         self.initialize()
@@ -825,40 +860,50 @@ class Database:
             except Exception:
                 return base
             base['total'] = len(rows)
-            trailing_wins = 0
+            wins = 0
             for row in rows:
                 o = row['outcome']
                 if not o or o == 'open':
                     base['open'] += 1
                 elif o == 'tp1':
+                    # Posisi masih hidup (partial profit di TP1) - bukan
+                    # sinyal yang sudah tutup. Kalau dihitung sebagai
+                    # closed, win rate ikut dipangar.
+                    base['open'] += 1
                     base['tp1_count'] += 1
                 elif o == 'tp2':
+                    base['open'] += 1
                     base['tp2_count'] += 1
                 elif o == 'tp3':
                     base['tp3_count'] += 1
+                    wins += 1
                 elif o == 'sl':
                     base['sl_count'] += 1
                 elif o == 'beakeven':
                     base['beakeven_count'] += 1
+                    # Trailing stop idealnya menutup di profit (SL-nya sudah
+                    # naik di atas entry), tapi harga bisa melompat melewati
+                    # level SL. Yang dihitung sebagai win hanya yang
+                    # benar-benar tutup di sisi profit - kalau tidak, win
+                    # rate-nya dipangar.
+                    if self._closed_in_profit(row):
+                        wins += 1
                 elif o == 'trailing':
                     base['trailing_count'] += 1
                     if self._closed_in_profit(row):
-                        trailing_wins += 1
-            base['closed'] = (base['tp1_count'] + base['tp2_count'] +
-                              base['tp3_count'] + base['sl_count'] +
+                        wins += 1
+            base['closed'] = (base['tp3_count'] + base['sl_count'] +
                               base['beakeven_count'] + base['trailing_count'])
             if base['closed'] > 0:
-                # Trailing stop idealnya menutup di profit (SL-nya sudah naik
-                # di atas entry), tapi harga bisa melompat melewati level SL.
-                # Yang dihitung sebagai win hanya yang benar-benar tutup di
-                # sisi profit - kalau tidak, win rate-nya dipangar.
-                wins = (base['tp1_count'] + base['tp2_count'] + base['tp3_count'] +
-                        trailing_wins)
                 base['tp_rate'] = round(wins / base['closed'] * 100, 1)
                 base['sl_rate'] = round(base['sl_count'] / base['closed'] * 100, 1)
-                tp_total = base['tp1_count'] + base['tp2_count'] * 2 + base['tp3_count'] * 3
-                tp_wins = base['tp1_count'] + base['tp2_count'] + base['tp3_count']
-                base['avg_tp_hit'] = round(tp_total / tp_wins, 2) if tp_wins > 0 else 0
+                # Rata-rata level TP yang tercapai. Exit trailing dihitung
+                # sebagai TP2 (TP2 sudah kena sebelum trailing aktif).
+                tp_total = (base['tp1_count'] + base['tp2_count'] * 2 +
+                            base['tp3_count'] * 3 + base['trailing_count'] * 2)
+                tp_n = (base['tp1_count'] + base['tp2_count'] +
+                        base['tp3_count'] + base['trailing_count'])
+                base['avg_tp_hit'] = round(tp_total / tp_n, 2) if tp_n > 0 else 0
             return base
 
     def cleanup_old_signals(self, max_age_days: int = 7,

@@ -42,7 +42,7 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"   ⚪ Stop di Entry (SL digeser ke entry): {be}")
             if trail:
                 lines.append(f"   🔵 Trailing stop (SL bergerak): {trail}")
-            lines.append(f"   📐 Avg TP reached: {avg}x per win")
+            lines.append(f"   📐 Rata-rata TP tercapai: {avg}x")
         else:
             lines.append("   ⏳ Belum ada sinyal yang ditutup")
         return '\n'.join(lines)
