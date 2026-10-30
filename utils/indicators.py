@@ -9,12 +9,42 @@ logger = logging.getLogger(__name__)
 
 
 def calculate_rsi(prices, period=14):
-    """Calculate RSI (Relative Strength Index)"""
+    """Calculate RSI (Relative Strength Index) using Wilder's smoothing.
+
+    Wilder's exponential smoothing (alpha = 1/period) adalah standar industri;
+    simple rolling mean (Cutler's RSI) yang lama lebih bergolak karena satu
+    candle besar masuk/keluar window langsung menggeser nilainya.
+    """
     delta = prices.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    gain = delta.where(delta > 0, 0.0).ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0.0)).ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
+
+
+def calculate_htf_trend(close, fast=50, slow=100, deadband_pct=0.15):
+    """Arah trend besar dari satu seri harga (proxy multi-timeframe).
+
+    Membandingkan MA cepat vs MA lambat pada data yang sudah ada - tanpa
+    request tambahan. 'flat' dipakai kalau datanya belum cukup atau selisihnya
+    masuk deadband, supaya sinyal tidak dibolak-balikkan oleh perbedaan MA
+    yang tipis.
+    """
+    try:
+        if len(close) < slow:
+            return 'flat'
+        ma_fast = close.rolling(fast).mean().iloc[-1]
+        ma_slow = close.rolling(slow).mean().iloc[-1]
+        if pd.isna(ma_fast) or pd.isna(ma_slow):
+            return 'flat'
+        diff_pct = (ma_fast - ma_slow) / float(close.iloc[-1]) * 100
+        if diff_pct > deadband_pct:
+            return 'up'
+        if diff_pct < -deadband_pct:
+            return 'down'
+        return 'flat'
+    except Exception:
+        return 'flat'
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
@@ -181,7 +211,11 @@ def calculate_fibonacci_retracement(high, low, period=50):
     }
 
     # Determine key S/R levels
-    current_price = (high.iloc[-1] + low.iloc[-1] + low.iloc[-1]) / 3  # Approximate current price
+    # Titik acuan = tengah rentang bar terakhir. Versi lama menjumlahkan
+    # `low` dua kali ((H+L+L)/3) sehingga bias ke bawah dan S/R bisa salah
+    # urutan terhadap harga sekarang. Fungsi ini tidak menerima Close,
+    # jadi midpoint High/Low adalah aproksimasi yang benar.
+    current_price = (high.iloc[-1] + low.iloc[-1]) / 2
     support = None
     resistance = None
 

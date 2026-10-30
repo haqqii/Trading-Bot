@@ -24,6 +24,7 @@ from utils.indicators import (
     calculate_fibonacci_retracement,
     calculate_atr,
     calculate_pivot_points,
+    calculate_htf_trend,
 )
 
 
@@ -317,6 +318,56 @@ class TestFibonacci:
         assert abs(levels['23.6'] - 94.72) < 0.1
         assert abs(levels['50.0'] - 100.0) < 0.1
         assert abs(levels['61.8'] - 102.36) < 0.1
+
+    def test_fibonacci_reference_point_is_range_midpoint(self):
+        """Regression: titik acuan S/R dulunya (H+L+L)/3 - bias ke bawah.
+
+        Untuk rentang 90-110, acuan benar (midpoint 100) membuat 97.64
+        (level 38.2) jadi support terdekat dan 102.36 (level 61.8) jadi
+        resistance. Versi lama (acuan ~99.96) sempat menjadikan level 50.0
+        resistance padahal harga tepat di titik itu.
+        """
+        high = pd.Series([110.0] * 60)
+        low = pd.Series([90.0] * 60)
+        result = calculate_fibonacci_retracement(high, low, period=50)
+        assert abs(result['key_support'] - 97.636) < 0.1
+        assert abs(result['key_resistance'] - 102.36) < 0.1
+
+
+# === HTF Trend Tests ===
+
+class TestHtfTrend:
+    """Arah trend besar dari satu seri harga (proxy multi-timeframe)."""
+
+    def test_uptrend_detected(self):
+        prices = pd.Series([100 + i for i in range(150)])
+        assert calculate_htf_trend(prices) == 'up'
+
+    def test_downtrend_detected(self):
+        prices = pd.Series([250 - i for i in range(150)])
+        assert calculate_htf_trend(prices) == 'down'
+
+    def test_sideways_is_flat(self):
+        np.random.seed(7)
+        prices = pd.Series(100 + np.random.randn(150) * 0.1)
+        assert calculate_htf_trend(prices) == 'flat'
+
+    def test_short_series_is_flat(self):
+        prices = pd.Series([100, 101, 102, 103])
+        assert calculate_htf_trend(prices) == 'flat'
+
+    def test_custom_fast_slow_for_sparkline(self):
+        """Sparkline 168 titik: fast=24, slow=96."""
+        prices = pd.Series([100 + i * 0.5 for i in range(168)])
+        assert calculate_htf_trend(prices, fast=24, slow=96,
+                                   deadband_pct=0.3) == 'up'
+
+    def test_deadband_prevents_noise_flips(self):
+        """Selisih MA di dalam deadband = flat walau ada arah tipis."""
+        prices = pd.Series(list(np.linspace(100, 100.1, 80)) +
+                           list(np.linspace(100.1, 100.0, 80)))
+        assert calculate_htf_trend(prices, fast=24, slow=96,
+                                   deadband_pct=0.5) == 'flat'
 
 
 # === Ichimoku Tests ===
