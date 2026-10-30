@@ -35,7 +35,11 @@ FEATURES: Dict[str, bool] = {
     'vol_gate': True,       # volatilitas ekstrem menurunkan kualitas
     'degraded_cap': True,   # indikator tidak lengkap menurunkan kualitas
     'vwap_crypto': True,    # VWAP crypto hanya dinilai kalau datanya ada
-    'regime_gate': True,    # ADX menentukan aturan yang dipakai (trend/range)
+    # Regime gate MATI default: sudah diukur A/B (saham IDX 1h 6bln,
+    # crypto 1h 90d - lihat docs/SPEC.md 3.1.1) dan tidak memperbaiki
+    # hasil - di saham malah sedikit lebih buruk. Kode dan A/B-nya
+    # tetap ada; nyalakan lagi di sini kalau mau diukur ulang.
+    'regime_gate': False,   # ADX menentukan aturan yang dipakai (trend/range)
     'exit_mgmt': True,      # SL bergerak: breakeven setelah TP1, trailing setelah TP2
 }
 

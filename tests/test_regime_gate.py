@@ -14,6 +14,18 @@ from services.signal_service import (
     REGIME_TREND,
 )
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def regime_gate_on():
+    """Fitur ini diuji secara paksa: default produksinya MATI (hasil A/B
+    tidak membaik - lihat docs/SPEC.md 3.1.1), jadi tiap test menyalakan
+    flag sendiri dan mengembalikan nilai semula setelahnya."""
+    saved = set_features(regime_gate=True)
+    yield
+    set_features(**saved)
+
 
 def make_data(**overrides):
     """Payload minimal untuk mesin sinyal saham."""
