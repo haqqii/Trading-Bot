@@ -30,10 +30,12 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         trail = s.get('trailing_count', 0)
         wr = s['tp_rate']
         avg = s['avg_tp_hit']
+        open_n = s.get('open', 0)
 
         lines = []
         lines.append(f"{emoji} *{label}*")
-        lines.append(f"   📊 Total: {total} sinyal | {closed} closed")
+        lines.append(f"   📊 Total: {total} sinyal | {closed} closed | "
+                     f"{open_n} belum selesai")
         if closed > 0:
             bar = fmt_bar(wr, 100)
             lines.append(f"   {bar} Win Rate: {wr}%")

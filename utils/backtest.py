@@ -447,6 +447,10 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
 
     def is_win(t: Dict[str, Any]) -> bool:
         if live_model:
+            # Trade yang masih hidup (timeout) belum diputuskan - jangan
+            # masuk hitungan win/loss.
+            if t['outcome'] == 'timeout':
+                return False
             # Win/loss ditentukan dari hasil P/L, bukan dari jenis exit.
             # Exit breakeven/trailing bisa menutup di harga yang lebih
             # rendah dari entry (harga meloncat melewati level SL), jadi
@@ -458,6 +462,8 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
 
     def is_loss(t: Dict[str, Any]) -> bool:
         if live_model:
+            if t['outcome'] == 'timeout':
+                return False
             # Semua exit yang sudah menutup posisi masuk hitungan: yang
             # tutup di profit = win, sisanya (rugi atau impas) = loss.
             return float(t.get('exit_ret_pct', 0.0)) <= 0

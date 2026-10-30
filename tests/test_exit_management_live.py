@@ -42,6 +42,7 @@ def crypto_loop(monkeypatch):
     state = {
         'signals': {},
         'outcomes': [],
+        'locks': [],
         'price': 103.0,
     }
 
@@ -52,6 +53,10 @@ def crypto_loop(monkeypatch):
     def fake_save_outcome(key, outcome, **kwargs):
         state['outcomes'].append((key, outcome))
 
+    def fake_update_extra(key, extra):
+        state['locks'].append((key, extra))
+        return True
+
     monkeypatch.setattr(
         jobs_crypto.crypto_service, 'get_crypto_data', fake_fetch)
     monkeypatch.setattr(
@@ -59,6 +64,9 @@ def crypto_loop(monkeypatch):
         lambda tickers, retry=3, use_cache=True, priority=False: {})
     monkeypatch.setattr(jobs_crypto.crypto_service, 'get_usd_idr_rate', lambda: 16000)
     monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome', fake_save_outcome)
+    # Penting: kalau tidak dimock, level SL yang digeser ditulis ke DB
+    # bot yang sungguhan.
+    monkeypatch.setattr(jobs_crypto.db, 'update_signal_extra', fake_update_extra)
     monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
         '1': {'notif_crypto': True, 'timeframe': '60'}})
     monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
@@ -419,6 +427,41 @@ class TestSlLockPersisted:
     def test_update_unknown_key_returns_false(self, temp_db):
         db, _ = temp_db
         assert db.update_signal_extra('CRYPTO_TIDAK_ADA', {'sl_lock': 1}) is False
+
+
+class TestSlLockWrite:
+    """Level SL yang digeser harus langsung ditulis ke DB."""
+
+    def test_sl_lock_written_when_it_moves(self, crypto_loop):
+        """Auto-save baru jalan tiap 5 menit.
+
+        Kalau SL geser hanya disimpan di memori, restart di antara dua
+        auto-save kehilangan lock itu dan SL dihitung ulang dari harga
+        terbaru - bisa turun, jadi profit yang sudah terkunci hilang.
+        """
+        from handlers.scheduler import jobs_crypto
+
+        crypto_loop['signals'] = {'CRYPTO_BTC-USD_1': _signal(tp1=True)}
+        crypto_loop['price'] = 103.0        # SL belum kena, posisi hidup
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
+
+        assert crypto_loop['locks'], "SL yang digeser harus disimpan ke DB"
+        key, extra = crypto_loop['locks'][0]
+        assert key == 'CRYPTO_BTC-USD_1'
+        assert extra['sl_lock'] == 100.0    # breakeven = harga entry
+
+    def test_no_write_when_level_unchanged(self, crypto_loop):
+        """Jangan tulis ulang ke DB kalau level SL tidak berubah."""
+        from handlers.scheduler import jobs_crypto
+
+        crypto_loop['signals'] = {'CRYPTO_BTC-USD_1': _signal(
+            tp1=True, sl_lock=100.0)}
+        crypto_loop['price'] = 103.0
+
+        asyncio.run(jobs_crypto.check_crypto_tp_sl(FakeApp()))
+
+        assert crypto_loop['locks'] == []
 
 
 class TestShortBreakeven:

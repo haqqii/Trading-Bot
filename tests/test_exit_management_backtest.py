@@ -163,3 +163,20 @@ class TestComparableWinRate:
 
         assert table.iloc[-1]['win_rate_decided'] == '100%'
         assert table.iloc[-1]['timeout'] == '50%'
+
+    def test_percentages_add_up_to_100(self):
+        """Win + loss + timeout harus 100%.
+
+        Trade timeout yang punya hasil P/L positif sebelumnya ikut
+        dihitung sebagai win, jadi kolomnya melebihi 100%.
+        """
+        trades = (self._trades('tp3', 6.0) * 2 + self._trades('sl', -3.0) + [{
+            'signal': 'BUY', 'quality': 'STRONG', 'risk_reward': 1.5,
+            'outcome': 'timeout', 'exit_ret_pct': 0.5, 'r_multiple': 0.1,
+        }])
+        row = summarize(trades, 0.16).iloc[-1]
+
+        win = int(str(row['win']).rstrip('%'))
+        loss = int(str(row['loss']).rstrip('%'))
+        timeout = int(str(row['timeout']).rstrip('%'))
+        assert win + loss + timeout == 100

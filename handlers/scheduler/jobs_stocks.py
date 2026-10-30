@@ -594,13 +594,15 @@ async def check_stock_tp_sl(app):
                         sl_effective = exit_manager.update_sl(
                             locked, entry, direction, tp_hit,
                             current_price, atr, tp1=tp1)
-                        signals[key]['sl_lock'] = sl_effective
-                        # Langsung disimpan ke DB. Kalau hanya di memori,
-                        # restart sebelum auto-save (tiap 5 menit)
-                        # kehilangan lock ini - SL dihitung ulang dari
-                        # harga terbaru dan bisa turun lagi, jadi profit
-                        # yang sudah terkunci hilang.
-                        db.update_signal_extra(key, {'sl_lock': sl_effective})
+                        # SL yang digeser disimpan ke DB saat itu juga.
+                        # Kalau hanya di memori, restart sebelum auto-save
+                        # (tiap 5 menit) kehilangan lock ini - SL dihitung
+                        # ulang dari harga terbaru dan bisa turun lagi,
+                        # jadi profit yang sudah terkunci hilang.
+                        # Tulis hanya kalau levelnya benar-benar berubah.
+                        if signal_data.get('sl_lock') != sl_effective:
+                            signals[key]['sl_lock'] = sl_effective
+                            db.update_signal_extra(key, {'sl_lock': sl_effective})
 
                     if entry <= 0:
                         continue
