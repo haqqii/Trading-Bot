@@ -595,9 +595,15 @@ class Database:
                 'tp2': 'tp2_hit_at',
                 'tp3': 'tp3_hit_at',
                 'sl': 'sl_hit_at',
+                # Breakeven = SL yang sudah digeser ke entry, jadi SL tetap
+                # yang memicu exit (bukan TP).
+                'beakeven': 'sl_hit_at',
+                # Trailing = SL yang sudah naik (profit terkunci), exit
+                # tetap dipicu SL.
+                'trailing': 'sl_hit_at',
             }
             col = col_map.get(outcome)
-            closed_at = hit_at if outcome in ('tp3', 'sl', 'invalid') else None
+            closed_at = hit_at if outcome in ('tp3', 'sl', 'beakeven', 'trailing', 'invalid') else None
 
             if col:
                 conn.execute(
@@ -710,6 +716,11 @@ class Database:
                 'atr': extra.get('atr') or 0,
                 'user_id': extra.get('user_id'),
                 'timeframe': extra.get('timeframe'),
+                # SL yang sudah digeser (breakeven/trailing) harus ikut
+                # dipulihkan. Kalau tidak, level trailing dihitung ulang dari
+                # harga terbaru setelah restart - SL bisa turun lagi dan
+                # profit yang sudah terkunci hilang.
+                'sl_lock': extra.get('sl_lock'),
                 # Restore tp_hit status from DB
                 'tp_hit': {
                     'tp1': bool(row.get('tp1_hit_at')),
@@ -775,6 +786,7 @@ class Database:
         base = {
             'total': 0, 'open': 0, 'closed': 0,
             'tp1_count': 0, 'tp2_count': 0, 'tp3_count': 0, 'sl_count': 0,
+            'beakeven_count': 0, 'trailing_count': 0,
             'tp_rate': 0.0, 'sl_rate': 0.0, 'avg_tp_hit': 0.0,
         }
         with self._get_conn() as conn:
@@ -797,10 +809,18 @@ class Database:
                     base['tp3_count'] += 1
                 elif o == 'sl':
                     base['sl_count'] += 1
+                elif o == 'beakeven':
+                    base['beakeven_count'] += 1
+                elif o == 'trailing':
+                    base['trailing_count'] += 1
             base['closed'] = (base['tp1_count'] + base['tp2_count'] +
-                              base['tp3_count'] + base['sl_count'])
+                              base['tp3_count'] + base['sl_count'] +
+                              base['beakeven_count'] + base['trailing_count'])
             if base['closed'] > 0:
-                wins = base['tp1_count'] + base['tp2_count'] + base['tp3_count']
+                # Trailing stop menutup posisi di profit (SL sudah naik di
+                # atas entry), jadi dihitung sebagai win - bukan cut loss.
+                wins = (base['tp1_count'] + base['tp2_count'] + base['tp3_count'] +
+                        base['trailing_count'])
                 base['tp_rate'] = round(wins / base['closed'] * 100, 1)
                 base['sl_rate'] = round(base['sl_count'] / base['closed'] * 100, 1)
                 tp_total = base['tp1_count'] + base['tp2_count'] * 2 + base['tp3_count'] * 3

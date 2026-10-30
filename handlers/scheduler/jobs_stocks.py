@@ -16,7 +16,8 @@ import asyncio
 import logging
 
 from services.stock_service import stock_service
-from services.signal_service import calc_tPSL, safe_num
+from services.signal_service import calc_tPSL, safe_num, FEATURES
+from services import exit_manager
 from services.crypto_service import crypto_service
 from services import ticker_health
 from utils.formatters import format_unified_stock_notification, escape_md
@@ -582,6 +583,19 @@ async def check_stock_tp_sl(app):
                         sl = signal_data.get('sl', 0)
                     tp_hit = signal_data.get('tp_hit', {'tp1': False, 'tp2': False, 'tp3': False})
 
+                    # SL efektif: setelah TP1 kena SL digeser ke breakeven,
+                    # setelah TP2 kena SL trailing (minimal di level TP1).
+                    # SL yang sudah digeser tidak boleh turun lagi, jadi
+                    # profit yang terkunci tidak hilang saat harga berbalik.
+                    sl_effective = sl
+                    if FEATURES['exit_mgmt'] and tp_hit.get('tp1'):
+                        direction = 'SHORT' if is_short else 'LONG'
+                        locked = signal_data.get('sl_lock') or sl
+                        sl_effective = exit_manager.update_sl(
+                            locked, entry, direction, tp_hit,
+                            current_price, atr, tp1=tp1)
+                        signals[key]['sl_lock'] = sl_effective
+
                     if entry <= 0:
                         continue
 
@@ -619,31 +633,52 @@ async def check_stock_tp_sl(app):
                     def _profit_pct(price_at):
                         return ((entry - price_at) / entry) * 100 if is_short else ((price_at - entry) / entry) * 100
 
-                    sl_hit = (sl > 0) and (current_price >= sl if is_short else current_price <= sl)
+                    sl_hit = (sl_effective > 0) and (current_price >= sl_effective if is_short else current_price <= sl_effective)
 
                     # === CHECK SL FIRST ===
                     # If SL hit, send SL notification and delete signal immediately.
                     # Skip TP checks to avoid sending TP after SL.
                     if sl_hit:
-                        profit_pct = _profit_pct(current_price)
+                        # Exit kind-nya beda tergantung SL yang sedang aktif:
+                        # - TP1 kena, TP2 belum : SL di entry -> break even
+                        # - TP2 juga kena          : SL trailing -> exit profit
+                        # - belum ada TP kena     : SL asli -> cut loss
+                        if FEATURES['exit_mgmt']:
+                            exit_kind = exit_manager.exit_outcome(tp_hit)
+                        else:
+                            exit_kind = 'sl'
+                        # Exit dihitung di level SL yang aktif (entry atau
+                        # trailing), bukan harga terakhir yang bisa meleset.
+                        exit_price = current_price if exit_kind == 'sl' else sl_effective
+                        profit_pct = _profit_pct(exit_price)
+
+                        notes = {
+                            'beakeven': ('Posisi ditutup di harga entry - TP1 sudah '
+                                         'pernah kena, jadi modal kembali.'),
+                            'trailing': ('Posisi ditutup trailing stop di harga '
+                                         'SL yang sudah naik - profit terkunci.'),
+                        }
+                        notif_types = {'beakeven': 'BE', 'trailing': 'TRAIL'}
 
                         name = signal_data.get('name', ticker)
                         msg = format_unified_stock_notification(
-                            notif_type='SL',
+                            notif_type=notif_types.get(exit_kind, 'SL'),
                             ticker=ticker,
                             name=name,
                             entry=entry,
                             current_price=current_price,
                             tp1=tp1, tp2=tp2, tp3=tp3,
-                            sl=sl,
+                            sl=sl_effective,
                             analysis_data=tp_analysis,
                             change_pct=profit_pct,
-                            profit_loss=profit_pct
+                            profit_loss=profit_pct,
+                            exit_note=notes.get(exit_kind, '')
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
-                        logger.info(f"SL hit: {ticker} at {current_price} - Position closed")
+                        logger.info(f"{exit_kind.upper()} hit: {ticker} at {current_price} - Position closed")
 
-                        db.save_signal_outcome(key, 'sl', closed_price=current_price)
+                        db.save_signal_outcome(key, exit_kind,
+                                               closed_price=exit_price)
 
                         del signals[key]
                         _remove_signal(key)  # Also remove from persisted storage
@@ -671,7 +706,9 @@ async def check_stock_tp_sl(app):
                             sl=sl,
                             analysis_data=tp_analysis,
                             change_pct=profit_pct,
-                            profit_loss=profit_pct
+                            profit_loss=profit_pct,
+                            exit_note=('SL dipindah ke breakeven (harga entry) - '
+                                       'risiko jadi 0.') if FEATURES['exit_mgmt'] else ''
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp1'] = True
@@ -694,7 +731,9 @@ async def check_stock_tp_sl(app):
                             sl=sl,
                             analysis_data=tp_analysis,
                             change_pct=profit_pct,
-                            profit_loss=profit_pct
+                            profit_loss=profit_pct,
+                            exit_note=('SL sekarang trailing (minimal di level TP1) - '
+                                       'profit TP1 terkunci.') if FEATURES['exit_mgmt'] else ''
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp2'] = True

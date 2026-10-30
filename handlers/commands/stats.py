@@ -26,6 +26,8 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         tp2 = s['tp2_count']
         tp3 = s['tp3_count']
         sl = s['sl_count']
+        be = s.get('beakeven_count', 0)
+        trail = s.get('trailing_count', 0)
         wr = s['tp_rate']
         avg = s['avg_tp_hit']
 
@@ -36,6 +38,10 @@ async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             bar = fmt_bar(wr, 100)
             lines.append(f"   {bar} Win Rate: {wr}%")
             lines.append(f"   ✅ TP1: {tp1} | ✅ TP2: {tp2} | ✅ TP3: {tp3} | ❌ SL: {sl}")
+            if be:
+                lines.append(f"   ⚪ Break Even (SL digeser ke entry): {be}")
+            if trail:
+                lines.append(f"   🟢 Trailing stop (profit terkunci): {trail}")
             lines.append(f"   📐 Avg TP reached: {avg}x per win")
         else:
             lines.append("   ⏳ Belum ada sinyal yang ditutup")
