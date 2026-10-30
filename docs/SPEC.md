@@ -29,9 +29,23 @@
 ### Core Features
 
 #### 3.1 Sinyal Trading Otomatis
-- Analisis teknikal untuk saham IDX (contoh: BBCA, BBRI, BMRI, TLKM, UNVR, dll)
-- Indikator: RSI, Moving Average, Support/Resistance
-- Sinyal: BUY ketika oversold + MA crossover, SELL ketika overbought
+- Analisis teknikal untuk saham IDX dan crypto (CoinGecko + Yahoo)
+- Indikator: RSI (Wilder), MA crossover, MACD, Bollinger Bands, VWAP,
+  ADX, Stochastic, Ichimoku, Support/Resistance (pivot + fibonacci +
+  volume profile)
+- Scoring multi-indikator berbobot; sinyal BUY/SELL/REVERSAL dengan
+  kualitas WEAK/MODERATE/STRONG
+- Mesin v2 (akurasi):
+  - Indikator yang hilang di-skip dari scoring dan menurunkan kualitas
+    sinyal (data fallback yang tidak lengkap tidak bisa jadi STRONG)
+  - Konfirmasi trend besar (HTF): sinyal melawan arah besar kehilangan
+    poin ke sisi lawan
+  - TP/SL sadar S/R: TP diklem di depan resistance, SL dipindah ke
+    balik support/resistance yang masuk akal (0.5-3x ATR)
+  - Gate volatilitas ekstrem (ATR% > 6% saham / 10% crypto) menurunkan
+    kualitas sinyal
+- Win rate diukur dengan backtest walk-forward (`scripts/backtest.py`),
+  termasuk mode A/B klasik vs v2 untuk melihat dampak tiap fitur
 
 #### 3.2 Daftar Harga Saham
 - Menampilkan harga real-time dari saham-saham populer
