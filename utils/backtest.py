@@ -28,7 +28,9 @@ from services.signal_service import (
     SignalService,
     set_features,
     get_tPSL_multipliers,
+    FEATURES,
 )
+from services.exit_manager import update_sl
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ def build_data_at(df: pd.DataFrame, i: int, market: str = 'stock',
     from utils.indicators import (
         calculate_rsi, calculate_macd, calculate_bollinger_bands,
         calculate_atr, calculate_vwap, calculate_htf_trend,
-        calculate_volume_metrics, calculate_sr_levels,
+        calculate_volume_metrics, calculate_sr_levels, calculate_adx,
     )
 
     rsi = calculate_rsi(close).iloc[-1]
@@ -69,6 +71,7 @@ def build_data_at(df: pd.DataFrame, i: int, market: str = 'stock',
     vwap_data = calculate_vwap(high, low, close, volume)
     volume_ratio = calculate_volume_metrics(volume)['ratio']
     htf_trend = calculate_htf_trend(close)
+    adx_data = calculate_adx(high, low, close)
 
     try:
         sr_data = calculate_sr_levels(high, low, close, volume)
@@ -99,6 +102,10 @@ def build_data_at(df: pd.DataFrame, i: int, market: str = 'stock',
         'volume_ratio': volume_ratio,
         'vwap': vwap_data['current'],
         'htf_trend': htf_trend,
+        'adx': adx_data['adx_current'],
+        'plus_di': adx_data['plus_di_current'],
+        'minus_di': adx_data['minus_di_current'],
+        'adx_strong': adx_data['strong_trend'],
         'support': support,
         'resistance': resistance,
         'timeframe': timeframe,
@@ -131,13 +138,173 @@ def simulate_outcome(df: pd.DataFrame, i: int, direction: str,
     return 'timeout', end - (i + 1)
 
 
+def simulate_exit(df: pd.DataFrame, i: int, direction: str,
+                  entry: float, tp1: float, tp2: float, tp3: float,
+                  sl: float, atr: float, horizon: int,
+                  manage_exit: bool) -> tuple[str, float, int]:
+    """Simulasi keluar seperti bot live: posisi ditahan sampai TP3/SL/timeout.
+
+    Bot tidak menutup posisi di TP1 - dia cuma memberi tahu, lalu SL
+    digeser ke breakeven. Jadi model 'tp1' (keluar di TP1) tidak
+    menggambarkan produksi. Model ini yang dipakai untuk mengukur dampak
+    aturan keluar.
+
+    `manage_exit` menyalakan aturan SL bergerak:
+    - TP1 kena -> SL ke harga entry (breakeven)
+    - TP2 kena -> SL trailing (minimal di level TP1)
+
+    Bar yang menyentuh SL dan TP sekaligus dihitung SL dulu (pesimis).
+    SL trailing yang baru dibuat di bar yang sama tidak dievaluasi di bar
+    itu juga (SL hanya diperiksa sebelum TP pada bar tersebut).
+
+    Returns (exit_reason, exit_price, bars_held); exit_reason =
+    'tp3' | 'sl' | 'beakeven' | 'trailing' | 'timeout'.
+    """
+    end = min(i + 1 + horizon, len(df))
+    is_short = direction == 'SELL'
+    sl_level = float(sl)
+    tp1_hit = False
+    tp2_hit = False
+
+    for j in range(i + 1, end):
+        bar = df.iloc[j]
+        high = float(bar['High'])
+        low = float(bar['Low'])
+        close = float(bar['Close'])
+
+        # SL dicek lebih dulu (asumsi pesimis, sama seperti bot live).
+        if sl_level:
+            hit_sl = high >= sl_level if is_short else low <= sl_level
+            if hit_sl:
+                if tp2_hit:
+                    reason = 'trailing'
+                elif tp1_hit:
+                    reason = 'beakeven'
+                else:
+                    reason = 'sl'
+                return reason, sl_level, j - i
+
+        if not tp1_hit:
+            hit = low <= tp1 if is_short else high >= tp1
+            if hit:
+                tp1_hit = True
+                if manage_exit:
+                    sl_level = update_sl(sl_level, entry, direction,
+                                         {'tp1': True, 'tp2': False},
+                                         close, atr, tp1=tp1)
+
+        if not tp2_hit:
+            hit = low <= tp2 if is_short else high >= tp2
+            if hit:
+                tp2_hit = True
+                if manage_exit:
+                    # Jangkar trailing pakai ekstrem bar (high untuk BUY),
+                    # supaya SL mengikuti harga tertinggi yang sudah tercapai.
+                    anchor = low if is_short else high
+                    sl_level = update_sl(sl_level, entry, direction,
+                                         {'tp1': True, 'tp2': True},
+                                         anchor, atr, tp1=tp1)
+
+        hit3 = low <= tp3 if is_short else high >= tp3
+        if hit3:
+            return 'tp3', float(tp3), j - i
+
+    last_close = float(df.iloc[end - 1]['Close'])
+    return 'timeout', last_close, end - (i + 1)
+
+
+def simulate_ladder(df: pd.DataFrame, i: int, direction: str,
+                    entry: float, tp1: float, tp2: float, tp3: float,
+                    sl: float, atr: float, horizon: int,
+                    manage_exit: bool) -> tuple[str, float, float, int]:
+    """Simulasi ladder: jual 1/3 di TP1, 1/3 di TP2, sisanya di TP3/SL.
+
+    Ini yang paling dekat dengan kenyataan bot: pesan TP1/TP2/TP3
+    dipakai untuk menutup sebagian posisi, sisanya ikut aturan SL.
+
+    `manage_exit` menyalakan SL bergerak (breakeven setelah TP1, trailing
+    setelah TP2) - bedanya dengan model tanpa aturan keluar inilah yang
+    diukur.
+
+    Returns (exit_reason, realized_return, r_multiple, bars_held);
+    realized_return dalam satuan harga (bukan persen).
+    """
+    end = min(i + 1 + horizon, len(df))
+    is_short = direction == 'SELL'
+    sl_level = float(sl)
+    risk = abs(entry - float(sl))
+    tp1_hit = False
+    tp2_hit = False
+    remaining = 1.0
+    realized = 0.0
+
+    def ret(price: float) -> float:
+        return (price - entry) if not is_short else (entry - price)
+
+    def r_mult(value: float) -> float:
+        return value / risk if risk else 0.0
+
+    for j in range(i + 1, end):
+        bar = df.iloc[j]
+        high = float(bar['High'])
+        low = float(bar['Low'])
+        close = float(bar['Close'])
+
+        if remaining > 0 and sl_level:
+            hit_sl = high >= sl_level if is_short else low <= sl_level
+            if hit_sl:
+                realized += remaining * ret(sl_level)
+                if tp2_hit:
+                    reason = 'trailing'
+                elif tp1_hit:
+                    reason = 'beakeven'
+                else:
+                    reason = 'sl'
+                return reason, realized, r_mult(realized), j - i
+
+        if not tp1_hit and (low <= tp1 if is_short else high >= tp1):
+            tp1_hit = True
+            realized += (1 / 3) * ret(tp1)
+            remaining -= (1 / 3)
+            if manage_exit:
+                sl_level = update_sl(sl_level, entry, direction,
+                                     {'tp1': True, 'tp2': False},
+                                     close, atr, tp1=tp1)
+
+        if not tp2_hit and (low <= tp2 if is_short else high >= tp2):
+            tp2_hit = True
+            realized += (1 / 3) * ret(tp2)
+            remaining -= (1 / 3)
+            if manage_exit:
+                anchor = low if is_short else high
+                sl_level = update_sl(sl_level, entry, direction,
+                                     {'tp1': True, 'tp2': True},
+                                     anchor, atr, tp1=tp1)
+
+        if (low <= tp3) if is_short else (high >= tp3):
+            realized += remaining * ret(tp3)
+            remaining = 0.0
+            return 'tp3', realized, r_mult(realized), j - i
+
+    realized += remaining * ret(float(df.iloc[end - 1]['Close']))
+    return 'timeout', realized, r_mult(realized), end - (i + 1)
+
+
 def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
                  horizon: int = 40, cooldown_bars: int = 12,
-                 features: Optional[Dict[str, bool]] = None) -> List[Dict[str, Any]]:
+                 features: Optional[Dict[str, bool]] = None,
+                 exit_model: str = 'tp1') -> List[Dict[str, Any]]:
     """Jalankan mesin sinyal bar demi bar; kembalikan daftar trade.
 
     features: flag mesin yang di-set selama backtest lalu dikembalikan ke
     semula (untuk A/B - lihat set_features di signal_service).
+
+    exit_model:
+    - 'tp1'    : keluar penuh di TP1 atau SL (model lama, tidak dipakai
+                 untuk mengukur aturan keluar).
+    - 'signal' : ditahan sampai TP3/SL/timeout, seperti bot live.
+    - 'ladder' : jual 1/3 di TP1, 1/3 di TP2, sisanya di TP3/SL - paling
+                 dekat dengan pemakaian bot (partial profit saat TP kena).
     """
     if market == 'crypto':
         engine = SignalService.generate_crypto_signal
@@ -167,9 +334,6 @@ def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
                 continue
             last_fire[direction] = i
 
-            outcome, bars = simulate_outcome(df, i, direction,
-                                             float(s['tp1']), float(s['sl']),
-                                             horizon)
             m = get_tPSL_multipliers(timeframe)
             tp1_ret = (s['tp1'] - data['price']) / data['price'] * 100
             if direction == 'SELL':
@@ -177,20 +341,61 @@ def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
             sl_ret = (s['sl'] - data['price']) / data['price'] * 100
             if direction == 'SELL':
                 sl_ret = -sl_ret
-            trades.append({
+
+            trade: Dict[str, Any] = {
                 'bar': i,
                 'signal': signal,
                 'quality': s.get('quality', 'WEAK'),
                 'buy_score': s.get('buy_score', 0),
                 'sell_score': s.get('sell_score', 0),
                 'htf_trend': data.get('htf_trend'),
-                'outcome': outcome,
-                'bars': bars,
+                'regime': s.get('regime', 'none'),
                 'tp1_ret_pct': tp1_ret,
                 'sl_ret_pct': sl_ret,
                 'risk_reward': abs(tp1_ret / sl_ret) if sl_ret else 0,
                 'max_tp_mult': m['tp1'],
-            })
+            }
+
+            if exit_model == 'signal':
+                reason, exit_price, bars = simulate_exit(
+                    df, i, direction, data['price'],
+                    float(s['tp1']), float(s['tp2']), float(s['tp3']),
+                    float(s['sl']), float(data.get('atr') or 0), horizon,
+                    manage_exit=FEATURES['exit_mgmt'])
+                risk = abs(float(s['sl']) - data['price'])
+                if direction == 'SELL':
+                    r_mult = (data['price'] - exit_price) / risk if risk else 0.0
+                else:
+                    r_mult = (exit_price - data['price']) / risk if risk else 0.0
+                trade.update({
+                    'outcome': reason,
+                    'bars': bars,
+                    'exit_price': exit_price,
+                    'r_multiple': r_mult,
+                    'exit_ret_pct': ((exit_price - data['price']) / data['price'] * 100
+                                     if direction == 'BUY'
+                                     else (data['price'] - exit_price) / data['price'] * 100),
+                })
+            elif exit_model == 'ladder':
+                reason, realized, r_mult, bars = simulate_ladder(
+                    df, i, direction, data['price'],
+                    float(s['tp1']), float(s['tp2']), float(s['tp3']),
+                    float(s['sl']), float(data.get('atr') or 0), horizon,
+                    manage_exit=FEATURES['exit_mgmt'])
+                trade.update({
+                    'outcome': reason,
+                    'bars': bars,
+                    'exit_price': data['price'] + realized,
+                    'r_multiple': r_mult,
+                    'exit_ret_pct': realized / data['price'] * 100,
+                })
+            else:
+                outcome, bars = simulate_outcome(df, i, direction,
+                                                 float(s['tp1']), float(s['sl']),
+                                                 horizon)
+                trade.update({'outcome': outcome, 'bars': bars})
+
+            trades.append(trade)
     finally:
         if saved:
             set_features(**saved)
@@ -200,29 +405,57 @@ def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
 def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFrame:
     """Rekap per sinyal & kualitas: win rate, ekspektansi neto per trade.
 
-    Ekspektansi = rata-rata PnL per trade mengasumsikan keluar penuh di
-    TP1 (profit) atau SL (rugi), dikurangi fee. Timeout dihitung 0.
+    Dua model exit didukung:
+
+    - model lama ('tp1'): keluar penuh di TP1 (profit) atau SL (rugi).
+      Timeout = 0.
+    - model 'signal': keluar di TP3/SL/timeout seperti bot live. PnL
+      diambil dari harga exit, dan expectancy juga dihitung dalam satuan R
+      (1R = jarak entry ke SL awal) supaya bisa dibandingkan antar simbol
+      yang punya jarak SL berbeda-beda.
     """
     if not trades:
         return pd.DataFrame()
 
+    live_model = 'exit_ret_pct' in trades[0]
+
     def pnl(t: Dict[str, Any]) -> float:
+        if live_model:
+            return float(t.get('exit_ret_pct', 0.0)) - fee_pct
         if t['outcome'] == 'tp1':
             return t['tp1_ret_pct'] - fee_pct
         if t['outcome'] == 'sl':
             return t['sl_ret_pct'] - fee_pct
         return 0.0
 
+    def is_win(t: Dict[str, Any]) -> bool:
+        if live_model:
+            return t['outcome'] in ('tp3', 'trailing')
+        return t['outcome'] == 'tp1'
+
+    def is_loss(t: Dict[str, Any]) -> bool:
+        # Di model live, 'beakeven' bukan win dan bukan loss: modal
+        # kembali, jadi tidak masuk hitungan win rate yang dihitung dari
+        # trade yang sudah diputuskan.
+        return t['outcome'] == 'sl'
+
     rows = []
     df = pd.DataFrame(trades)
     df['pnl'] = df.apply(pnl, axis=1)
+    if live_model:
+        df['win'] = df.apply(is_win, axis=1)
+        df['loss'] = df.apply(is_loss, axis=1)
+    else:
+        df['win'] = df['outcome'] == 'tp1'
+        df['loss'] = df['outcome'] == 'sl'
+
     for (signal, quality), g in df.groupby(['signal', 'quality']):
         n = len(g)
-        wins = int((g['outcome'] == 'tp1').sum())
-        losses = int((g['outcome'] == 'sl').sum())
+        wins = int(g['win'].sum())
+        losses = int(g['loss'].sum())
         timeouts = int((g['outcome'] == 'timeout').sum())
         decided = wins + losses
-        rows.append({
+        row = {
             'signal': signal,
             'quality': quality,
             'n': n,
@@ -233,13 +466,16 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
             'avg_RR': f"{g['risk_reward'].mean():.2f}",
             'exp_net_%': f"{g['pnl'].mean():+.2f}",
             'total_pnl_%': f"{g['pnl'].sum():+.1f}",
-        })
+        }
+        if live_model:
+            row['exp_R'] = f"{g['r_multiple'].mean():+.2f}"
+        rows.append(row)
     out = pd.DataFrame(rows)
     # Total keseluruhan di baris terakhir
-    wins = int((df['outcome'] == 'tp1').sum())
-    losses = int((df['outcome'] == 'sl').sum())
+    wins = int(df['win'].sum())
+    losses = int(df['loss'].sum())
     decided = wins + losses
-    out.loc[len(out)] = {
+    total = {
         'signal': 'TOTAL', 'quality': '-', 'n': len(df),
         'tp1': f"{wins / len(df) * 100:.0f}%",
         'sl': f"{losses / len(df) * 100:.0f}%",
@@ -249,6 +485,9 @@ def summarize(trades: List[Dict[str, Any]], fee_pct: float = 0.0) -> pd.DataFram
         'exp_net_%': f"{df['pnl'].mean():+.2f}",
         'total_pnl_%': f"{df['pnl'].sum():+.1f}",
     }
+    if live_model:
+        total['exp_R'] = f"{df['r_multiple'].mean():+.2f}"
+    out.loc[len(out)] = total
     return out
 
 
@@ -262,7 +501,8 @@ def compare_features(df: pd.DataFrame, market: str = 'stock',
     {'classic_trades', 'v2_trades'}.
     """
     classic_flags = {k: False for k in (
-        'htf_trend', 'sr_tpsl', 'vol_gate', 'degraded_cap', 'vwap_crypto')}
+        'htf_trend', 'sr_tpsl', 'vol_gate', 'degraded_cap', 'vwap_crypto',
+        'regime_gate', 'exit_mgmt')}
     classic_trades = run_backtest(df, market, timeframe, horizon, cooldown_bars,
                                   features=classic_flags)
     v2_trades = run_backtest(df, market, timeframe, horizon, cooldown_bars,
@@ -272,4 +512,47 @@ def compare_features(df: pd.DataFrame, market: str = 'stock',
         'v2': summarize(v2_trades, fee_pct),
         'classic_trades': classic_trades,
         'v2_trades': v2_trades,
+    }
+
+
+def compare_regime_gate(df: pd.DataFrame, market: str = 'stock',
+                         timeframe: str = '60', horizon: int = 40,
+                         cooldown_bars: int = 12,
+                         fee_pct: float = 0.0) -> Dict[str, Any]:
+    """A/B regime gate (ADX): aturan trend/range aktif vs tidak.
+
+    Pakai model exit 'tp1' supaya win rate-nya bisa dibandingkan langsung
+    dengan angka yang sudah pernah dilaporkan (klasik vs v2).
+    """
+    off = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                       features={'regime_gate': False})
+    on = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                      features={'regime_gate': True})
+    return {
+        'tanpa_regime': summarize(off, fee_pct),
+        'dengan_regime': summarize(on, fee_pct),
+        'trades_off': off,
+        'trades_on': on,
+    }
+
+
+def compare_exit_mgmt(df: pd.DataFrame, market: str = 'stock',
+                      timeframe: str = '60', horizon: int = 40,
+                      cooldown_bars: int = 12,
+                      fee_pct: float = 0.0,
+                      exit_model: str = 'ladder') -> Dict[str, Any]:
+    """A/B aturan keluar: SL diam vs SL bergerak (breakeven + trailing).
+
+    Dua lengan memakai model exit yang sama (ladder: partial profit di
+    TP1/TP2), jadi bedanya murni dari aturan SL - bukan dari sinyal entry.
+    """
+    off = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                       features={'exit_mgmt': False}, exit_model=exit_model)
+    on = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                      features={'exit_mgmt': True}, exit_model=exit_model)
+    return {
+        'tanpa_exit_mgmt': summarize(off, fee_pct),
+        'dengan_exit_mgmt': summarize(on, fee_pct),
+        'trades_off': off,
+        'trades_on': on,
     }
