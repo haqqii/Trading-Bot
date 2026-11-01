@@ -786,3 +786,50 @@ class TestFormatAnalisaPemula:
         # Explanatory captions per spec
         assert 'menahan penurunan' in result
         assert 'menahan kenaikan' in result
+
+
+class TestFormatUnifiedCrypto:
+    """Notifikasi crypto tidak boleh gagal total karena SL kosong.
+
+    Sinyal REVERSAL dulu tidak punya TP/SL sama sekali (calc_tPSL
+    menolaknya), jadi sl=None sampai ke formatter. mathsanya
+    (sl - entry) meledak jadi TypeError, notifikasi gagal, dan karena
+    seluruh blok notifikasi + simpan DB ada dalam satu try/except,
+    sinyalnya tidak pernah tersimpan sama sekali.
+    """
+
+    def _kwargs(self, **over):
+        base = dict(
+            notif_type='REVERSAL',
+            ticker='TEST-USD',
+            name='Test Coin',
+            entry=100.0,
+            current_price=100.0,
+            tp1=102.0,
+            tp2=104.0,
+            tp3=107.0,
+            sl=None,
+            analysis_data={'indicators': {'atr': 1.0}},
+        )
+        base.update(over)
+        return base
+
+    def test_sl_none_does_not_crash(self):
+        from utils.formatters import format_unified_crypto_notification
+
+        msg = format_unified_crypto_notification(**self._kwargs())
+        assert isinstance(msg, str)
+        assert 'TEST' in msg
+
+    def test_sl_none_with_atr_zero_does_not_crash(self):
+        from utils.formatters import format_unified_crypto_notification
+
+        msg = format_unified_crypto_notification(
+            **self._kwargs(analysis_data={'indicators': {'atr': 0}}))
+        assert isinstance(msg, str)
+
+    def test_normal_sl_still_shows_percentage(self):
+        from utils.formatters import format_unified_crypto_notification
+
+        msg = format_unified_crypto_notification(**self._kwargs(sl=97.0))
+        assert '-3.0%' in msg

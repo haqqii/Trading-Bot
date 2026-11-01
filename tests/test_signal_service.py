@@ -387,6 +387,20 @@ class TestTimeframeAwareTPSL:
         assert tpsl['tp2'] is None
         assert tpsl['tp3'] is None
 
+    def test_calc_tpsl_reversal_is_long(self):
+        """REVERSAL = setup rebound, jadi arahnya LONG (sama seperti BUY).
+
+        Sebelumnya REVERSAL tidak masuk daftar yang boleh dihitung, jadi
+        TP/SL-nya None - notifikasi REVERSAL lalu crash di formatter dan
+        sinyalnya tidak pernah tersimpan.
+        """
+        tpsl = calc_tPSL('REVERSAL', 100, 1.0, '60')
+        assert tpsl['sl'] == 97.0     # 100 - 3.0
+        assert tpsl['tp1'] == 102.0   # 100 + 2.0
+        assert tpsl['tp2'] == 104.0   # 100 + 4.0
+        assert tpsl['tp3'] == 107.0   # 100 + 7.0
+        assert tpsl['sl'] < 100 < tpsl['tp1']
+
     def test_default_timeframe(self):
         """Unknown timeframe should default to swing (safest option)."""
         tpsl = calc_tPSL('BUY', 100, 1.0, '999')

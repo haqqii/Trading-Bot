@@ -91,8 +91,11 @@ def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:
                 msg += f"│ 🎯 TP1: Rp {s['tp1']:,.0f} (+{tp1_pct:.1f}%)\n"
                 msg += f"│ 🎯 TP2: Rp {s['tp2']:,.0f} (+{tp2_pct:.1f}%)\n"
                 msg += f"│ 🎯 TP3: Rp {s['tp3']:,.0f} (+{tp3_pct:.1f}%)\n"
-            sl_pct = ((s['entry'] - s['sl']) / s['entry']) * 100
-            msg += f"│ 🛡️ SL: Rp {s['sl']:,.0f} (-{sl_pct:.1f}%)\n"
+            # Sinyal tanpa SL (mis. data bolong) tidak boleh bikin
+            # notifikasi gagal total - lewati baris SL-nya saja.
+            if s.get('sl'):
+                sl_pct = ((s['entry'] - s['sl']) / s['entry']) * 100
+                msg += f"│ 🛡️ SL: Rp {s['sl']:,.0f} (-{sl_pct:.1f}%)\n"
             msg += f"│ 📊 RSI: {rsi:.0f} | MACD: {macd_hist:+.4f} | Vol: {vol_ratio:.1f}x\n"
             msg += f"│ 🎯 Score: {score}pts | Quality: {quality}\n└\n"
 
@@ -109,8 +112,9 @@ def format_signal_msg(signals: List[Tuple], tf: str = '5') -> str:
 
             msg += f"┌ {escape_md(t)} - {escape_md(n)} {quality_emoji}\n"
             msg += f"│ 💰 Entry: Rp {s['entry']:,.0f}\n"
-            sl_pct = ((s['sl'] - s['entry']) / s['entry']) * 100
-            msg += f"│ 🛡️ SL: Rp {s['sl']:,.0f} (+{sl_pct:.1f}%)\n"
+            if s.get('sl'):
+                sl_pct = ((s['sl'] - s['entry']) / s['entry']) * 100
+                msg += f"│ 🛡️ SL: Rp {s['sl']:,.0f} (+{sl_pct:.1f}%)\n"
             msg += f"│ 📊 RSI: {rsi:.0f} | MACD: {macd_hist:+.4f} | Vol: {vol_ratio:.1f}x\n"
             msg += f"│ 🎯 Score: {score}pts | Quality: {quality}\n└\n"
 
@@ -456,7 +460,10 @@ def format_unified_crypto_notification(
 
     if entry > 0 and atr_val > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
-        sl_pct = ((sl - entry) / entry) * 100
+        # sl bisa None kalau sinyal tidak punya stop (mis. data bolong).
+        # Tanpa guard di sini, satu sinyal tanpa SL bikin notifikasi gagal
+        # total (TypeError) dan sinyalnya tidak tersimpan.
+        sl_pct = ((sl - entry) / entry) * 100 if sl else 0
         gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
     else:
         if notif_type == 'BUY':
@@ -527,7 +534,8 @@ def format_unified_crypto_notification(
 
     # Entry / TP / SL
     sl_display = sl
-    sl_pct_dynamic = ((sl - entry) / entry) * 100 if entry > 0 and atr_val > 0 else -3
+    # sl bisa None kalau sinyal tidak punya stop (mis. REVERSAL dulu).
+    sl_pct_dynamic = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -3
     sl_label = f"*({sl_pct_dynamic:+.1f}%)*"
 
     if notif_type == 'TP1':
@@ -680,7 +688,7 @@ def format_unified_stock_notification(
 
     if entry > 0 and atr_val > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
-        sl_pct = ((sl - entry) / entry) * 100
+        sl_pct = ((sl - entry) / entry) * 100 if sl else 0
         gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
     else:
         gain_str = '+1% → +3% ⚡️'
@@ -753,7 +761,7 @@ def format_unified_stock_notification(
         lines.append(f"📐 ATR14: Rp {atr_val:,.0f} ({(atr_val/entry)*100:.1f}% vol)")
 
     sl_display = sl
-    sl_pct = ((sl - entry) / entry) * 100 if entry > 0 and atr_val > 0 else -1.5
+    sl_pct = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -1.5
     sl_label = f"*({sl_pct:+.1f}%)*"
     if notif_type == 'TP1':
         sl_display = entry
@@ -991,7 +999,7 @@ def format_analisa_simple(
     if tp3 > 0:
         tp3_pct = ((tp3 - entry) / entry) * 100 if entry > 0 else 0
         lines.append(f"  • TP3: {fp(tp3, with_idr=True)} ({tp3_pct:+.1f}%)")
-    if sl > 0:
+    if sl and sl > 0:
         sl_pct = ((sl - entry) / entry) * 100 if entry > 0 else 0
         lines.append(f"  • SL: {fp(sl, with_idr=True)} ({sl_pct:+.1f}%)")
 
