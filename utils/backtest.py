@@ -31,11 +31,95 @@ from services.signal_service import (
     FEATURES,
 )
 from services.exit_manager import update_sl
+from utils.strategy import passes_trend_gate
 
 logger = logging.getLogger(__name__)
 
 # Bar minimal sebelum sinyal pertama dinilai (MA lambat HTF = 100 + buffer)
 WARMUP_BARS = 110
+
+# Urutan kualitas untuk gerbang --min-quality (sama dengan signal_service)
+QUALITY_RANK = {'WEAK': 0, 'MODERATE': 1, 'STRONG': 2}
+
+# Batas gerak harga per bar yang masih mungkin terjadi (persen). Crypto
+# kecil bisa bergerak 3x dalam sehari, tapi lonjakan lebih besar hampir
+# selalu berarti data rusak: beberapa token punya seri Yahoo dengan
+# SKALA harga yang berubah (migrasi/redenominasi token), sehingga close
+# melonjak 100x. Satu bar seperti itu menghasilkan "loss" -44.000% dan
+# satu ticker bisa menghapus seluruh rata-rata ekspektansi.
+IMPLAUSIBLE_MOVE_PCT = 300.0
+
+
+def find_data_problems(df: pd.DataFrame) -> List[str]:
+    """Cek kualitas seri OHLCV; list kosong = aman dipakai.
+
+    Yang dicek:
+    - bar yang bergerak lebih dari IMPLAUSIBLE_MOVE_PCT persen (skala
+      harga berubah / data rusak);
+    - seri beku: harga_close tidak bergerak sama sekali dari awal sampai
+      akhir (ticker yang di-delist lalu datanya dibekukan).
+    """
+    problems: List[str] = []
+    if df is None or len(df) < 2:
+        return problems
+    try:
+        close = df['Close'].astype(float)
+    except (KeyError, TypeError, ValueError):
+        return ['kolom Close tidak bisa dibaca']
+    ret = close.pct_change() * 100
+    n_bad = int((ret.abs() > IMPLAUSIBLE_MOVE_PCT).sum())
+    if n_bad:
+        problems.append(
+            f'{n_bad} bar bergerak > {IMPLAUSIBLE_MOVE_PCT:.0f}% '
+            '(skala harga berubah)')
+    try:
+        if float(close.std()) == 0:
+            problems.append('harga tidak bergerak sama sekali (seri beku)')
+    except (TypeError, ValueError):
+        pass
+    return problems
+
+
+def _momentum_at(df: pd.DataFrame, i: int, bars: int) -> Optional[float]:
+    """Perubahan harga (%) dalam `bars` bar terakhir, tanpa bar berikutnya."""
+    if i < bars:
+        return None
+    close = df['Close'].astype(float)
+    try:
+        now = float(close.iloc[i])
+        prev = float(close.iloc[i - bars])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not prev:
+        return None
+    return (now - prev) / prev * 100
+
+
+def _rsi_at(df: pd.DataFrame, i: int) -> Optional[float]:
+    """RSI 14 di bar i (data sampai bar i saja)."""
+    window = df['Close'].iloc[:i + 1]
+    if len(window) < 15:
+        return None
+    from utils.indicators import calculate_rsi
+    try:
+        val = float(calculate_rsi(window, 14).iloc[-1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return None if val != val else val
+
+
+def _adx_at(df: pd.DataFrame, i: int) -> Optional[float]:
+    """ADX di bar i (data sampai bar i saja)."""
+    window = df.iloc[:i + 1]
+    if len(window) < 15:
+        return None
+    from utils.indicators import calculate_adx
+    try:
+        val = float(calculate_adx(window['High'], window['Low'],
+                                  window['Close'])['adx_current'])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    return None if val != val else val
 
 
 def build_data_at(df: pd.DataFrame, i: int, market: str = 'stock',
@@ -307,21 +391,58 @@ def simulate_ladder(df: pd.DataFrame, i: int, direction: str,
     return 'timeout', realized, r_mult(realized), end - (i + 1)
 
 
-def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
-                 horizon: int = 40, cooldown_bars: int = 12,
-                 features: Optional[Dict[str, bool]] = None,
-                 exit_model: str = 'tp1') -> List[Dict[str, Any]]:
-    """Jalankan mesin sinyal bar demi bar; kembalikan daftar trade.
+def simulate_chandelier(df: pd.DataFrame, i: int, direction: str,
+                        entry: float, atr: float, stop_atr: float,
+                        trail_atr: float, horizon: int) -> tuple[float, int, str]:
+    """Exit trailing chandelier: stop mengikuti ekstrem sejak entry.
+
+    Stop = (ekstrem sejak entry) -/+ trail_atr x ATR, tapi tidak boleh lebih
+    longgar dari stop awal (entry -/+ stop_atr x ATR). Bar yang menyentuh stop
+    diisi di harga close kalau lebih buruk dari level stop (konservatif,
+    sama seperti _exit_fill_price).
+
+    Returns (exit_price, bars_held, exit_reason).
+    """
+    end = min(i + 1 + horizon, len(df))
+    is_short = direction == 'SELL'
+    best = entry
+    sl_level = entry - stop_atr * atr if not is_short else entry + stop_atr * atr
+
+    for j in range(i + 1, end):
+        bar = df.iloc[j]
+        high = float(bar['High'])
+        low = float(bar['Low'])
+        close = float(bar['Close'])
+
+        if is_short:
+            best = min(best, low)
+            trail = best + trail_atr * atr
+            sl_level = min(sl_level, trail)   # stop short turun (lebih ketat)
+            if high >= sl_level:
+                return _exit_fill_price(sl_level, close, is_short), j - i, 'trail'
+        else:
+            best = max(best, high)
+            trail = best - trail_atr * atr
+            sl_level = max(sl_level, trail)   # stop long naik (lebih ketat)
+            if low <= sl_level:
+                return _exit_fill_price(sl_level, close, is_short), j - i, 'trail'
+
+    return float(df.iloc[end - 1]['Close']), end - (i + 1), 'timeout'
+
+
+def collect_signals(df: pd.DataFrame, market: str = 'stock',
+                    timeframe: str = '60',
+                    features: Optional[Dict[str, bool]] = None
+                    ) -> List[Dict[str, Any]]:
+    """Jalankan mesin sinyal bar demi bar; kumpulkan kandidat mentah.
+
+    Dipisah dari simulasi exit supaya matriks eksperimen (filter berbeda,
+    model exit berbeda) tidak perlu menjalankan ulang mesin sinyal - itu
+    bagian paling mahal. Cooldown, gerbang, dan simulasi exit diterapkan
+    di run_backtest.
 
     features: flag mesin yang di-set selama backtest lalu dikembalikan ke
     semula (untuk A/B - lihat set_features di signal_service).
-
-    exit_model:
-    - 'tp1'    : keluar penuh di TP1 atau SL (model lama, tidak dipakai
-                 untuk mengukur aturan keluar).
-    - 'signal' : ditahan sampai TP3/SL/timeout, seperti bot live.
-    - 'ladder' : jual 1/3 di TP1, 1/3 di TP2, sisanya di TP3/SL - paling
-                 dekat dengan pemakaian bot (partial profit saat TP kena).
     """
     if market == 'crypto':
         engine = SignalService.generate_crypto_signal
@@ -332,8 +453,7 @@ def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
     if features:
         saved = set_features(**features)
 
-    trades: List[Dict[str, Any]] = []
-    last_fire: Dict[str, int] = {}  # direction -> bar index terakhir sinyal
+    signals: List[Dict[str, Any]] = []
     try:
         for i in range(WARMUP_BARS, len(df) - 1):
             data = build_data_at(df, i, market, timeframe)
@@ -341,81 +461,232 @@ def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
                 continue
             s = engine(data)
             signal = s.get('signal')
-            if signal not in ('BUY', 'SELL'):
+            if signal not in ('BUY', 'SELL', 'REVERSAL'):
                 continue
             if not s.get('tp1') or not s.get('sl'):
                 continue
-
-            direction = signal
-            if i - last_fire.get(direction, -9999) < cooldown_bars:
-                continue
-            last_fire[direction] = i
-
-            m = get_tPSL_multipliers(timeframe)
-            tp1_ret = (s['tp1'] - data['price']) / data['price'] * 100
-            if direction == 'SELL':
-                tp1_ret = -tp1_ret
-            sl_ret = (s['sl'] - data['price']) / data['price'] * 100
-            if direction == 'SELL':
-                sl_ret = -sl_ret
-
-            trade: Dict[str, Any] = {
+            # REVERSAL = setup rebound (long). Arah trade-nya BUY, tapi
+            # jenis sinyalnya tetap disimpan supaya bisa diukur terpisah.
+            direction = 'SELL' if signal == 'SELL' else 'BUY'
+            signals.append({
                 'bar': i,
-                'signal': signal,
+                'signal': direction,
+                'signal_type': signal,
                 'quality': s.get('quality', 'WEAK'),
                 'buy_score': s.get('buy_score', 0),
                 'sell_score': s.get('sell_score', 0),
                 'htf_trend': data.get('htf_trend'),
                 'regime': s.get('regime', 'none'),
-                'tp1_ret_pct': tp1_ret,
-                'sl_ret_pct': sl_ret,
-                'risk_reward': abs(tp1_ret / sl_ret) if sl_ret else 0,
-                'max_tp_mult': m['tp1'],
-            }
-
-            if exit_model == 'signal':
-                reason, exit_price, bars = simulate_exit(
-                    df, i, direction, data['price'],
-                    float(s['tp1']), float(s['tp2']), float(s['tp3']),
-                    float(s['sl']), float(data.get('atr') or 0), horizon,
-                    manage_exit=FEATURES['exit_mgmt'])
-                risk = abs(float(s['sl']) - data['price'])
-                if direction == 'SELL':
-                    r_mult = (data['price'] - exit_price) / risk if risk else 0.0
-                else:
-                    r_mult = (exit_price - data['price']) / risk if risk else 0.0
-                trade.update({
-                    'outcome': reason,
-                    'bars': bars,
-                    'exit_price': exit_price,
-                    'r_multiple': r_mult,
-                    'exit_ret_pct': ((exit_price - data['price']) / data['price'] * 100
-                                     if direction == 'BUY'
-                                     else (data['price'] - exit_price) / data['price'] * 100),
-                })
-            elif exit_model == 'ladder':
-                reason, realized, r_mult, bars = simulate_ladder(
-                    df, i, direction, data['price'],
-                    float(s['tp1']), float(s['tp2']), float(s['tp3']),
-                    float(s['sl']), float(data.get('atr') or 0), horizon,
-                    manage_exit=FEATURES['exit_mgmt'])
-                trade.update({
-                    'outcome': reason,
-                    'bars': bars,
-                    'exit_price': data['price'] + realized,
-                    'r_multiple': r_mult,
-                    'exit_ret_pct': realized / data['price'] * 100,
-                })
-            else:
-                outcome, bars = simulate_outcome(df, i, direction,
-                                                 float(s['tp1']), float(s['sl']),
-                                                 horizon)
-                trade.update({'outcome': outcome, 'bars': bars})
-
-            trades.append(trade)
+                'price': float(data['price']),
+                'atr': float(data.get('atr') or 0),
+                'tp1': float(s['tp1']),
+                'tp2': float(s['tp2']),
+                'tp3': float(s['tp3']),
+                'sl': float(s['sl']),
+                # Momentum 10 bar (persen) - untuk mengukur "menangkap
+                # pisau jatuh": sinyal BUY saat harga sedang turun hard.
+                'mom_10': _momentum_at(df, i, 10),
+                'rsi': _rsi_at(df, i),
+                'adx': _adx_at(df, i),
+            })
     finally:
         if saved:
             set_features(**saved)
+    return signals
+
+
+def run_backtest(df: pd.DataFrame, market: str = 'stock', timeframe: str = '60',
+                 horizon: int = 40, cooldown_bars: int = 12,
+                 features: Optional[Dict[str, bool]] = None,
+                 exit_model: str = 'tp1',
+                 min_quality: Optional[str] = None,
+                 long_only: bool = False,
+                 htf_align: bool = False,
+                 max_sl_pct: Optional[float] = None,
+                 momentum_guard: Optional[float] = None,
+                 signal_types: Optional[List[str]] = None,
+                 trend_gate: bool = False,
+                 signals: Optional[List[Dict[str, Any]]] = None
+                 ) -> List[Dict[str, Any]]:
+    """Jalankan mesin sinyal bar demi bar; kembalikan daftar trade.
+
+    features: flag mesin yang di-set selama backtest lalu dikembalikan ke
+    semula (untuk A/B - lihat set_features di signal_service).
+
+    min_quality / long_only / htf_align: gerbang sinyal - sinyal yang tidak
+    lolos dilewati SEBELUM pembukuan cooldown, meniru bot live yang tidak
+    mengirimnya (sinyal tersembunyi tidak boleh menelan slot cooldown
+    sinyal yang lolos).
+
+    htf_align: 'with' = hanya boleh BUY kalau tren HTF 'up' dan SELL kalau
+    'down'; 'counter' = sebaliknya (BUY saat tren turun = beli dip, SELL
+    saat tren naik = jual rally). Filter keras arah trend, bukan sekadar
+    bonus skor.
+
+    max_sl_pct: batas jarak SL dari entry (persen). SL yang lebih jauh
+    dicapit ke batas ini, jadi risiko per trade ada plafonnya.
+
+    momentum_guard: ambang momentum 10 bar (persen). BUY dilewati kalau
+    harga turun lebih dari ambang itu (jangan menangkap pisau jatuh),
+    SELL dilewati kalau harga naik lebih dari ambang itu.
+
+    signal_types: jenis sinyal yang boleh dipakai (BUY/SELL/REVERSAL).
+    Kalau None, semua jenis dipakai.
+
+    trend_gate: pakai aturan gerbang tren yang sama dengan mesin live
+    (utils/strategy.passes_trend_gate), jadi angka di SPEC 3.1.2 bisa
+    direproduksi persis. Kalau True, htf_align/signal_types yang lain
+    diabaikan - aturan yang diukur tinggal satu.
+
+    signals: kandidat dari collect_signals - kalau sudah dikumpulkan, mesin
+    sinyal tidak dijalankan lagi (hemat waktu untuk eksperimen).
+
+    exit_model:
+    - 'tp1'    : keluar penuh di TP1 atau SL (model lama, tidak dipakai
+                 untuk mengukur aturan keluar).
+    - 'signal' : ditahan sampai TP3/SL/timeout, seperti bot live.
+    - 'ladder' : jual 1/3 di TP1, 1/3 di TP2, sisanya di TP3/SL - paling
+                 dekat dengan pemakaian bot (partial profit saat TP kena).
+    """
+    if signals is None:
+        signals = collect_signals(df, market, timeframe, features)
+
+    trades: List[Dict[str, Any]] = []
+    last_fire: Dict[str, int] = {}  # direction -> bar index terakhir sinyal
+    for sig in signals:
+        i = sig['bar']
+        direction = sig['signal']
+        price = sig['price']
+        sl = sig['sl']
+        if signal_types and sig.get('signal_type', direction) not in signal_types:
+            continue
+        if long_only and direction != 'BUY':
+            continue
+        if min_quality and QUALITY_RANK.get(sig['quality'], 0) \
+                < QUALITY_RANK[min_quality]:
+            continue
+        if trend_gate:
+            # Aturan yang sama dengan mesin live (utils/strategy). Sumber
+            # data 'yahoo' dan jumlah bar = seri yang dipakai di sini,
+            # jadi definisi trennya sama dengan yang diukur.
+            if not passes_trend_gate(direction, sig.get('htf_trend'), timeframe,
+                                     source='yahoo', candles=len(df)):
+                continue
+        elif htf_align:
+            trend = sig.get('htf_trend')
+            if htf_align == 'counter':
+                # Melawan tren HTF: BUY hanya kalau tren turun (beli dip),
+                # SELL hanya kalau tren naik (jual rally).
+                if direction == 'BUY' and trend != 'down':
+                    continue
+                if direction == 'SELL' and trend != 'up':
+                    continue
+            else:
+                if direction == 'BUY' and trend != 'up':
+                    continue
+                if direction == 'SELL' and trend != 'down':
+                    continue
+        if max_sl_pct:
+            cap = price * (1 - max_sl_pct / 100) if direction == 'BUY' \
+                else price * (1 + max_sl_pct / 100)
+            sl = max(sl, cap) if direction == 'BUY' else min(sl, cap)
+        if momentum_guard:
+            # Penjaga momentum: jangan ambil sinyal BUY saat harga
+            # sedang turun/lejang (menangkap pisau jatuh), dan jangan
+            # SELL saat harga sedang terbang. Momentum = perubahan harga
+            # 10 bar terakhir.
+            mom = sig.get('mom_10')
+            if mom is not None:
+                if direction == 'BUY' and mom < -momentum_guard:
+                    continue
+                if direction == 'SELL' and mom > momentum_guard:
+                    continue
+
+        if i - last_fire.get(direction, -9999) < cooldown_bars:
+            continue
+        last_fire[direction] = i
+
+        m = get_tPSL_multipliers(timeframe)
+        tp1_ret = (sig['tp1'] - price) / price * 100
+        if direction == 'SELL':
+            tp1_ret = -tp1_ret
+        sl_ret = (sl - price) / price * 100
+        if direction == 'SELL':
+            sl_ret = -sl_ret
+
+        trade: Dict[str, Any] = {
+            'bar': i,
+            'signal': direction,
+            'signal_type': sig.get('signal_type', direction),
+            'quality': sig['quality'],
+            'buy_score': sig['buy_score'],
+            'sell_score': sig['sell_score'],
+            'htf_trend': sig.get('htf_trend'),
+            'regime': sig.get('regime', 'none'),
+            'tp1_ret_pct': tp1_ret,
+            'sl_ret_pct': sl_ret,
+            'risk_reward': abs(tp1_ret / sl_ret) if sl_ret else 0,
+            'max_tp_mult': m['tp1'],
+        }
+
+        if exit_model == 'trail':
+            exit_price, bars, reason = simulate_chandelier(
+                df, i, direction, price, sig['atr'],
+                float(sig.get('stop_atr', 2.0)), float(sig.get('trail_atr', 3.0)),
+                horizon)
+            risk = abs(sig['sl'] - price) or sig['atr']
+            if direction == 'SELL':
+                r_mult = (price - exit_price) / risk
+            else:
+                r_mult = (exit_price - price) / risk
+            trade.update({
+                'outcome': reason,
+                'bars': bars,
+                'exit_price': exit_price,
+                'r_multiple': r_mult,
+                'exit_ret_pct': ((exit_price - price) / price * 100
+                                 if direction == 'BUY'
+                                 else (price - exit_price) / price * 100),
+            })
+        elif exit_model == 'signal':
+            reason, exit_price, bars = simulate_exit(
+                df, i, direction, price,
+                sig['tp1'], sig['tp2'], sig['tp3'],
+                sl, sig['atr'], horizon,
+                manage_exit=FEATURES['exit_mgmt'])
+            risk = abs(sl - price)
+            if direction == 'SELL':
+                r_mult = (price - exit_price) / risk if risk else 0.0
+            else:
+                r_mult = (exit_price - price) / risk if risk else 0.0
+            trade.update({
+                'outcome': reason,
+                'bars': bars,
+                'exit_price': exit_price,
+                'r_multiple': r_mult,
+                'exit_ret_pct': ((exit_price - price) / price * 100
+                                 if direction == 'BUY'
+                                 else (price - exit_price) / price * 100),
+            })
+        elif exit_model == 'ladder':
+            reason, realized, r_mult, bars = simulate_ladder(
+                df, i, direction, price,
+                sig['tp1'], sig['tp2'], sig['tp3'],
+                sl, sig['atr'], horizon,
+                manage_exit=FEATURES['exit_mgmt'])
+            trade.update({
+                'outcome': reason,
+                'bars': bars,
+                'exit_price': price + realized,
+                'r_multiple': r_mult,
+                'exit_ret_pct': realized / price * 100,
+            })
+        else:
+            outcome, bars = simulate_outcome(df, i, direction,
+                                             sig['tp1'], sl, horizon)
+            trade.update({'outcome': outcome, 'bars': bars})
+
+        trades.append(trade)
     return trades
 
 
@@ -590,4 +861,33 @@ def compare_exit_mgmt(df: pd.DataFrame, market: str = 'stock',
         'dengan_exit_mgmt': summarize(on, fee_pct),
         'trades_off': off,
         'trades_on': on,
+    }
+
+
+def compare_gate(df: pd.DataFrame, market: str = 'stock',
+                 timeframe: str = '60', horizon: int = 40,
+                 cooldown_bars: int = 12,
+                 fee_pct: float = 0.0,
+                 exit_model: str = 'ladder',
+                 min_quality: str = 'STRONG',
+                 long_only: bool = True,
+                 htf_align: bool = False) -> Dict[str, Any]:
+    """A/B gerbang sinyal: semua sinyal vs hanya yang lolos gerbang.
+
+    Lengan 'semua' = bot seperti sekarang (kirim semua kandidat).
+    Lengan 'gerbang' = hanya sinyal >= min_quality (dan BUY saja kalau
+    long_only, dan hanya searah tren HTF kalau htf_align) yang dikirim.
+    Model exit sama di dua lengan, jadi bedanya murni dari seleksi entry.
+    """
+    semua = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                         exit_model=exit_model)
+    gerbang = run_backtest(df, market, timeframe, horizon, cooldown_bars,
+                           exit_model=exit_model,
+                           min_quality=min_quality, long_only=long_only,
+                           htf_align=htf_align)
+    return {
+        'semua': summarize(semua, fee_pct),
+        'gerbang': summarize(gerbang, fee_pct),
+        'trades_semua': semua,
+        'trades_gerbang': gerbang,
     }

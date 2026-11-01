@@ -12,7 +12,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.backtest import build_data_at, simulate_outcome, run_backtest, summarize, compare_features
+from utils.backtest import (build_data_at, simulate_outcome, run_backtest, summarize,
+                           compare_features, collect_signals, find_data_problems)
 from services.signal_service import FEATURES, set_features
 
 
@@ -173,3 +174,221 @@ class TestCompareFeatures:
         assert 'classic_trades' in result and 'v2_trades' in result
         assert result['v2'].empty or (result['v2']['signal'] == 'TOTAL').any()
         assert result['classic'].empty or (result['classic']['signal'] == 'TOTAL').any()
+
+
+class FakeSignalService:
+    """Engine palsu: sinyal per bar ditentukan skenario, bukan skor.
+
+    Dipakai untuk menguji gerbang min_quality/long_only secara
+    deterministik - sinyal sintetis dari indikator asli tidak bisa dijamin
+    menghasilkan kualitas tertentu di bar tertentu.
+    """
+
+    def __init__(self, by_bar):
+        self.by_bar = by_bar  # {bar: (signal, quality)}
+
+    def generate_stock_signal(self, data):
+        bar = data['candles'] - 1
+        signal, quality = self.by_bar.get(bar, ('HOLD', 'WEAK'))
+        price = data['price']
+        return {
+            'signal': signal,
+            'quality': quality,
+            'entry': price,
+            'tp1': price * 1.04,
+            'tp2': price * 1.08,
+            'tp3': price * 1.12,
+            'sl': price * 0.97,
+            'buy_score': 70 if quality == 'STRONG' else 30,
+            'sell_score': 0,
+        }
+
+
+# Bar ≥ WARMUP_BARS (110), < len(df) - 1: sinyal BUY STRONG di 115, BUY
+# WEAK di 117, BUY STRONG lagi di 118 (jarak 3 bar, cooldown 2 bar).
+GATE_SCENARIO = {115: ('BUY', 'STRONG'), 117: ('BUY', 'WEAK'), 118: ('BUY', 'STRONG')}
+
+
+class TestGateFilter:
+    """Gerbang min_quality/long_only menyaring sebelum cooldown."""
+
+    def test_long_only_drops_sell(self, monkeypatch):
+        df = make_df(falling_after_peak_prices())
+        fake = FakeSignalService({120: ('SELL', 'STRONG'), 130: ('BUY', 'MODERATE')})
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+        trades = run_backtest(df, market='stock', timeframe='60', horizon=10,
+                              cooldown_bars=5, long_only=True)
+        assert all(t['signal'] == 'BUY' for t in trades)
+        assert [t['bar'] for t in trades] == [130]
+
+    def test_min_quality_keeps_only_strong(self, monkeypatch):
+        df = make_df(rising_after_dip_prices())
+        fake = FakeSignalService(GATE_SCENARIO)
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+        trades = run_backtest(df, market='stock', timeframe='60', horizon=10,
+                              cooldown_bars=2, min_quality='STRONG')
+        assert [t['bar'] for t in trades] == [115, 118]
+        assert all(t['quality'] == 'STRONG' for t in trades)
+
+    def test_filtered_signal_does_not_consume_cooldown(self, monkeypatch):
+        """Sinyal yang digerbang keluar tidak boleh menelan slot cooldown.
+
+        Tanpa gerbang: BUY WEAK di 117 memicu cooldown, jadi BUY STRONG di
+        118 (jarak 1 bar) ditahan. Dengan gerbang: 117 tidak pernah jadi
+        kandidat, jadi 118 lolos.
+        """
+        df = make_df(rising_after_dip_prices())
+        fake = FakeSignalService(GATE_SCENARIO)
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+
+        semua = run_backtest(df, market='stock', timeframe='60', horizon=10,
+                             cooldown_bars=2)
+        assert [t['bar'] for t in semua] == [115, 117]
+
+        gerbang = run_backtest(df, market='stock', timeframe='60', horizon=10,
+                               cooldown_bars=2, min_quality='STRONG')
+        assert [t['bar'] for t in gerbang] == [115, 118]
+
+
+class TestCompareGate:
+    def test_ab_returns_both_arms(self, monkeypatch):
+        from utils.backtest import compare_gate
+
+        df = make_df(rising_after_dip_prices())
+        fake = FakeSignalService(GATE_SCENARIO)
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+        result = compare_gate(df, market='stock', timeframe='60', horizon=10,
+                              cooldown_bars=2, fee_pct=0.3)
+        assert set(result) >= {'semua', 'gerbang', 'trades_semua', 'trades_gerbang'}
+        assert [t['bar'] for t in result['trades_semua']] == [115, 117]
+        assert [t['bar'] for t in result['trades_gerbang']] == [115, 118]
+        # Tabel gerbang hanya memuat kualitas STRONG.
+        gerbang_table = result['gerbang']
+        assert set(gerbang_table['quality']) <= {'STRONG', '-'}
+
+
+class TestFindDataProblems:
+    """Penjaga kualitas data - seri rusak tidak boleh diukur."""
+
+    def test_normal_series_is_clean(self):
+        df = make_df(rising_after_dip_prices())
+        assert find_data_problems(df) == []
+
+    def test_price_scale_break_is_detected(self):
+        # Skala harga token berubah (mis. token redenominasi) -> lonjakan
+        # absurd yang bukan pergerakan harga.
+        prices = [100.0] * 50 + [50000.0] * 5
+        df = make_df(prices)
+        problems = find_data_problems(df)
+        assert any('skala harga berubah' in p for p in problems)
+
+    def test_frozen_series_is_detected(self):
+        df = make_df([100.0] * 60)
+        problems = find_data_problems(df)
+        assert any('tidak bergerak' in p for p in problems)
+
+    def test_empty_frame_is_safe(self):
+        assert find_data_problems(pd.DataFrame()) == []
+
+    def test_missing_close_column_is_reported(self):
+        df = make_df([100.0] * 10).drop(columns=['Close'])
+        assert find_data_problems(df)
+
+
+class FakeCryptoEngine:
+    """Engine palsu untuk crypto: sinyal per bar ditentukan manual."""
+
+    def __init__(self, by_bar):
+        self.by_bar = by_bar
+
+    def generate_crypto_signal(self, data):
+        bar = data['candles'] - 1
+        signal, quality = self.by_bar.get(bar, ('HOLD', 'WEAK'))
+        price = data['price']
+        return {
+            'signal': signal,
+            'quality': quality,
+            'entry': price,
+            'tp1': price * 1.05,
+            'tp2': price * 1.08,
+            'tp3': price * 1.12,
+            'sl': price * 0.95,
+            'buy_score': 70,
+            'sell_score': 70,
+        }
+
+
+class TestCollectSignals:
+    """Kandidat dari mesin sinyal, termasuk jenis REVERSAL."""
+
+    def test_reversal_is_kept_as_long(self, monkeypatch):
+        from utils.backtest import collect_signals
+
+        df = make_df(rising_after_dip_prices())
+        fake = FakeCryptoEngine({120: ('REVERSAL', 'STRONG')})
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+
+        sigs = collect_signals(df, market='crypto', timeframe='1440')
+
+        reversal = [s for s in sigs if s['signal_type'] == 'REVERSAL']
+        assert len(reversal) == 1
+        # REVERSAL = setup rebound, jadi arah trade-nya BUY.
+        assert reversal[0]['signal'] == 'BUY'
+        assert reversal[0]['bar'] == 120
+
+    def test_signal_has_measured_features(self, monkeypatch):
+        from utils.backtest import collect_signals
+
+        df = make_df(rising_after_dip_prices())
+        fake = FakeCryptoEngine({120: ('BUY', 'STRONG')})
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+
+        sigs = collect_signals(df, market='crypto', timeframe='1440')
+
+        assert sigs
+        for key in ('mom_10', 'rsi', 'adx', 'htf_trend', 'signal_type'):
+            assert key in sigs[0], f"key {key} hilang"
+
+
+class TestSignalTypeFilter:
+    """signal_types menyaring jenis sinyal yang dipakai."""
+
+    def test_only_requested_type_is_traded(self, monkeypatch):
+        df = make_df(rising_after_dip_prices())
+        fake = FakeCryptoEngine({120: ('REVERSAL', 'STRONG'),
+                                  130: ('SELL', 'STRONG')})
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+
+        semua = run_backtest(df, market='crypto', timeframe='1440', horizon=10,
+                             cooldown_bars=5, exit_model='signal')
+        assert {t['signal_type'] for t in semua} == {'REVERSAL', 'SELL'}
+
+        hanya_sell = run_backtest(df, market='crypto', timeframe='1440',
+                                  horizon=10, cooldown_bars=5,
+                                  exit_model='signal',
+                                  signal_types=['SELL'])
+        assert [t['signal_type'] for t in hanya_sell] == ['SELL']
+
+
+class TestMomentumGuard:
+    """Penjaga momentum: jangan menangkap pisau jatuh."""
+
+    def _df_with_drop(self):
+        flat = [100.0] * 110
+        drop = [100.0 - (i + 1) * 2.0 for i in range(10)]   # → 80.0
+        return make_df(flat + drop + [80.0] * 40)
+
+    def test_buy_after_drop_is_blocked(self, monkeypatch):
+        df = self._df_with_drop()
+        # Bar 119 = bar terakhir penurunan (~-20% dalam 10 bar).
+        fake = FakeCryptoEngine({119: ('BUY', 'STRONG')})
+        monkeypatch.setattr('utils.backtest.SignalService', fake)
+
+        tanpa = run_backtest(df, market='crypto', timeframe='1440', horizon=10,
+                             cooldown_bars=5, exit_model='signal')
+        assert [t['bar'] for t in tanpa] == [119]
+
+        dengan = run_backtest(df, market='crypto', timeframe='1440', horizon=10,
+                              cooldown_bars=5, exit_model='signal',
+                              momentum_guard=10.0)
+        assert dengan == []

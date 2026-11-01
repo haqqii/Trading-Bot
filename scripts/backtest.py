@@ -54,11 +54,37 @@ def parse_args() -> argparse.Namespace:
                    help='Fee per putaran dalam persen (default: 0.3 saham IDX, 0.16 crypto)')
     p.add_argument('--no-compare', action='store_true',
                    help='Jangan jalankan perbandingan; cukup mesin v2 saja')
-    p.add_argument('--compare', choices=['features', 'regime', 'exit'],
+    p.add_argument('--compare', choices=['features', 'regime', 'exit', 'gate'],
                    default='features',
                    help=('A/B yang dijalankan: features (klasik vs v2), '
                          'regime (ADX trend/range on/off), '
-                         'exit (SL diam vs SL bergerak)'))
+                         'exit (SL diam vs SL bergerak), '
+                         'gate (semua sinyal vs gerbang kualitas/arah)'))
+    p.add_argument('--min-quality', choices=['WEAK', 'MODERATE', 'STRONG'],
+                   default=None,
+                   help=('Gerbang kualitas: kualitas minimum yang dikirim. '
+                         'Tanpa flag ini semua kualitas lewat; mode --compare gate '
+                         'memakai STRONG kalau tidak diisi'))
+    p.add_argument('--long-only', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help=('Gerbang arah: hanya sinyal BUY. Tanpa flag ini kedua '
+                         'arah lewat; mode --compare gate memakai BUY saja '
+                         'kalau tidak diisi'))
+    p.add_argument('--htf-align', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help=('Gerbang tren searah: BUY hanya kalau tren HTF up, '
+                         'SELL hanya kalau tren HTF down'))
+    p.add_argument('--htf-counter', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help=('Gerbang tren berlawanan: BUY hanya kalau tren HTF '
+                         'down (beli dip), SELL hanya kalau tren HTF up'))
+    p.add_argument('--max-sl-pct', type=float, default=None,
+                   help=('Batas jarak SL dari entry (persen) - SL yang lebih '
+                         'jauh dicapit ke batas ini'))
+    p.add_argument('--trend-gate', action='store_true',
+                   help=('Pakai aturan gerbang tren yang sama dengan bot live '
+                         '(utils/strategy): di timeframe harian hanya sinyal '
+                         'SELL saat tren harian naik'))
     p.add_argument('--exit-model', choices=['tp1', 'signal', 'ladder'], default='tp1',
                    help=("Model exit simulasi: 'tp1' (keluar di TP1, model lama), "
                          "'signal' (tahan sampai TP3/SL) atau 'ladder' "
@@ -70,14 +96,21 @@ def main() -> int:
     args = parse_args()
     from utils.backtest import (
         run_backtest, summarize, compare_features, compare_regime_gate,
-        compare_exit_mgmt,
+        compare_exit_mgmt, compare_gate,
     )
 
     fee_pct = args.fee if args.fee is not None else (0.30 if args.market == 'stock' else 0.16)
     timeframe = INTERVAL_TO_KEY.get(args.interval, '60')
-    # A/B aturan keluar memakai model 'ladder' (partial profit di TP1/TP2),
-    # karena di model itu breakout SL dinamis terlihat jelas efeknya.
-    exit_model = 'ladder' if args.compare == 'exit' else args.exit_model
+    # A/B aturan keluar dan gerbang memakai model 'ladder' (partial profit
+    # di TP1/TP2), karena di model itu efeknya terlihat paling dekat dengan
+    # pemakaian bot.
+    exit_model = 'ladder' if args.compare in ('exit', 'gate') else args.exit_model
+    # Gerbang tren: 'with' (searah tren), 'counter' (berlawanan), atau None
+    htf_align = None
+    if args.htf_counter:
+        htf_align = 'counter'
+    elif args.htf_align:
+        htf_align = True
 
     arms: dict[str, list[pd.DataFrame]] = {}
     raw_trades = 0
@@ -94,8 +127,14 @@ def main() -> int:
         if args.no_compare:
             trades = run_backtest(df, args.market, timeframe,
                                   args.horizon, args.cooldown,
-                                  exit_model=exit_model)
+                                  exit_model=exit_model,
+                                  min_quality=args.min_quality,
+                                  long_only=bool(args.long_only),
+                                  htf_align=htf_align,
+                                  trend_gate=args.trend_gate,
+                                  max_sl_pct=args.max_sl_pct)
             table = summarize(trades, fee_pct)
+            pairs = [('v2', table)]
             raw_trades += len(trades)
         elif args.compare == 'features':
             result = compare_features(df, args.market, timeframe,
@@ -110,6 +149,19 @@ def main() -> int:
             pairs = [('tanpa_regime', result['tanpa_regime']),
                      ('dengan_regime', result['dengan_regime'])]
             raw_trades += len(result['trades_on'])
+        elif args.compare == 'gate':
+            result = compare_gate(df, args.market, timeframe,
+                                  args.horizon, args.cooldown, fee_pct,
+                                  exit_model=exit_model,
+                                  min_quality=args.min_quality or 'STRONG',
+                                  long_only=True if args.long_only is None
+                                  else args.long_only,
+                                  htf_align=htf_align,
+                                  max_sl_pct=args.max_sl_pct)
+            table = result['gerbang']
+            pairs = [('semua', result['semua']),
+                     ('gerbang', result['gerbang'])]
+            raw_trades += len(result['trades_gerbang'])
         else:
             result = compare_exit_mgmt(df, args.market, timeframe,
                                        args.horizon, args.cooldown, fee_pct)

@@ -168,11 +168,15 @@ def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5',
     support/resistance opsional (harga struktur terdekat dari data yang
     sama); kalau diisi, target dan stop dijelaskan di _apply_sr_to_tpsl.
     """
-    if signal not in ('BUY', 'SELL') or not price or not atr or atr <= 0:
+    if signal not in ('BUY', 'SELL', 'REVERSAL') or not price or not atr or atr <= 0:
         return {'sl': None, 'tp1': None, 'tp2': None, 'tp3': None}
 
     m = get_tPSL_multipliers(timeframe)
-    if signal == 'BUY':
+    # REVERSAL = setup rebound (RSI jenuh jual + harga mulai naik), jadi
+    # arahnya LONG - sama seperti BUY. Sebelumnya REVERSAL tidak masuk
+    # daftar ini, jadi TP/SL-nya None; notifikasi REVERSAL lalu crash
+    # di formatter (sl None) dan sinyalnya tidak pernah tersimpan.
+    if signal in ('BUY', 'REVERSAL'):
         tpsl: Dict[str, Optional[float]] = {
             'sl': price - (m['sl'] * atr),
             'tp1': price + (m['tp1'] * atr),
@@ -188,7 +192,8 @@ def calc_tPSL(signal: str, price: float, atr: float, timeframe: str = '5',
         }
 
     if FEATURES['sr_tpsl']:
-        _apply_sr_to_tpsl(tpsl, signal, price, atr, support, resistance)
+        _apply_sr_to_tpsl(tpsl, 'BUY' if signal == 'REVERSAL' else signal,
+                          price, atr, support, resistance)
     return tpsl
 
 

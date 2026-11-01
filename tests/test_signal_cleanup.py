@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 import handlers.command_handlers as ch
 from handlers.scheduler._common import (
     SIGNAL_MAX_AGE_DAYS,
+    SIGNAL_MAX_OPEN_AGE_DAYS,
     SIGNAL_MAX_PER_TYPE,
     _signal_datetime,
     _signal_finished,
@@ -92,10 +93,11 @@ class TestCleanupOldSignals:
         # Sinyal paling lama dibuang lebih dulu.
         assert 'STOCK_DB_29' not in signals
 
-    def test_signal_beyond_max_age_is_removed(self, monkeypatch):
+    def test_finished_signal_beyond_max_age_is_removed(self, monkeypatch):
         lama = (datetime.now(timezone.utc) - timedelta(days=SIGNAL_MAX_AGE_DAYS + 3))
         signals = {
-            'STOCK_LAMA': {'type': 'stock', 'time': lama.strftime('%Y-%m-%d %H:%M:%S')},
+            'STOCK_LAMA': {'type': 'stock', 'time': lama.strftime('%Y-%m-%d %H:%M:%S'),
+                           'tp_hit': {'tp1': True, 'tp2': True, 'tp3': True}},
             'STOCK_BARU': {'type': 'stock', 'time': now_wib()},
         }
         monkeypatch.setattr(ch, 'last_buy_signals', signals)
@@ -105,6 +107,42 @@ class TestCleanupOldSignals:
         assert removed == 1
         assert 'STOCK_LAMA' not in signals
         assert 'STOCK_BARU' in signals
+
+    def test_open_position_is_kept_past_max_age(self, monkeypatch):
+        """Posisi yang TP-nya belum kena tidak boleh dibuang karena umur.
+
+        Sinyal yang dibuang diam-diam berhenti dipantau job TP/SL, jadi
+        user tidak lagi dapat notifikasi TP/SL-nya padahal posisi masih
+        hidup.
+        """
+        lama = (datetime.now(timezone.utc) - timedelta(days=SIGNAL_MAX_AGE_DAYS + 3))
+        signals = {
+            'CRYPTO_LAMA': {'type': 'crypto',
+                            'time': lama.strftime('%Y-%m-%d %H:%M:%S'),
+                            'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False}},
+        }
+        monkeypatch.setattr(ch, 'last_buy_signals', signals)
+
+        removed = cleanup_old_signals()
+
+        assert removed == 0
+        assert 'CRYPTO_LAMA' in signals
+
+    def test_open_position_removed_after_open_max_age(self, monkeypatch):
+        """Setelah batas umur posisi, sinyal dibuang (safety valve)."""
+        lama = (datetime.now(timezone.utc)
+                - timedelta(days=SIGNAL_MAX_OPEN_AGE_DAYS + 1))
+        signals = {
+            'CRYPTO_LAMA': {'type': 'crypto',
+                            'time': lama.strftime('%Y-%m-%d %H:%M:%S'),
+                            'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False}},
+        }
+        monkeypatch.setattr(ch, 'last_buy_signals', signals)
+
+        removed = cleanup_old_signals()
+
+        assert removed == 1
+        assert 'CRYPTO_LAMA' not in signals
 
     def test_signal_without_time_is_kept(self, monkeypatch):
         signals = {
