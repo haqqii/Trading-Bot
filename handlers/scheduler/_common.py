@@ -56,6 +56,40 @@ CRYPTO_TF_TO_INTERVAL = {
 SIGNAL_MAX_AGE_DAYS = 7
 SIGNAL_MAX_PER_TYPE = 50  # Max signals per type (stock/crypto)
 
+# Jarak minimum antar scan untuk tiap timeframe (detik).
+#
+# Job scan dipanggil tiap 15 menit, tapi timeframe harian (1440) tidak
+# perlu discan sesering itu: candle '1d' tidak berubah dalam 15 menit,
+# jadi yang berubah cuma noise skor di ambang batas - dan noise itu yang
+# bikin arah sinyal flip BUY/SELL. Volume notifikasi juga turun
+# proporsional: TF harian dari 96 scan/hari jadi 6.
+#
+# TF pendek (1/5/15/30) tetap 15 menit karena candle-nya memang
+# berubah cepat dan di situedu orang cari entry.
+SCAN_INTERVAL_BY_TF = {
+    '1': 900,
+    '5': 900,
+    '15': 900,
+    '30': 900,
+    '60': 1800,
+    '240': 3600,
+    '1440': 14400,
+}
+
+
+def tf_scan_due(tf_key: str, last_scans: dict[str, float],
+                now_ts: float) -> bool:
+    """True kalau timeframe ini boleh discan lagi.
+
+    `last_scans` = pemetaan tf_key -> waktu scan terakhir (monotonic).
+    TF yang belum pernah discan selalu boleh.
+    """
+    last = last_scans.get(str(tf_key))
+    if last is None:
+        return True
+    interval = SCAN_INTERVAL_BY_TF.get(str(tf_key), 900)
+    return (now_ts - last) >= interval
+
 # Berapa kali harga sekarang boleh berbeda dari harga entry sinyal sebelum
 # entry dianggap tidak bisa dipercaya. Kalau jauh berbeda, biasanya entry
 # dihitung dari data provider lain (Yahoo) sementara harga sekarang dari
@@ -315,7 +349,8 @@ SIGNAL_PRICE_CHANGE_THRESHOLD = 0.05   # 5%
 
 def find_user_signal(signals: dict[str, dict[str, Any]],
                      user_id: str, ticker: str,
-                     timeframe: str, direction: str) -> dict[str, Any] | None:
+                     timeframe: str, direction: str,
+                     any_direction: bool = False) -> dict[str, Any] | None:
     """Cari sinyal milik user untuk satu ticker + timeframe + arah.
 
     Pencarian lewat ISI sinyal, bukan kunci dict-nya. Kunci penyimpanan
@@ -323,6 +358,9 @@ def find_user_signal(signals: dict[str, dict[str, Any]],
     `CRYPTO_{ticker}_{tf}_{arah}` - dua format itu beda, jadi kalau lookup
     pakai kunci, sinyal yang sedang aktif tidak pernah ditemukan dan
     notifikasi yang sama terkirim berulang-ulang.
+
+    `any_direction=True` membuat arah diabaikan: dipakai untuk menahan
+    rekomendasi berlawanan (SELL untuk koin yang baru direkomendasikan BUY).
     """
     for sig in signals.values():
         if sig.get('ticker_raw') != ticker:
@@ -331,7 +369,7 @@ def find_user_signal(signals: dict[str, dict[str, Any]],
             continue
         if str(sig.get('timeframe')) != str(timeframe):
             continue
-        if sig.get('direction', 'LONG') != direction:
+        if not any_direction and sig.get('direction', 'LONG') != direction:
             continue
         return sig
     return None
@@ -362,7 +400,8 @@ def parse_db_timestamp(value: Any) -> datetime | None:
 
 def signal_in_cooldown(now: datetime, db_rows: dict[str, dict[str, Any]],
                         signal_key: str, timeframe: str, direction: str,
-                        current_price: float) -> bool:
+                        current_price: float,
+                        any_direction: bool = False) -> bool:
     """True kalau sinyal untuk `signal_key` sudah dikirim dan masih cooldown.
 
     Sumbernya baris tabel `signals`: baris itu tetap ada setelah sinyal
@@ -370,6 +409,11 @@ def signal_in_cooldown(now: datetime, db_rows: dict[str, dict[str, Any]],
     sendiri seperti kalau hanya mengandalkan state in-memory.
 
     `db_rows` = hasil `db.get_all_signals()` (ambil sekali per scan).
+
+    `any_direction=True` membuat arah diabaikan. Tanpa itu, satu baris DB
+    per (ticker, user) yang arahnya berubah menimpa riwayat cooldown arah
+    sebelumnya - hasilnya user bisa dapat rekomendasi berlawanan untuk koin
+    yang sama (BUY lalu SELL) beberapa menit kemudian.
     """
     row = db_rows.get(signal_key)
     if not row:
@@ -383,7 +427,7 @@ def signal_in_cooldown(now: datetime, db_rows: dict[str, dict[str, Any]],
     row_dir = normalize_signal_direction(
         extra.get('direction'), row.get('signal_type'))
 
-    if row_dir != direction:
+    if not any_direction and row_dir != direction:
         return False
 
     sent_at = parse_db_timestamp(row.get('created_at'))
@@ -474,11 +518,13 @@ def _schedule_followup_scan(app, kind: str, delay: int = 60):
     """
     target = None
     if kind == 'crypto':
-        from handlers.scheduler.jobs_crypto import check_crypto_signals
-        target = check_crypto_signals
+        from handlers.scheduler import jobs_crypto
+        jobs_crypto._force_next_scan = True
+        target = jobs_crypto.check_crypto_signals
     elif kind == 'stock':
-        from handlers.scheduler.jobs_stocks import check_stock_signals
-        target = check_stock_signals
+        from handlers.scheduler import jobs_stocks
+        jobs_stocks._force_next_scan = True
+        target = jobs_stocks.check_stock_signals
     if target is None:
         return
     try:
@@ -486,6 +532,14 @@ def _schedule_followup_scan(app, kind: str, delay: int = 60):
         logger.info(f"Follow-up {kind} scan scheduled in {delay}s after TP3")
     except Exception as e:
         logger.error(f"Failed to schedule follow-up {kind} scan: {e}", exc_info=True)
+        # Kalau jadwal gagal, jangan biarkan scan paksa menggantung di
+        # scan terjadwal berikutnya.
+        if kind == 'crypto':
+            from handlers.scheduler import jobs_crypto
+            jobs_crypto._force_next_scan = False
+        else:
+            from handlers.scheduler import jobs_stocks
+            jobs_stocks._force_next_scan = False
 
 
 # Sinyal punya dua bentuk waktu: yang dibuat di memori memakai now_wib()

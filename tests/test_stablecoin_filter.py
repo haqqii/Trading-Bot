@@ -301,6 +301,11 @@ class TestScanSkipsStablecoin:
                             lambda: state['db_rows'])
         monkeypatch.setattr(jobs_crypto.db, 'save_active_signal',
                             fake_save_active_signal)
+        # State scan per timeframe ada di level modul, jadi harus direset:
+        # kalau tidak, scan dari test sebelumnya membuat scan test ini
+        # dilewati oleh gate interval.
+        jobs_crypto._last_scan_by_tf.clear()
+        jobs_crypto._force_next_scan = False
         return state
 
     def test_stablecoin_signal_is_not_sent(self, scan):

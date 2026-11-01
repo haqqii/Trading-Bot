@@ -14,6 +14,7 @@ Local module state:
 """
 import asyncio
 import logging
+import time
 
 from services.stock_service import stock_service
 from services.signal_service import calc_tPSL, safe_num, FEATURES
@@ -27,6 +28,8 @@ from handlers.scheduler._common import (
     now_wib,
     TF_TO_INTERVAL,
     SEND_DELAY_SECONDS,
+    SCAN_INTERVAL_BY_TF,
+    tf_scan_due,
     _unwrap_stock_result,
     get_stock_data_with_fallback,
     _get_user_db,
@@ -49,6 +52,13 @@ logger = logging.getLogger(__name__)
 # This prevents wasting time on scans that will just timeout
 _yahoo_stock_cooldown = 0  # Number of scan cycles to skip
 _stock_timeout_count = [0]  # Timeout counter for this scan (list for mutability)
+
+# Waktu scan terakhir per timeframe (monotonic) - timeframe harian tidak
+# perlu discan tiap 15 menit, candle '1d' tidak berubah dalam 15 menit.
+_last_scan_by_tf: dict[str, float] = {}
+
+# Scan paksa (follow-up setelah posisi tutup di TP3).
+_force_next_scan = False
 
 
 async def reset_stock_circuit_breaker(app):
@@ -150,6 +160,9 @@ async def check_stock_signals(app):
     global _yahoo_stock_cooldown
 
     try:
+        global _force_next_scan
+        force = _force_next_scan
+        _force_next_scan = False
         now = now_wib()
 
         # Check market hours
@@ -180,8 +193,21 @@ async def check_stock_signals(app):
                 tf = u.get('timeframe', '5')
                 tf_groups.setdefault(tf, []).append((uid, u))
 
+        # Timeframe yang belum Due dilewati (lihat SCAN_INTERVAL_BY_TF).
+        # Untuk TF harian: bukan 32 scan sehari jam pasar, tapi 2.
+        now_ts = time.monotonic()
+        due_groups = {}
+        for tf_key, group_users in tf_groups.items():
+            if not force and not tf_scan_due(tf_key, _last_scan_by_tf, now_ts):
+                logger.info(f"[STOCK] TF={tf_key}: scan dilewati (jarak scan "
+                            f"terakhir < {SCAN_INTERVAL_BY_TF.get(str(tf_key), 900)} detik)")
+                continue
+            _last_scan_by_tf[str(tf_key)] = now_ts
+            due_groups[tf_key] = group_users
+        tf_groups = due_groups
+
         if not tf_groups:
-            logger.info("[STOCK] No users with notif_saham enabled")
+            logger.info("[STOCK] Tidak ada timeframe yang Due discan")
             return
 
         total_users = sum(len(v) for v in tf_groups.values())
@@ -331,11 +357,13 @@ async def check_stock_signals(app):
                             break
                         ticker, name, d, s = candidate
                         sig_direction = 'SHORT' if s.get('signal') == 'SELL' else 'LONG'
-                        if find_user_signal(signals, uid, ticker, tf_key, sig_direction):
+                        if find_user_signal(signals, uid, ticker, tf_key,
+                                            sig_direction, any_direction=True):
                             continue
                         if signal_in_cooldown(now, db_rows,
                                               f"STOCK_{ticker}_{uid}",
-                                              tf_key, sig_direction, d['price']):
+                                              tf_key, sig_direction, d['price'],
+                                              any_direction=True):
                             continue
                         top_signals.append(candidate)
 
