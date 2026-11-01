@@ -54,6 +54,12 @@ CRYPTO_TF_TO_INTERVAL = {
 
 # Signal retention settings
 SIGNAL_MAX_AGE_DAYS = 7
+# Posisi yang masih dipantau (TP belum kena) tidak boleh dibuang cuma
+# karena umurnya lewat SIGNAL_MAX_AGE_DAYS - kalau dibuang, user berhenti
+# dapat notifikasi TP/SL-nya padahal posisinya masih hidup. Posisi yang
+# sudah tamat tetap dibuang setelah 7 hari. Batas 45 hari ini supaya
+# posisi harian yang TP3-nya jauh (7x ATR) masih sempat kena.
+SIGNAL_MAX_OPEN_AGE_DAYS = 45
 SIGNAL_MAX_PER_TYPE = 50  # Max signals per type (stock/crypto)
 
 # Jarak minimum antar scan untuk tiap timeframe (detik).
@@ -575,6 +581,14 @@ def _signal_finished(signal: dict) -> bool:
 def cleanup_old_signals():
     """Remove signals older than SIGNAL_MAX_AGE_DAYS to prevent memory leak.
 
+    Sinyal yang posisinya masih dipantau (TP belum kena) tidak boleh
+    dibuang hanya karena umurnya lewat SIGNAL_MAX_AGE_DAYS: job TP/SL
+    iterate peta yang sama, jadi sinyal yang dibuang diam-diam berhenti
+    dipantau dan user tidak lagi dapat notifikasi TP/SL-nya. Sinyal
+    seperti itu diberi batas umur yang lebih longgar
+    (SIGNAL_MAX_OPEN_AGE_DAYS) supaya posisi harian yang TP3-nya jauh
+    masih sempat kena.
+
     Also enforces max signals per type limit.
     """
     signals = _get_last_buy_signals()
@@ -582,6 +596,14 @@ def cleanup_old_signals():
     now = datetime.now(timezone.utc)
     removed_count = 0
     cutoff_time = now.timestamp() - (SIGNAL_MAX_AGE_DAYS * 24 * 3600)
+    open_cutoff_time = now.timestamp() - (SIGNAL_MAX_OPEN_AGE_DAYS * 24 * 3600)
+
+    def _too_old(key: str, sig: dict) -> bool:
+        """True kalau sinyal boleh dibuang karena umur."""
+        signal_time = _signal_datetime(sig.get('time'), now)
+        if _signal_finished(sig):
+            return signal_time.timestamp() < cutoff_time
+        return signal_time.timestamp() < open_cutoff_time
 
     # Separate by type
     stock_signals = {k: v for k, v in signals.items() if v.get('type') == 'stock'}
@@ -589,19 +611,14 @@ def cleanup_old_signals():
 
     # Clean stock signals
     for key in list(stock_signals.keys()):
-        signal_time = _signal_datetime(stock_signals[key].get('time'), now)
-
-        # Remove if too old
-        if signal_time.timestamp() < cutoff_time:
+        if _too_old(key, stock_signals[key]):
             del signals[key]
             removed_count += 1
             continue
 
     # Clean crypto signals
     for key in list(crypto_signals.keys()):
-        signal_time = _signal_datetime(crypto_signals[key].get('time'), now)
-
-        if signal_time.timestamp() < cutoff_time:
+        if _too_old(key, crypto_signals[key]):
             del signals[key]
             removed_count += 1
 
