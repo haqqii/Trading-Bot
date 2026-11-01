@@ -16,6 +16,7 @@ from services.signal_service import calc_tPSL, safe_num, signal_service, FEATURE
 from services import crypto_yahoo_missing
 from services import exit_manager
 from utils.formatters import format_unified_crypto_notification, escape_md
+from utils.strategy import passes_trend_gate
 from db import db
 from utils.cache import _price_cache
 from utils.rate_limiter import coingecko_can_call_now
@@ -265,6 +266,8 @@ async def check_crypto_signals(app):
             buy_signals = []
             # Penghitung stablecoin yang dilewati (dipakai di thread, jadi list).
             stable_skipped = [0]
+            # Penghitung sinyal yang diblokir gerbang tren (idem).
+            gate_skipped = [0]
 
             # Pengambilan data dulu (Yahoo per ticker + CoinGecko bulk),
             # baru semua ticker dianalisis. Kalau pengambilan dan analisis
@@ -302,6 +305,22 @@ async def check_crypto_signals(app):
                     # Include REVERSAL and SELL signals
                     if s['signal'] not in ('BUY', 'REVERSAL', 'SELL'):
                         return None
+
+                    # Gerbang tren (utils/strategy). Aturan yang dipakai
+                    # sudah diukur di docs/SPEC.md 3.1.2: di timeframe
+                    # harian hanya sinyal SELL yang lolos, dan hanya saat
+                    # tren harian sedang naik. Data yang definisi trennya
+                    # tidak sama dengan yang diukur (mis. jalur CoinGecko
+                    # yang pakai sparkline 7 hari) atau bar-nya kurang
+                    # dari 100 diblokir - tren yang tidak diketahui bukan
+                    # alasan untuk mengambil risiko.
+                    if not passes_trend_gate(
+                            s['signal'], d.get('htf_trend'), tf_key,
+                            source=d.get('source'),
+                            candles=d.get('candles')):
+                        gate_skipped[0] += 1
+                        return None
+
                     score = s.get('sell_score', 0) if s['signal'] == 'SELL' else s.get('buy_score', 0)
 
                     if score >= 25:
@@ -332,7 +351,8 @@ async def check_crypto_signals(app):
 
             if not buy_signals:
                 logger.info(f"[CRYPTO] TF={tf_key}: No BUY signals found "
-                            f"({stable_skipped[0]} stablecoin dilewati)")
+                            f"({stable_skipped[0]} stablecoin dilewati, "
+                            f"{gate_skipped[0]} diblokir gerbang tren)")
                 continue
 
             buy_signals.sort(key=lambda x: x[3].get('buy_score', 0), reverse=True)

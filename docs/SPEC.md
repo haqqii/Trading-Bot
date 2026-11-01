@@ -44,8 +44,7 @@
     balik support/resistance yang masuk akal (0.5-3x ATR)
   - Gate volatilitas ekstrem (ATR% > 6% saham / 10% crypto) menurunkan
     kualitas sinyal
-- Regime gate (ADX): aturan yang dipakai menyesuaikan kondisi pasar
-  - ADX > 25 (tren): MA/MACD penuh, BB dikurangi, RSI ekstrem yang
+- Regime gate (ADX): aturan yang dipakai menyesuaikan kondisi pasar  - ADX > 25 (tren): MA/MACD penuh, BB dikurangi, RSI ekstrem yang
     berlawanan arah dengan tren (mis. RSI 25 saat harga turun) dikurangi
   - ADX < 20 (sideways): MA/MACD dikurangi (saling berbalik = noise),
     BB diperkuat (sentuh band = mean reversion)
@@ -53,6 +52,20 @@
   - Sudah diukur (lihat 3.1.1): tidak membaik, jadi default-nya MATI.
     Nyalakan lagi: `FEATURES['regime_gate'] = True` di
     `services/signal_service.py`
+- Gerbang tren harian (crypto): satu-satunya aturan yang expectancy-nya
+  positif (lihat 3.1.1)
+  - Timeframe 1440 (harian): sinyal SELL hanya diambil kalau tren harian
+    sedang naik (MA50 > MA100, deadband 0,15%); sinyal BUY/REVERSAL tidak
+    diambil - hasil ukurnya negatif di semua jendela
+  - Tren yang tidak diketahui (data bukan dari Yahoo, atau bar-nya kurang
+    dari 100) memblokir sinyal, bukan melepaskannya
+  - Timeframe intraday TIDAK digerbang: belum diukur dan hasil ukurnya
+    negatif
+  - Satu sumber aturan: `utils/strategy.py`, dipakai bot live dan harness
+    backtest - jadi angka di 3.1.1 bisa direproduksi persis
+  - Data harian yang dipakai scan sekarang 1 tahun (bukan 3 bulan):
+    MA100 butuh lebih dari 100 bar, 3 bulan hanya ~90 bar dan trennya
+    selalu 'flat' (= tidak diketahui)
 - Aturan keluar (exit management) - SL bergerak, bukan diam:
   - TP1 kena -> SL digeser ke harga entry (breakeven)
   - TP2 kena -> SL trailing (1.5x ATR dari harga, minimal di level TP1)
@@ -131,6 +144,79 @@ Regime gate tidak membawa perbaikan di jendela yang diukur - di crypto
 netral, di saham IDX justru sedikit lebih buruk. Karena itu tidak
 dinyalakan default untuk trading sungguhan; kodenya tetap ada dan bisa
 diukur ulang kapan saja.
+
+
+#### 3.1.2 Gerbang tren harian - hasil ukur (1 November 2026)
+
+Semua angka dari harness walk-forward dengan model exit 'signal' (tahan
+sampai TP3/SL/timeout dengan SL bergerak - sama dengan bot live), fee
+0,16%/putaran, horizon 40 bar, cooldown 12 bar, 17 ticker crypto
+(BTC, ETH, SOL, ADA, DOGE, XRP, BNB, AVAX, LINK, DOT, LTC, ATOM, NEAR,
+ARB, OP, FIL, INJ - TIA dilewati karena serinya rusak), harian, 2 tahun.
+Standard error dihitung per ticker (cluster), jadi ticker yang lebih
+ramai trade tidak menumbangkan hasil.
+
+| Aturan | n | expectancy | t | ticker positif |
+|---|---|---|---|---|
+| Semua sinyal (tanpa gerbang) | 1340 | -0,663 %/trade | -1,92 | 5/17 |
+| BUY saja (tanpa gerbang) | 736 | -0,936 %/trade | -1,70 | 6/17 |
+| SELL saja (tanpa gerbang) | 604 | -0,330 %/trade | -0,45 | 9/17 |
+| Sinyal searah tren besar | 681 | -2,152 %/trade | -3,81 | 1/17 |
+| BUY saat tren turun (beli dip) | 508 | -0,420 %/trade | -0,61 | 7/17 |
+| **Gerbang: SELL saat tren naik** | **200** | **+4,291 %/trade** | **+2,97** | **13/17** |
+
+Per jendela (pembagian Development/Test, dipotong di bar ke-475):
+
+| Jendela | n | expectancy | t | ticker positif |
+|---|---|---|---|---|
+| 12 bulan pertama (2025-02 s/d 2026-02) | 124 | +3,298 %/trade | +1,58 | 10/17 |
+| 8,5 bulan terakhir (2026-02 s/d 2026-11) | 76 | +5,912 %/trade | +4,04 | 15/16 |
+| 2 tahun penuh | 200 | +4,291 %/trade | +2,97 | 13/17 |
+
+Arahnya penting: yang menang bukan "beli dip" (buy the dip di pasar
+turun), tapi "jual rally di pasar naik". Membeli dip justru kalah
+signifikan di tahun pertama (-2,32 %/trade, t=-2,45) - di pasar yang
+turun terus, harga turun tidak berhenti di dip. Sinyal searah tren besar
+jauh lebih buruk (-2,15 %/trade, t=-3,81) - jadi aturan mesin yang
+memberi bonus ke sinyal searah tren harus dibalik.
+
+Timeframe 1 jam (90 hari, 17 ticker, window yang sama) tetap negatif
+walaupun digerbang, jadi intraday tidak memakai aturan ini:
+
+| Aturan (1 jam, 90 hari) | n | expectancy | t |
+|---|---|---|---|
+| Semua sinyal | 4143 | -0,273 %/trade | -6,66 |
+| Gerbang (melawan tren) | 1889 | -0,083 %/trade | -1,05 |
+
+Yang dicoba dan DITOLAK (semua diukur dengan harness yang sama):
+
+- Penjaga momentum ("jangan menangkap pisau jatuh"): tidak mengubah
+  hasil di jendela mana pun.
+- Filter kekuatan tren (ADX >= 20/25): DEV tetap negatif (-0,28 %) dan
+  hasil 2 tahun tidak membaik berarti - tidak dipakai.
+- Strategi Donchian breakout (dua arah): negatif di semua jendela.
+- Mean-reversion berbasis RSI: negatif di semua jendela.
+- Hanya sinyal REVERSAL: -3,05 %/trade selama 2 tahun.
+
+Batasnya, apa adanya:
+
+- 200 trade dalam 2 tahun itu sampel tipis; t=+2,97 berarti "kemungkinan
+  besar bukan kebetulan", bukan "pasti".
+- Kalah di 3 dari 8 kuartal. Yang paling menyakitkan 2025Q1 (-10,4 %):
+  aturan ini pola mean-reversion, dan mean-reversion pecah saat pasar
+  jatuh tajam. Kalau pasar masuk fase crash, expectancy aturan ini
+  bisa negatif lagi.
+- Sinyal SELL berarti "jual rally". Untuk yang tidak bisa shorting,
+  maknanya keluar dari posisi, bukan membuka short.
+- Biaya short di bursa derivatif (funding) tidak dimodelkan di harness.
+
+Cara mereproduksi:
+
+```
+python scripts/backtest.py --market crypto --interval 1d --period 2y \
+  --tickers BTC-USD,ETH-USD,SOL-USD,ADA-USD,DOGE-USD,XRP-USD,BNB-USD,AVAX-USD,LINK-USD,DOT-USD,LTC-USD,ATOM-USD,NEAR-USD,ARB-USD,OP-USD,FIL-USD,INJ-USD \
+  --no-compare --exit-model signal --trend-gate
+```
 
 
 #### 3.2 Daftar Harga Saham

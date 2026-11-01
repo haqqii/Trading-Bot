@@ -49,7 +49,10 @@ CRYPTO_TF_TO_INTERVAL = {
     '30': ('30m', '5d'),
     '60': ('1h', '1mo'),
     '240': ('4h', '1mo'),
-    '1440': ('1d', '3mo'),
+    # TF harian ambil 1 tahun, bukan 3 bulan. Gerbang tren (utils/strategy)
+    # memakai MA50 vs MA100 dari bar harian, jadi butuh lebih dari 100 bar
+    # - 3 bulan cuma ~90 bar dan hasilnya selalu 'flat' (= tidak diketahui).
+    '1440': ('1d', '1y'),
 }
 
 # Signal retention settings
