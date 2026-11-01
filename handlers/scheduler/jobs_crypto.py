@@ -24,6 +24,8 @@ from handlers.scheduler._common import (
     now_wib,
     CRYPTO_TF_TO_INTERVAL,
     SEND_DELAY_SECONDS,
+    SCAN_INTERVAL_BY_TF,
+    tf_scan_due,
     get_crypto_data_with_fallback,
     store_crypto_scan_data,
     get_crypto_scan_data,
@@ -39,6 +41,15 @@ from handlers.scheduler._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Waktu scan terakhir per timeframe (monotonic). Dipakai supaya timeframe
+# harian tidak discan tiap 15 menit - candle '1d' tidak berubah dalam 15
+# menit, jadi scan tambahan cuma menghasilkan noise skor di ambang batas.
+_last_scan_by_tf: dict[str, float] = {}
+
+# Scan paksa (follow-up setelah posisi tutup di TP3). Interval per timeframe
+# dilewati sekali supaya user tidak nunggu jam untuk sinyal berikutnya.
+_force_next_scan = False
 
 # Berapa ticker besar yang dipanaskan cache-nya tiap siklus prefetch.
 PREFETCH_MAJOR_COUNT = 10
@@ -207,6 +218,9 @@ async def check_crypto_signals(app):
     with TP/SL calculated for each user's selected timeframe.
     """
     try:
+        global _force_next_scan
+        force = _force_next_scan
+        _force_next_scan = False
         now = now_wib()
 
         # Group users by their selected timeframe
@@ -234,6 +248,17 @@ async def check_crypto_signals(app):
 
         # Process each TF group separately
         for tf_key, group_users in tf_groups.items():
+            # Timeframe yang belum Due dilewati. Untuk TF harian ini
+            # artinya: bukan 96 scan sehari tapi 6 - dan tidak ada lagi
+            # sinyal yang flip arah cuma karena harga bergerak sedikit.
+            now_ts = time.monotonic()
+            if not force and not tf_scan_due(tf_key, _last_scan_by_tf, now_ts):
+                interval_s = SCAN_INTERVAL_BY_TF.get(str(tf_key), 900)
+                logger.info(f"[CRYPTO] TF={tf_key}: scan dilewati (jarak scan "
+                            f"terakhir < {interval_s} detik)")
+                continue
+            _last_scan_by_tf[str(tf_key)] = now_ts
+
             interval, period = CRYPTO_TF_TO_INTERVAL.get(tf_key, ('1h', '1mo'))
             logger.info(f"[CRYPTO] TF={tf_key} ({interval}): scanning for {len(group_users)} users")
 
@@ -334,17 +359,24 @@ async def check_crypto_signals(app):
                     # sama. Posisi yang masih terbuka di-block (user sudah
                     # masuk posisi, "beli lagi" cuma membingungkan), ticker
                     # yang baru saja dikirim menunggu cooldown.
+                    #
+                    # Arah TIDAK ikut dibandingkan: kalau arah ikut, satu
+                    # baris DB per (ticker, user) menimpa riwayat cooldown
+                    # arah sebelumnya, dan user bisa dapat SELL untuk koin
+                    # yang 15 menit lalu barusan direkomendasikan BUY.
                     top_signals = []
                     for candidate in buy_signals:
                         if len(top_signals) >= 3:
                             break
                         ticker, name, d, s = candidate
                         sig_direction = 'SHORT' if s['signal'] == 'SELL' else 'LONG'
-                        if find_user_signal(signals, uid, ticker, tf_key, sig_direction):
+                        if find_user_signal(signals, uid, ticker, tf_key,
+                                            sig_direction, any_direction=True):
                             continue
                         if signal_in_cooldown(now, db_rows,
                                               f"CRYPTO_{ticker}_{uid}",
-                                              tf_key, sig_direction, d['price']):
+                                              tf_key, sig_direction, d['price'],
+                                              any_direction=True):
                             continue
                         top_signals.append(candidate)
 

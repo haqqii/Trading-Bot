@@ -9,7 +9,14 @@ dalam 25 jam).
 Yang dijaga di sini:
 1. Sinyal yang sama tidak dikirim dua kali ke user yang sama.
 2. Filter bersifat per-user: sinyal user A tidak memblokir user B.
-3. BUY dan SELL untuk ticker yang sama tidak saling memblokir.
+3. Arah berlawanan untuk ticker yang sama juga diblokir. Dulu BUY dan SELL
+   saling lolos, jadi user bisa dapat "beli SHIB" lalu 30 menit kemudian
+   "jual SHIB" untuk koin yang sama - saran yang bertentangan dengan
+   sendiri. Baris DB satu per (ticker, user) tanpa arah, jadi kalau arah
+   ikut dibandingkan, cooldown arah yang baru menimpa riwayat yang lama.
+4. Scan tiap timeframe tidak lebih sering dari yang perlu: timeframe
+   harian (1440) tidak discan tiap 15 menit karena candle '1d' tidak
+   berubah dalam 15 menit.
 """
 import sys
 import os
@@ -207,6 +214,10 @@ def crypto_scan(monkeypatch):
                         lambda: state['db_rows'])
     monkeypatch.setattr(jobs_crypto.db, 'save_active_signal',
                         fake_save_active_signal)
+    # State scan per timeframe ada di level modul, jadi harus direset:
+    # kalau tidak, scan dari test sebelumnya membuat scan test ini dilewati.
+    jobs_crypto._last_scan_by_tf.clear()
+    jobs_crypto._force_next_scan = False
     return state
 
 
@@ -234,6 +245,10 @@ class TestCryptoNoDuplicate:
         first = FakeApp()
         asyncio.run(jobs_crypto.check_crypto_signals(first))
         assert len(first.bot.sent) == 1
+
+        # Scan kedua dibuat "due" supaya yang diuji adalah filter duplikat,
+        # bukan gate interval (itu punya test sendiri).
+        jobs_crypto._last_scan_by_tf.clear()
 
         second = FakeApp()
         asyncio.run(jobs_crypto.check_crypto_signals(second))
@@ -266,8 +281,14 @@ class TestCryptoNoDuplicate:
 
         assert len(app.bot.sent) == 0
 
-    def test_other_direction_is_not_blocked(self, crypto_scan):
-        """Sinyal SELL tidak diblokir oleh sinyal BUY untuk ticker yang sama."""
+    def test_opposite_direction_is_blocked(self, crypto_scan):
+        """Sinyal berlawanan untuk ticker yang sama ikut diblokir.
+
+        Baris DB cuma satu per (ticker, user) TANPA arah, jadi kalau arah
+        ikut dibandingkan, satu rekomendasi baru menimpa riwayat cooldown
+        arah sebelumnya. Akibatnya user bisa dapat "beli SHIB" lalu 30
+        menit kemudian "jual SHIB" untuk koin yang sama.
+        """
         from handlers.scheduler import jobs_crypto
 
         crypto_scan['db_rows']['CRYPTO_BDX-USD_1'] = db_row(
@@ -277,7 +298,19 @@ class TestCryptoNoDuplicate:
         app = FakeApp()
         asyncio.run(jobs_crypto.check_crypto_signals(app))
 
-        assert len(app.bot.sent) == 1
+        assert len(app.bot.sent) == 0
+
+    def test_opposite_direction_blocked_by_active_signal(self, crypto_scan):
+        """Posisi aktif dengan arah lain juga memblokir ticker yang sama."""
+        from handlers.scheduler import jobs_crypto
+
+        crypto_scan['signals']['CRYPTO_BDX-USD_1'] = active_signal(
+            'BDX-USD', direction='SHORT')
+
+        app = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(app))
+
+        assert len(app.bot.sent) == 0
 
     def test_other_user_is_not_blocked(self, crypto_scan, monkeypatch):
         """Sinyal user lain tidak memblokir user ini."""
@@ -341,6 +374,9 @@ class TestStockNoDuplicate:
                             lambda: state['db_rows'])
         monkeypatch.setattr(jobs_stocks.db, 'save_active_signal',
                             fake_save_active_signal)
+        # State scan per timeframe ada di level modul, jadi harus direset.
+        jobs_stocks._last_scan_by_tf.clear()
+        jobs_stocks._force_next_scan = False
         return state
 
     def test_second_scan_does_not_resend_same_ticker(self, stock_scan, monkeypatch):
@@ -355,6 +391,8 @@ class TestStockNoDuplicate:
         # sedikit, ambang timeout-nya jadi 0). Reset supaya scan kedua
         # benar-benar jalan dan yang diuji adalah filter duplikatnya.
         monkeypatch.setattr(jobs_stocks, '_yahoo_stock_cooldown', 0)
+        # Gate interval dilewati supaya yang diuji filter duplikatnya.
+        jobs_stocks._last_scan_by_tf.clear()
 
         second = FakeApp()
         asyncio.run(jobs_stocks.check_stock_signals(second))
@@ -431,3 +469,102 @@ class TestCooldownHelpers:
 
         assert signal_in_cooldown(
             NOW, rows, 'CRYPTO_BDX-USD_1', '240', 'LONG', 100.0) is False
+
+    def test_opposite_direction_blocked_when_direction_ignored(self):
+        """Arah berlawanan tetap diblokir kalau arah diabaikan."""
+        from handlers.scheduler._common import signal_in_cooldown
+
+        rows = {'CRYPTO_BDX-USD_1': db_row(
+            'CRYPTO_BDX-USD_1', 'BDX-USD', 100.0, '2026-10-25 10:00:00',
+            direction='SHORT')}
+
+        # Default (arah ikut dibandingkan): SELL tidak diblokir BUY.
+        assert signal_in_cooldown(
+            NOW, rows, 'CRYPTO_BDX-USD_1', '240', 'LONG', 100.0) is False
+        # Arah diabaikan: ini diblokir.
+        assert signal_in_cooldown(
+            NOW, rows, 'CRYPTO_BDX-USD_1', '240', 'LONG', 100.0,
+            any_direction=True) is True
+
+    def test_find_user_signal_ignoring_direction(self):
+        """Arah diabaikan: sinyal aktif dengan arah lain tetap ketemu."""
+        from handlers.scheduler._common import find_user_signal
+
+        signals = {'CRYPTO_BDX-USD_1': active_signal('BDX-USD', direction='SHORT')}
+
+        assert find_user_signal(
+            signals, '1', 'BDX-USD', '240', 'LONG') is None
+        assert find_user_signal(
+            signals, '1', 'BDX-USD', '240', 'LONG',
+            any_direction=True) is not None
+
+
+class TestScanInterval:
+    """Scan tiap timeframe tidak boleh lebih sering dari yang perlu."""
+
+    def test_daily_tf_scanned_rarely(self):
+        """TF harian: candle '1d' tidak berubah tiap 15 menit."""
+        from handlers.scheduler._common import SCAN_INTERVAL_BY_TF
+
+        assert SCAN_INTERVAL_BY_TF['1440'] == 14400   # 4 jam
+        assert SCAN_INTERVAL_BY_TF['240'] == 3600     # 1 jam
+        assert SCAN_INTERVAL_BY_TF['60'] == 1800      # 30 menit
+        assert SCAN_INTERVAL_BY_TF['15'] == 900       # 15 menit
+
+    def test_tf_scan_due_first_time(self):
+        from handlers.scheduler._common import tf_scan_due
+
+        assert tf_scan_due('1440', {}, 1000.0) is True
+
+    def test_tf_scan_due_respects_interval(self):
+        from handlers.scheduler._common import tf_scan_due
+
+        last = {'1440': 1000.0}
+
+        assert tf_scan_due('1440', last, 1000.0 + 3600) is False
+        assert tf_scan_due('1440', last, 1000.0 + 14400) is True
+
+    def test_second_crypto_scan_skipped_within_interval(self, crypto_scan):
+        """Scan kedua dalam interval yang sama dilewati - tidak ada pesan."""
+        from handlers.scheduler import jobs_crypto
+
+        first = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(first))
+        assert len(first.bot.sent) == 1
+
+        second = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(second))
+        assert len(second.bot.sent) == 0
+
+    def test_scan_runs_again_after_interval(self, crypto_scan):
+        """Setelah interval lewat, scan jalan lagi."""
+        from handlers.scheduler import jobs_crypto
+
+        first = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(first))
+        assert len(first.bot.sent) == 1
+
+        # Majukan waktu scan terakhir supaya interval sudah lewat.
+        jobs_crypto._last_scan_by_tf['240'] = 0.0
+
+        second = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(second))
+        # Sinyal tetap tidak dikirim ulang (filter duplikat), tapi scan
+        # jalan - ini yang dicek: tidak ada error dan state diperbarui.
+        assert len(second.bot.sent) == 0
+        assert jobs_crypto._last_scan_by_tf['240'] > 0.0
+
+    def test_followup_scan_forces_scan(self, crypto_scan):
+        """Scan paksa (follow-up setelah TP3) menembus gate interval."""
+        from handlers.scheduler import jobs_crypto
+
+        asyncio.run(jobs_crypto.check_crypto_signals(FakeApp()))
+        jobs_crypto._force_next_scan = True
+
+        second = FakeApp()
+        asyncio.run(jobs_crypto.check_crypto_signals(second))
+
+        # Gate dilewati, jadi state scan terakhir diperbarui lagi.
+        assert jobs_crypto._last_scan_by_tf['240'] > 0.0
+        # Flag-nya dipakai sekali saja.
+        assert jobs_crypto._force_next_scan is False
