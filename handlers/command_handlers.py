@@ -158,7 +158,7 @@ def load_user_data():
         conn.row_factory = sqlite3.Row
         for row in conn.execute(
             'SELECT user_id, username, first_name, timeframe, '
-            'notif_saham, notif_crypto, notif_bsjp, notif_morning, '
+            'notif_saham, notif_bsjp, notif_morning, '
             'notif_alert_favorit, notif_crypto_long, notif_crypto_short '
             'FROM users'
         ).fetchall():
@@ -181,7 +181,6 @@ def load_user_data():
                 'first_name': row['first_name'],
                 'timeframe': row['timeframe'] or '5',
                 'notif_saham': bool(row['notif_saham']),
-                'notif_crypto': bool(row['notif_crypto']),
                 'notif_bsjp': bool(row['notif_bsjp']),
                 'notif_morning': bool(row['notif_morning']),
                 'notif_alert_favorit': bool(row['notif_alert_favorit']),
@@ -214,8 +213,8 @@ def get_user_data(user_id: int) -> dict:
         return {}
     # Convert boolean-like int back to bool for notification keys
     result = dict(user)
-    for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
-              'notif_morning', 'notif_alert_favorit',
+    for k in ['notif_saham', 'notif_bsjp', 'notif_morning',
+              'notif_alert_favorit',
               'notif_crypto_long', 'notif_crypto_short']:
         if k in result:
             result[k] = bool(result[k])
@@ -301,8 +300,8 @@ def save_user(uid_str: str) -> bool:
     )
     notif_settings = {
         k: bool(user_info.get(k, False))
-        for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
-                  'notif_morning', 'notif_alert_favorit',
+        for k in ['notif_saham', 'notif_bsjp', 'notif_morning',
+                  'notif_alert_favorit',
                   'notif_crypto_long', 'notif_crypto_short']
     }
     db.update_notifications(user_id, **notif_settings)
@@ -399,7 +398,6 @@ def get_user(user_id):
         user_data_db[user_id] = {
             'portfolio': [],
             'notif_saham': False,
-            'notif_crypto': False,
             'notif_bsjp': False,
             'notif_morning': False,
             'notif_alert_favorit': False,

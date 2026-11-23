@@ -7,6 +7,7 @@ import re
 import asyncio
 import hashlib
 import threading
+import time
 import queue
 import logging
 from datetime import datetime, timezone, timedelta
@@ -264,7 +265,25 @@ def _alert_worker(token: str, admin_chat_id: int):
     asyncio.set_event_loop(loop)
     bot = Bot(token=token)
     try:
-        loop.run_until_complete(bot.initialize())
+        # Inisialisasi bisa gagal kalau jaringan sedang bermasalah - paling
+        # sering pas container baru start. Kalau tidak di-catching, thread-nya
+        # langsung mati dan jalur alert ke admin mati sampai container
+        # direstart, tanpa jejak di log mana pun.
+        for attempt in range(5):
+            try:
+                loop.run_until_complete(bot.initialize())
+                break
+            except Exception as init_err:
+                logging.getLogger(__name__).warning(
+                    f"Gagal inisialisasi bot alert "
+                    f"(percobaan {attempt + 1}/5): "
+                    f"{type(init_err).__name__}: {init_err}")
+                time.sleep(5)
+        else:
+            logging.getLogger(__name__).error(
+                "Bot alert tidak bisa diinisialisasi setelah 5 percobaan - "
+                "jalur alert ke admin mati sampai container direstart")
+            return
         while True:
             try:
                 msg = _alert_queue.get(timeout=1.0)

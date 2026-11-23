@@ -568,6 +568,11 @@ def format_unified_crypto_notification(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
+    # Notifikasi ini melacak posisi yang dibuat BOT dari sinyalnya, bukan
+    # posisi yang dibuka user di bursa. Tanpa keterangan ini user mengira
+    # SL/TP yang dilaporkan milik posisinya sendiri - sumber kebingungan
+    # paling sering soal notifikasi exit.
+    lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
     if is_exit:
         pl_label = '💸 P/L'
     elif is_sell:
@@ -803,6 +808,9 @@ def format_unified_stock_notification(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
+    # Posisi yang dilacak adalah posisi yang dibuat bot dari sinyalnya,
+    # bukan posisi yang dibuka user di bursa.
+    lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
     lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
     lines.append("")
 

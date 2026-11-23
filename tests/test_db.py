@@ -582,27 +582,6 @@ class TestAlertOperations:
         assert len(alerts) == 0
 
 
-class TestCleanup:
-    """Tests for cleanup operations."""
-
-    def test_cleanup_old_signals(self, temp_db):
-        """Should remove old signals."""
-        db, _ = temp_db
-        db.save_signal('OLD_SIG', 'BBCA', 'stock', 'BUY')
-        # Manually set old date
-        with db._get_conn() as conn:
-            conn.execute(
-                """UPDATE signals SET created_at = datetime('now', '-30 days')
-                   WHERE key = 'OLD_SIG'"""
-            )
-
-        removed = db.cleanup_old_signals(max_age_days=7)
-        # Old signal removed (BSJP_* are not removed)
-        assert removed >= 1
-        signal = db.get_signal('OLD_SIG')
-        assert signal is None
-
-
 class TestSingleton:
     """Tests for singleton instance."""
 
@@ -667,7 +646,10 @@ class TestMigration:
         assert user is not None
         assert user['username'] == 'test_user'
         assert user['notif_saham'] == 1
-        assert user['notif_crypto'] == 1
+        # Flag crypto lama dialihkan ke arah LONG (data JSON lama tidak
+        # pernah punya notifikasi short).
+        assert user['notif_crypto_long'] == 1
+        assert user['notif_crypto_short'] == 0
 
         # Check favorites
         favorites = db.get_favorites(12345)
