@@ -232,6 +232,29 @@ python scripts/backtest.py --market crypto --interval 1d --period 2y \
 - Catat harga beli dan jumlah lot
 - Hitung unrealized P/L
 
+#### 3.5 Resolusi Simbol Crypto di Luar Daftar Pair
+
+Daftar crypto yang dipantau bot = 250 koin teratas CoinGecko (by market
+cap). Token yang lebih kecil (mis. `TAKE` = OVERTAKE, rank ~670) tidak
+pernah masuk daftar itu, dan tanpa langkah tambahan `/analisa` untuk simbol
+seperti itu selalu jatuh ke jalur saham lalu berakhir dengan pesan "saham
+tidak ditemukan" - padahal itu bukan saham.
+
+- Simbol yang tidak dikenal dicocokkan lewat `/search` CoinGecko (1 request)
+  setelah data saham gagal diambil
+- Yang dipilih: koin dengan simbol **persis sama** dan market cap terbesar
+  di antara yang cocok (simbol dobelexist, mis. `TAKE`)
+- Hasil resolusi disimpan di `data/crypto_symbol_cache.json` (umur 7 hari),
+  jadi restart tidak perlu request `/search` lagi
+- Koin yang diresolusi **tidak** masuk daftar pair yang discan - hanya
+  dipakai untuk `/analisa`, supaya jumlah sinyal ke user tidak bertambah
+- Alias yang diterima: `TAKE`, `TAKE-USD`, `TAKEIDR`. Akhiran `IDR`
+  dibuang: di bot IDR cuma konversi tampilan, bukan mata uang quote
+- Saham IDX selalu didahulukan - ticker yang ada di daftar IDX tidak pernah
+  dialihkan ke crypto, dan data crypto untuk simbol hasil resolusi diambil
+  langsung dari CoinGecko (id-nya pasti aset yang benar, tidak bisa tertukar
+  dengan aset lain yang simbolnya sama di Yahoo Finance)
+
 ### Commands
 - `/start` - Memulai bot dan menampilkan menu
 - `/signal` - Dapatkan sinyal terbaru

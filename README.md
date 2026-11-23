@@ -232,7 +232,7 @@ python -m pytest tests/ --cov=utils --cov=services --cov=handlers --cov=db
 | Command | Description |
 |---------|-------------|
 | `/start` | Start bot and view main menu |
-| `/analisa [CODE]` | Detailed technical analysis (stock/crypto) |
+| `/analisa [CODE]` | Detailed technical analysis (stock/crypto). Crypto di luar 250 koin teratas tetap bisa dianalisis - simbolnya dicari ke CoinGecko |
 | `/harga` | View stock price list |
 | `/sinyal` or `/pagi` or `/morning` | Morning Watchlist |
 | `/favorit` or `/fav` | View favorites |

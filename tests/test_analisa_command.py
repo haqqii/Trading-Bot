@@ -68,7 +68,13 @@ def analisa_env(monkeypatch):
         state['news_calls'] += 1
         return ([], None)
 
+    def fake_resolve(symbol):
+        # Ticker tidak dikenal sebagai crypto - tidak ada yang ketemu.
+        state['priority_calls'].append(('resolve', symbol, True))
+        return None
+
     monkeypatch.setattr(analisa_mod.crypto_service, 'get_crypto_data', fake_probe)
+    monkeypatch.setattr(analisa_mod.crypto_service, 'resolve_symbol', fake_resolve)
     monkeypatch.setattr(analisa_mod.stock_service, 'get_stock_data_combined',
                         fake_stock_fetch)
     monkeypatch.setattr(analisa_mod.news_service, 'get_stock_news', fake_news)
@@ -140,10 +146,16 @@ class TestAnalisaDoesNotBlockOnPairLoading:
         def fake_probe(*args, **kwargs):
             return None
 
+        def fake_resolve(*args, **kwargs):
+            return None
+
         monkeypatch.setattr(analisa_mod.crypto_service, 'load_crypto_pairs',
                             slow_load)
         monkeypatch.setattr(analisa_mod.crypto_service, 'get_crypto_data',
                             fake_probe)
+        # Resolusi simbol CoinGecko dimock: test tidak boleh pakai jaringan.
+        monkeypatch.setattr(analisa_mod.crypto_service, 'resolve_symbol',
+                            fake_resolve)
 
         update = _FakeUpdate()
         ctx = _FakeCtx(['SKYAI'])
@@ -183,3 +195,172 @@ class TestAnalisaUsesPriorityQuota:
             assert priority is True, (
                 f"{kind} request untuk {ticker} tidak pakai priority - "
                 f"bakal antre di belakang scan crypto")
+
+
+# --- Resolusi simbol CoinGecko --------------------------------------------
+#
+# Universe crypto bot = 250 koin teratas by market cap. Token yang lebih
+# kecil (mis. OVERTAKE, rank ~670) tidak pernah masuk daftar itu, dan tanpa
+# resolusi simbol /analisa untuk token seperti itu selalu berakhir dengan
+# pesan "saham tidak ditemukan" - padahal itu bukan saham.
+
+_RESOLVED = {
+    'ticker': 'TAKE-USD',
+    'id': 'overtake',
+    'name': 'OVERTAKE',
+    'symbol': 'TAKE',
+    'rank': 668,
+}
+
+
+@pytest.fixture
+def resolve_env(monkeypatch):
+    """Lingkungan di mana ticker asing bisa diresolusi jadi crypto."""
+    from handlers.commands import analisa as analisa_mod
+    from services.stock_service import StockDataResult
+
+    state = {'resolved': [], 'cg_calls': [], 'stock_calls': []}
+
+    monkeypatch.setattr(analisa_mod, 'ALL_STOCKS', {'BBCA': 'Bank Central Asia'})
+    monkeypatch.setattr(analisa_mod.crypto_service, 'crypto_pairs',
+                        {'BTC-USD': 'Bitcoin'})
+
+    def fake_resolve(symbol):
+        state['resolved'].append(symbol)
+        return dict(_RESOLVED)
+
+    def fake_cg_fetch(ticker, priority=False, **kwargs):
+        state['cg_calls'].append((ticker, priority))
+        return {
+            'ticker': ticker,
+            'name': 'OVERTAKE',
+            'price': 0.0625,
+            'change': 1.2,
+            'ma_fast': 0.061,
+            'ma_slow': 0.059,
+            'macd': 0.0004,
+            'macd_signal': 0.0003,
+            'macd_hist': 0.0001,
+            'bb_upper': 0.07,
+            'bb_lower': 0.05,
+            'rsi': 55.0,
+            'atr': 0.003,
+            'volume': 5_000_000,
+            'volume_ratio': 1.0,
+            'vwap': 0.062,
+            'htf_trend': 'up',
+            'candles': 168,
+            'source': 'coingecko',
+            'sr': {},
+        }
+
+    def fake_probe(*args, **kwargs):
+        return None
+
+    def fake_stock_fetch(ticker, interval='5m', period='5d', priority=False):
+        state['stock_calls'].append(ticker)
+        return StockDataResult(success=False, error='ticker tidak ada',
+                               source='all', retry_after=30)
+
+    def fake_news(*args, **kwargs):
+        return ([], None)
+
+    monkeypatch.setattr(analisa_mod.crypto_service, 'resolve_symbol', fake_resolve)
+    monkeypatch.setattr(analisa_mod.crypto_service, 'get_crypto_data_coingecko',
+                        fake_cg_fetch)
+    monkeypatch.setattr(analisa_mod.crypto_service, 'get_crypto_data', fake_probe)
+    monkeypatch.setattr(analisa_mod.stock_service, 'get_stock_data_combined',
+                        fake_stock_fetch)
+    monkeypatch.setattr(analisa_mod.news_service, 'get_stock_news', fake_news)
+    monkeypatch.setattr(analisa_mod.news_service, 'get_crypto_news', fake_news)
+    monkeypatch.setattr(analisa_mod._price_cache, 'get', lambda *a, **k: None)
+    monkeypatch.setattr(analisa_mod._price_cache, 'get_stale',
+                        lambda *a, **k: None)
+
+    return state
+
+
+class TestAnalisaResolvesUnknownCrypto:
+    """Ticker crypto di luar daftar pair harus bisa dianalisis."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_ticker_resolved_to_crypto(self, resolve_env):
+        from handlers.commands.analisa import analisa_cmd
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['TAKE'])
+        await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+
+        texts = ' '.join(update.message.sent)
+        assert resolve_env['resolved'] == ['TAKE']
+        assert 'TAKE' in texts
+        assert 'OVERTAKE' in texts
+        assert 'tidak ditemukan' not in texts
+
+    @pytest.mark.asyncio
+    async def test_resolved_crypto_data_from_coingecko(self, resolve_env):
+        """Data diambil dari CoinGecko, bukan Yahoo."""
+        from handlers.commands.analisa import analisa_cmd
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['TAKE'])
+        await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+
+        assert resolve_env['cg_calls'], "data tidak diambil dari CoinGecko"
+        ticker, priority = resolve_env['cg_calls'][0]
+        assert ticker == 'TAKE-USD'
+        assert priority is True
+
+    @pytest.mark.asyncio
+    async def test_idr_suffix_ticker_resolved(self, resolve_env):
+        """TAKEIDR harus tetap ketemu (user menambahkan IDR karena harga
+        di bot ditampilkan dalam Rupiah)."""
+        from handlers.commands.analisa import analisa_cmd
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['TAKEIDR'])
+        await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+
+        texts = ' '.join(update.message.sent)
+        assert resolve_env['resolved'] == ['TAKEIDR']
+        assert 'OVERTAKE' in texts
+        assert 'tidak ditemukan' not in texts
+
+    @pytest.mark.asyncio
+    async def test_known_stock_not_resolved_as_crypto(self, resolve_env):
+        """Saham IDX tidak boleh dialihkan ke crypto, meski simbolnya
+        kebetulan ada di CoinGecko."""
+        from handlers.commands.analisa import analisa_cmd
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['BBCA'])
+        await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+
+        assert resolve_env['resolved'] == [], (
+            "saham IDX seharusnya tidak pernah masuk resolusi simbol crypto")
+
+    @pytest.mark.asyncio
+    async def test_stock_wins_over_crypto_symbol(self, resolve_env, monkeypatch):
+        """Kalau tickernya saham IDX, data saham yang dipakai."""
+        from handlers.commands import analisa as analisa_mod
+        from handlers.commands.analisa import analisa_cmd
+        from services.stock_service import StockDataResult
+
+        def stock_ok(ticker, interval='5m', period='5d', priority=False):
+            return StockDataResult(success=True, data={
+                'ticker': ticker, 'name': 'Bank Central Asia', 'price': 9500,
+                'change': 1.0, 'ma_fast': 9400, 'ma_slow': 9300,
+                'macd_hist': 5.0, 'rsi': 55.0, 'volume_ratio': 1.1,
+                'candles': 100, 'source': 'yahoo', 'sr': {},
+            }, source='yahoo')
+
+        monkeypatch.setattr(analisa_mod.stock_service,
+                            'get_stock_data_combined', stock_ok)
+
+        update = _FakeUpdate()
+        ctx = _FakeCtx(['BBCA'])
+        await asyncio.wait_for(analisa_cmd(update, ctx), timeout=30)
+
+        texts = ' '.join(update.message.sent)
+        assert 'Bank Central Asia' in texts
+        assert resolve_env['resolved'] == []

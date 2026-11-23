@@ -54,6 +54,10 @@ data/coingecko_calls.json
 # limit saat container start
 data/crypto_pairs_cache.json
 
+# Cache resolusi simbol crypto (id CoinGecko untuk ticker di luar daftar
+# pair). Kalau hilang, bot hanya perlu satu request /search lagi.
+data/crypto_symbol_cache.json
+
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal
