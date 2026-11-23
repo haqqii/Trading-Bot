@@ -37,7 +37,7 @@ BAGIAN 2: BUAT ALWAYS FREE VIRTUAL MACHINE
 
 2.2 BUAT NAMESPACE (PERTAMA KALI SAJA)
 ---------------------------------------
-1. Klik menu hamburger (左上) → Identity & Security → Tenancy
+1. Klik menu hamburger (kiri atas) → Identity & Security → Tenancy
 2. Atau langsung ke: https://cloud.oracle.com/tenancy
 3. Buat OCID unik jika diminta
 
@@ -420,7 +420,7 @@ VM Oracle free tier cuma 1 GB RAM
 Solusi:
 1. Kurangi stocks yang di-scan
 2. Naikkan sleep time di code
-3. Jangan跑banyak command gleichzeitig
+3. Jangan menjalankan banyak command sekaligus
 
 MASALAH 5: PERMISSION DENIED FILE
 ---------------------------------

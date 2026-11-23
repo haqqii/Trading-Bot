@@ -786,7 +786,7 @@ class TestScanDegradedAlert:
 
         monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '240'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '240'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals', lambda: {})
         monkeypatch.setattr(jobs_crypto, '_last_degrade_alert', 0.0)
 
@@ -835,7 +835,7 @@ class TestScanDegradedAlert:
 
         monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '240'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '240'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals', lambda: {})
         monkeypatch.setattr(jobs_crypto, '_last_degrade_alert', 0.0)
 
@@ -1131,7 +1131,7 @@ class TestPrefetchUsesUserTimeframe:
 
         monkeypatch.setattr(jobs_crypto, 'crypto_service', FakeService())
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '240'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '240'}})
 
         with caplog.at_level(logging.INFO):
             asyncio.run(jobs_crypto.prefetch_crypto_cache(FakeApp()))

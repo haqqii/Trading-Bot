@@ -37,4 +37,7 @@ def set_user_db(db):
     """
     logger.info(f"[SCHEDULER] set_user_db called with {len(db)} users (now reading directly from command_handlers)")
     for uid, u in db.items():
-        logger.info(f"[SCHEDULER]   User {uid}: notif_saham={u.get('notif_saham')}, notif_crypto={u.get('notif_crypto')}")
+        logger.info(
+            f"[SCHEDULER]   User {uid}: notif_saham={u.get('notif_saham')}, "
+            f"crypto_long={u.get('notif_crypto_long')}, "
+            f"crypto_short={u.get('notif_crypto_short')}")

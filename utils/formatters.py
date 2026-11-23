@@ -1326,7 +1326,7 @@ def _intinya_pemula(signal_type: str, data: Dict, sentiment: Dict) -> str:
 
     if signal_type == 'BUY':
         if rsi < 30:
-            base = ("Harga sudah sangat jenuh jual dan berpotensi反弹. "
+            base = ("Harga sudah sangat jenuh jual dan berpotensi rebound. "
                     "Jika tertarik, pertimbangkan beli bertahap dengan target profit "
                     "yang jelas dan stop loss untuk membatasi risiko.")
         elif sentiment and sentiment.get('overall') == 'positive':

@@ -199,7 +199,7 @@ class TestScanAppliesGate:
         monkeypatch.setattr(jobs_crypto, 'signal_service',
                             FakeSignalService(direction_by_ticker))
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '1440'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '1440'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: state.setdefault('signals', {}))
         monkeypatch.setattr(jobs_crypto, '_schedule_followup_scan',
@@ -262,7 +262,7 @@ class TestScanAppliesGate:
         monkeypatch.setattr(jobs_crypto, 'signal_service',
                             FakeSignalService({'INTRADAY-USD': 'BUY'}))
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: state.setdefault('signals', {}))
         monkeypatch.setattr(jobs_crypto, '_schedule_followup_scan',

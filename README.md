@@ -255,7 +255,8 @@ Click **🔔 Notifikasi** button to toggle:
 | Setting | Description |
 |---------|-------------|
 | Sinyal Saham | Stock TP/SL notifications |
-| Sinyal Crypto | Crypto signals 24/7 |
+| Rekom Beli Crypto | Crypto LONG signals (buy recommendation), 24/7 |
+| Rekom Jual Crypto | Crypto SHORT signals (sell recommendation), 24/7 |
 | BSJP | Buy Afternoon Sell Morning notification |
 | Alert Favorit | Price alert on favorites |
 | Sinyal Pagi | Morning watchlist notification |
