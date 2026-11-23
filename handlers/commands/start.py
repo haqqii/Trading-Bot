@@ -30,7 +30,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Build detailed notification status
     notif_keys = [
         ('notif_saham', '📈 Sinyal Saham'),
-        ('notif_crypto', '₿ Sinyal Crypto'),
+        ('notif_crypto_long', '🔺 Rekom Beli Crypto'),
+        ('notif_crypto_short', '🔻 Rekom Jual Crypto'),
         ('notif_bsjp', '🌙 BSJP'),
         ('notif_morning', '☀️ Sinyal Pagi'),
         ('notif_alert_favorit', '⭐️ Alert Favorit'),

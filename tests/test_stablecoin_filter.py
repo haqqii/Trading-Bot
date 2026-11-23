@@ -292,7 +292,7 @@ class TestScanSkipsStablecoin:
         monkeypatch.setattr(jobs_crypto, 'signal_service', FakeSignalService())
         monkeypatch.setattr(jobs_crypto, 'get_crypto_data_with_fallback', fake_data)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '240'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '240'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: state['signals'])
         monkeypatch.setattr(jobs_crypto, '_schedule_followup_scan',
@@ -359,7 +359,7 @@ class TestTpSlClosesStablecoin:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             fake_save_outcome)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: state['signals'])
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)

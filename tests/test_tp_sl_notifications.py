@@ -109,7 +109,7 @@ def crypto_loop(monkeypatch):
     monkeypatch.setattr(jobs_crypto.db, 'update_signal_extra',
                         lambda key, extra: True)
     monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-        '1': {'notif_crypto': True, 'timeframe': '60'}})
+        '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
     monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                         lambda: state['signals'])
     monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -278,7 +278,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -315,7 +315,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -355,7 +355,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -400,7 +400,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -447,7 +447,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -493,7 +493,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -545,7 +545,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -607,7 +607,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -653,7 +653,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -699,7 +699,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -743,7 +743,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)
@@ -779,7 +779,7 @@ class TestTpSlFetchesPricesInParallel:
         monkeypatch.setattr(jobs_crypto.db, 'save_signal_outcome',
                             lambda *a, **k: None)
         monkeypatch.setattr(jobs_crypto, '_get_user_db', lambda: {
-            '1': {'notif_crypto': True, 'timeframe': '60'}})
+            '1': {'notif_crypto_long': True, 'notif_crypto_short': True, 'timeframe': '60'}})
         monkeypatch.setattr(jobs_crypto, '_get_last_buy_signals',
                             lambda: signals)
         monkeypatch.setattr(jobs_crypto, '_remove_signal', lambda key: None)

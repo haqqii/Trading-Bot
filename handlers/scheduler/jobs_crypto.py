@@ -212,6 +212,24 @@ async def fetch_crypto_prices(tickers, interval: str, period: str) -> dict:
     return data_map
 
 
+def _crypto_notif_enabled(u: dict) -> bool:
+    """Apakah user ini mau notifikasi sinyal crypto sama sekali.
+
+    Notifikasi crypto dipecah per arah: LONG (rekomendasi beli) dan
+    SHORT (rekomendasi jual). Jadi user yang cuma mau salah satu arah
+    tetap dilayani, dan yang tidak mau salah satu arah tidak perlu
+    dapat notifikasinya.
+    """
+    return bool(u.get('notif_crypto_long', False)
+                or u.get('notif_crypto_short', False))
+
+
+def _crypto_notif_for_direction(u: dict, direction: str) -> bool:
+    """Notifikasi crypto untuk satu arah sinyal ('LONG' / 'SHORT')."""
+    key = 'notif_crypto_short' if direction == 'SHORT' else 'notif_crypto_long'
+    return bool(u.get(key, False))
+
+
 async def check_crypto_signals(app):
     """Check crypto signals 24/7 and send notifications per-user TF.
 
@@ -227,12 +245,12 @@ async def check_crypto_signals(app):
         # Group users by their selected timeframe
         tf_groups = {}
         for uid, u in _get_user_db().items():
-            if u.get('notif_crypto', False):
+            if _crypto_notif_enabled(u):
                 tf = u.get('timeframe', '60')
                 tf_groups.setdefault(tf, []).append((uid, u))
 
         if not tf_groups:
-            logger.info("[CRYPTO] No users with notif_crypto enabled")
+            logger.info("[CRYPTO] No users with crypto notifications enabled")
             return
 
         total_users = sum(len(v) for v in tf_groups.values())
@@ -390,6 +408,14 @@ async def check_crypto_signals(app):
                             break
                         ticker, name, d, s = candidate
                         sig_direction = 'SHORT' if s['signal'] == 'SELL' else 'LONG'
+                        # Notifikasi per arah: LONG (beli) dan SHORT (jual)
+                        # masing-masing opt-in. Sinyal yang arahnya tidak
+                        # diaktifkan user dilewati - user yang cuma bisa
+                        # long tidak perlu rekomendasi jual, dan notifikasi
+                        # yang judulnya "CRYPTO SCAN" bikin ambigu (bukan
+                        # penanda scan, tapi sinyal jual).
+                        if not _crypto_notif_for_direction(u, sig_direction):
+                            continue
                         if find_user_signal(signals, uid, ticker, tf_key,
                                             sig_direction, any_direction=True):
                             continue
@@ -647,7 +673,7 @@ async def _fetch_prices_for_tp_sl(user_db, signals):
     """
     wanted = []
     for uid, u in user_db.items():
-        if not u.get('notif_crypto', False):
+        if not _crypto_notif_enabled(u):
             continue
         user_tf = u.get('timeframe', '60')
         interval, period = CRYPTO_TF_TO_INTERVAL.get(user_tf, ('1h', '1mo'))
@@ -907,7 +933,7 @@ async def check_crypto_tp_sl(app):
         price_cache = await _fetch_prices_for_tp_sl(user_db, signals)
 
         for uid, u in user_db.items():
-            if not u.get('notif_crypto', False):
+            if not _crypto_notif_enabled(u):
                 continue
 
             for key, signal_data in list(signals.items()):
@@ -933,6 +959,23 @@ async def check_crypto_tp_sl(app):
                     entry = signal_data.get('entry', 0)
                     atr = safe_num(signal_data.get('atr'), 0)
                     is_short = signal_data.get('direction', 'LONG') == 'SHORT'
+
+                    # Posisi ini sementara notifikasi untuk arahnya
+                    # dimatikan user: ditutup diam-diam. Kalau dibiarkan,
+                    # notifikasi exit (SL / breakeven / trailing) tetap
+                    # dikirim untuk posisi yang memang sudah tidak mau
+                    # dilihat usernya.
+                    if not _crypto_notif_for_direction(
+                            u, 'SHORT' if is_short else 'LONG'):
+                        logger.info(
+                            f"Signal {key} for {ticker}: notifikasi "
+                            f"{'short' if is_short else 'long'} dimatikan - "
+                            f"menutup tanpa notifikasi")
+                        db.save_signal_outcome(key, 'invalid',
+                                               closed_price=current_price)
+                        del signals[key]
+                        _remove_signal(key)
+                        continue
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
@@ -1285,7 +1328,7 @@ async def prefetch_crypto_cache(app):
         # 2. Timeframe yang dipakai user (bukan 1h/1d asumsi).
         intervals = set()
         for u in _get_user_db().values():
-            if not u.get('notif_crypto', False):
+            if not _crypto_notif_enabled(u):
                 continue
             tf = u.get('timeframe', '60')
             intervals.add(CRYPTO_TF_TO_INTERVAL.get(tf, ('1h', '1mo')))

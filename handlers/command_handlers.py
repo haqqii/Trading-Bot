@@ -159,7 +159,8 @@ def load_user_data():
         for row in conn.execute(
             'SELECT user_id, username, first_name, timeframe, '
             'notif_saham, notif_crypto, notif_bsjp, notif_morning, '
-            'notif_alert_favorit FROM users'
+            'notif_alert_favorit, notif_crypto_long, notif_crypto_short '
+            'FROM users'
         ).fetchall():
             user_id_int = row['user_id']
             user_id_str = str(user_id_int)
@@ -184,6 +185,8 @@ def load_user_data():
                 'notif_bsjp': bool(row['notif_bsjp']),
                 'notif_morning': bool(row['notif_morning']),
                 'notif_alert_favorit': bool(row['notif_alert_favorit']),
+                'notif_crypto_long': bool(row['notif_crypto_long']),
+                'notif_crypto_short': bool(row['notif_crypto_short']),
                 'favorit': favorit,
                 'crypto_favorit': crypto_favorit,
                 'favorites': list(favorit.keys()),
@@ -212,7 +215,8 @@ def get_user_data(user_id: int) -> dict:
     # Convert boolean-like int back to bool for notification keys
     result = dict(user)
     for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
-              'notif_morning', 'notif_alert_favorit']:
+              'notif_morning', 'notif_alert_favorit',
+              'notif_crypto_long', 'notif_crypto_short']:
         if k in result:
             result[k] = bool(result[k])
     # Add favorites list
@@ -298,7 +302,8 @@ def save_user(uid_str: str) -> bool:
     notif_settings = {
         k: bool(user_info.get(k, False))
         for k in ['notif_saham', 'notif_crypto', 'notif_bsjp',
-                  'notif_morning', 'notif_alert_favorit']
+                  'notif_morning', 'notif_alert_favorit',
+                  'notif_crypto_long', 'notif_crypto_short']
     }
     db.update_notifications(user_id, **notif_settings)
     favorit = user_info.get('favorit') or {}
@@ -398,6 +403,11 @@ def get_user(user_id):
             'notif_bsjp': False,
             'notif_morning': False,
             'notif_alert_favorit': False,
+            # Notifikasi crypto per arah (LONG / SHORT). Opt-in dua-duanya:
+            # user milih sendiri mau rekomendasi beli, rekomendasi jual,
+            # atau keduanya.
+            'notif_crypto_long': False,
+            'notif_crypto_short': False,
             'favorit': {},
             'crypto_favorit': {},
             'timeframe': '5',

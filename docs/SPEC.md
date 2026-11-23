@@ -255,6 +255,31 @@ tidak ditemukan" - padahal itu bukan saham.
   langsung dari CoinGecko (id-nya pasti aset yang benar, tidak bisa tertukar
   dengan aset lain yang simbolnya sama di Yahoo Finance)
 
+#### 3.6 Notifikasi Crypto per Arah (LONG / SHORT)
+
+Notifikasi crypto dipecah per arah, jadi user pilih sendiri:
+
+| Setting | Isi |
+|---------|-----|
+| Rekom Beli Crypto (`notif_crypto_long`) | Sinyal LONG - rekomendasi beli |
+| Rekom Jual Crypto (`notif_crypto_short`) | Sinyal SHORT - rekomendasi jual |
+
+Aturannya:
+
+- Mati default untuk keduanya. Notifikasi yang tidak diminta user hanya
+  menambah kebisingan, dan notifikasi short yang judulnya "CRYPTO SCAN"
+  bikin ambigu (bukan penanda scan, tapi sinyal jual).
+- Sinyal yang arahnya tidak diaktifkan user **dilewati**, dan tidak
+  disimpan sebagai posisi aktif - kalau disimpan, user tetap dapat
+  notifikasi exit-nya (SL / breakeven / trailing) padahal tidak mau.
+- Posisi yang arahnya dimatikan setelah terbit ditutup tanpa notifikasi,
+  dengan alasan yang sama.
+- User yang sebelumnya punya `notif_crypto=1` otomatis dapat
+  `notif_crypto_long=1` (rekomendasi beli yang mereka terima selama ini
+  tidak hilang). `notif_crypto_short` tetap opt-in.
+- Master `notif_crypto` tidak dipakai lagi sebagai gerbang; notifikasi
+  crypto aktif kalau salah satu dari dua arah di atas aktif.
+
 ### Commands
 - `/start` - Memulai bot dan menampilkan menu
 - `/signal` - Dapatkan sinyal terbaru

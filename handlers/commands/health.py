@@ -51,7 +51,8 @@ async def health_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     u = get_user(uid)
     msg += f"   notif_saham: {u.get('notif_saham', False)}\n"
-    msg += f"   notif_crypto: {u.get('notif_crypto', False)}\n"
+    msg += f"   notif_crypto_long: {u.get('notif_crypto_long', False)}\n"
+    msg += f"   notif_crypto_short: {u.get('notif_crypto_short', False)}\n"
 
     try:
         await update.message.reply_text(msg, parse_mode='Markdown')

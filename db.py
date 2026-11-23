@@ -31,6 +31,12 @@ DEFAULT_NOTIFICATIONS = {
     'notif_bsjp': False,
     'notif_morning': False,
     'notif_alert_favorit': False,
+    # Notifikasi crypto dipecah per arah. User pilih sendiri mau dapat
+    # rekomendasi beli (LONG), rekomendasi jual (SHORT), atau keduanya.
+    # Mati default untuk keduanya - notifikasi yang tidak diminta user
+    # cuma menambah kebisingan.
+    'notif_crypto_long': False,
+    'notif_crypto_short': False,
 }
 
 
@@ -149,17 +155,35 @@ class Database:
         new_columns = [
             ('users', 'timeframe', "TEXT DEFAULT '5'"),
             ('favorites', 'target_price', 'REAL'),
+            # Notifikasi crypto dipecah per arah (LONG / SHORT).
+            ('users', 'notif_crypto_long', 'INTEGER DEFAULT 0'),
+            ('users', 'notif_crypto_short', 'INTEGER DEFAULT 0'),
         ]
+        added: list[tuple[str, str]] = []
         with self._get_conn() as conn:
             for table, col_name, col_type in new_columns:
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
                     logger.info(f"[DB] Added column {table}.{col_name}")
+                    added.append((table, col_name))
                 except sqlite3.OperationalError as e:
                     if 'duplicate column name' in str(e).lower():
                         pass  # Already exists
                     else:
                         raise
+
+            # Migrasi data ini jalan sekali saja, tepat waktu kolom
+            # barunya dibuat. User yang punya notif_crypto=1 dialihkan ke
+            # notif_crypto_long, jadi
+            # rekomendasi beli yang mereka terima selama ini tidak hilang.
+            # Sinyal SHORT tetap opt-in: rekomendasi jual cuma relevan buat
+            # yang memang bisa short / sudah pegang posisi.
+            if any(t == 'users' and c == 'notif_crypto_long' for t, c in added):
+                conn.execute(
+                    "UPDATE users SET notif_crypto_long = notif_crypto "
+                    "WHERE notif_crypto = 1")
+                logger.info("[DB] Notifikasi crypto long diwarisi dari "
+                            "notif_crypto untuk user yang sudah ada")
 
     def _fix_signals_asset_type(self):
         """Fix asset_type for existing signals. Bug: save_user_data() used val.get('asset_type')
@@ -190,7 +214,9 @@ class Database:
                     notif_crypto INTEGER DEFAULT 0,
                     notif_bsjp INTEGER DEFAULT 0,
                     notif_morning INTEGER DEFAULT 0,
-                    notif_alert_favorit INTEGER DEFAULT 0
+                    notif_alert_favorit INTEGER DEFAULT 0,
+                    notif_crypto_long INTEGER DEFAULT 0,
+                    notif_crypto_short INTEGER DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS favorites (
@@ -338,7 +364,8 @@ class Database:
             return False
         # Whitelist allowed columns
         allowed = {'notif_saham', 'notif_crypto', 'notif_bsjp',
-                   'notif_morning', 'notif_alert_favorit'}
+                   'notif_morning', 'notif_alert_favorit',
+                   'notif_crypto_long', 'notif_crypto_short'}
         sets = []
         values = []
         for key, val in kwargs.items():
@@ -612,8 +639,9 @@ class Database:
         Args:
             key: Signal key (e.g. 'STOCK_BBCA')
             outcome: 'open', 'tp1', 'tp2', 'tp3', 'sl', atau 'invalid'
-                ('invalid' dipakai saat harga entry tidak bisa dipercaya,
-                jadi sinyal ditutup tanpa notifikasi TP/SL)
+                ('invalid' = sinyal ditutup tanpa notifikasi TP/SL: harga
+                entry tidak bisa dipercaya, atau user mematikan notifikasi
+                untuk sinyal short)
             hit_at: ISO datetime string when the outcome occurred
             closed_price: Price when signal was closed (TP3 or SL)
         """

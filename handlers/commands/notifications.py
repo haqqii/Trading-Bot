@@ -18,7 +18,10 @@ async def notifikasi(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     notif_keys = [
         ('notif_saham', '📈 Sinyal Saham', 'Sinyal TP/SL untuk saham'),
-        ('notif_crypto', '₿ Sinyal Crypto', 'Sinyal 24/7 untuk crypto'),
+        ('notif_crypto_long', '🔺 Rekom Beli Crypto',
+         'Sinyal LONG (beli) 24/7 untuk crypto'),
+        ('notif_crypto_short', '🔻 Rekom Jual Crypto',
+         'Sinyal SHORT (jual) 24/7 untuk crypto'),
         ('notif_bsjp', '🌙 BSJP', 'Beli Sore Jual Pagi'),
         ('notif_morning', '☀️ Sinyal Pagi', 'Watchlist rekomendasi pagi'),
         ('notif_alert_favorit', '⭐ Alert Favorit', 'Alert harga saham favorit'),
@@ -57,7 +60,8 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(query.from_user.id)
     u = get_user(uid)
 
-    if notif_key not in ('notif_saham', 'notif_crypto', 'notif_bsjp',
+    if notif_key not in ('notif_saham', 'notif_crypto_long',
+                        'notif_crypto_short', 'notif_bsjp',
                         'notif_morning', 'notif_alert_favorit'):
         await query.edit_message_text("⚠️ Setting tidak dikenali.")
         return
@@ -67,7 +71,8 @@ async def notifikasi_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     notif_keys = [
         ('notif_saham', '📈 Sinyal Saham'),
-        ('notif_crypto', '₿ Sinyal Crypto'),
+        ('notif_crypto_long', '🔺 Rekom Beli Crypto'),
+        ('notif_crypto_short', '🔻 Rekom Jual Crypto'),
         ('notif_bsjp', '🌙 BSJP'),
         ('notif_morning', '☀️ Sinyal Pagi'),
         ('notif_alert_favorit', '⭐ Alert Favorit'),
