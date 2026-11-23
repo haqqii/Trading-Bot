@@ -5,6 +5,7 @@ Owns:
 - ``cleanup_caches``   — periodic cache and signal cleanup
 - ``register_jobs``    — single place that wires all jobs to ``app.job_queue``
 """
+import asyncio
 import logging
 
 from db import db
@@ -71,6 +72,23 @@ async def cleanup_caches(app):
         logger.error(f"Cleanup error: {e}", exc_info=True)
 
 
+async def snapshot_db(app):
+    """Snapshot harian database.
+
+    Baris sinyal ditulis ulang per (ticker, user), jadi outcome TP/SL
+    yang sudah tercatat bisa tertimpa sinyal yang lebih baru. Snapshot
+    harian menyimpan kondisi tiap hari supaya hasil eksperimen masih
+    bisa dibaca ulang nanti.
+    """
+    try:
+        from utils.db_snapshot import maybe_snapshot
+        path = await asyncio.to_thread(maybe_snapshot)
+        if path:
+            logger.info(f"[SNAPSHOT] Snapshot harian dibuat: {path}")
+    except Exception as e:
+        logger.error(f"Snapshot database gagal: {e}", exc_info=True)
+
+
 def register_jobs(app):
     """Register all background jobs to the application."""
     # === MARKET OPEN RESET (run first) ===
@@ -135,6 +153,11 @@ def register_jobs(app):
 
     # Cache cleanup every 5 minutes
     app.job_queue.run_repeating(cleanup_caches, interval=300, first=60,
+                                job_kwargs=_job_kwargs())
+
+    # Snapshot database. Job ini dicek tiap 30 menit, tapi snapshotnya
+    # hanya dibuat satu kali per hari (kalau file hari ini belum ada).
+    app.job_queue.run_repeating(snapshot_db, interval=1800, first=120,
                                 job_kwargs=_job_kwargs())
 
     # Set APScheduler misfire behavior globally.

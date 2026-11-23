@@ -58,6 +58,10 @@ data/crypto_pairs_cache.json
 # pair). Kalau hilang, bot hanya perlu satu request /search lagi.
 data/crypto_symbol_cache.json
 
+# Snapshot harian database (untuk review hasil eksperimen). File-nya
+# dibuat bot otomatis, jadi jangan di-commit.
+snapshots/
+
 # Legacy DB files at root (will be moved to data/ after bot restart)
 ochobot.db
 ochobot.db-journal
