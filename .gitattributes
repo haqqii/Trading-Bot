@@ -1,0 +1,4 @@
+# Skrip shell harus tetap LF. Dengan autocrlf aktif, checkout di Windows
+# menulis \r di akhir baris, dan bash membacanya sebagai bagian dari
+# perintah ("set: -: invalid option") -> run-trading.sh jadi gagal start.
+*.sh text eol=lf
