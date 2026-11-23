@@ -528,6 +528,13 @@ def _schedule_followup_scan(app, kind: str, delay: int = 60):
     target = None
     if kind == 'crypto':
         from handlers.scheduler import jobs_crypto
+        # Scan yang sedang jalan sudah mengambil data terbaru, jadi scan
+        # tambahan ini cuma menambah beban provider (dua scan bareng
+        # memperlambat keduanya, dan bisa membuat scan berikutnya kena
+        # skip). Jadi dibatalkan kalau ada scan yang sedang jalan.
+        if jobs_crypto.scan_in_progress():
+            logger.info("Scan crypto sedang jalan - follow-up scan dibatalkan")
+            return
         jobs_crypto._force_next_scan = True
         target = jobs_crypto.check_crypto_signals
     elif kind == 'stock':

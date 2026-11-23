@@ -25,9 +25,12 @@ _DATA_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data')
 DB_FILE = _os.path.join(_DATA_DIR, 'ochobot.db')
 
 # Default notification settings for new users
+# notif_crypto tidak ada di sini lagi: notifikasi crypto dipecah per arah
+# (notif_crypto_long / notif_crypto_short). Kolomnya di DB tetap ada -
+# dipakai migrasi data satu kali dan file JSON lama - tapi tidak lagi
+# jadi pengaturan yang dibaca bot.
 DEFAULT_NOTIFICATIONS = {
     'notif_saham': True,
-    'notif_crypto': False,
     'notif_bsjp': False,
     'notif_morning': False,
     'notif_alert_favorit': False,
@@ -211,6 +214,8 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     notif_saham INTEGER DEFAULT 1,
+                    -- Legacy: digantikan notif_crypto_long/short. Disimpan
+                    -- untuk migrasi data lama, tidak jadi setting aktif.
                     notif_crypto INTEGER DEFAULT 0,
                     notif_bsjp INTEGER DEFAULT 0,
                     notif_morning INTEGER DEFAULT 0,
@@ -247,6 +252,12 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_portfolio_user ON portfolio(user_id);
 
+                -- Sinyal disimpan satu baris per (ticker, user): key-nya
+                -- "<TICKER>_<user_id>" dan ditulis ulang dengan INSERT OR
+                -- REPLACE. Jadi jumlah barisnya terbatas jumlah ticker yang
+                -- pernah dapat sinyal - bukan jumlah sinyalnya. Baris lama
+                -- yang tertimpa masih bisa dibaca dari snapshot harian
+                -- (utils/db_snapshot.py).
                 CREATE TABLE IF NOT EXISTS signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     key TEXT UNIQUE NOT NULL,
@@ -539,7 +550,8 @@ class Database:
                 # created_at sengaja tidak di-update: auto-save cuma menyalin
                 # state sinyal yang sama ke DB, bukan membuat sinyal baru.
                 # Kalau di-update, waktu pembuatan sinyal jadi hilang dan
-                # cleanup_old_signals() tidak pernah membersihkan sinyal lama.
+                # snapshot harian tidak bisa membedakan sinyal lama dari
+                # yang baru.
                 conn.execute(
                     """UPDATE signals SET ticker = ?, asset_type = ?,
                        signal_type = ?, price = ?,
@@ -934,36 +946,6 @@ class Database:
                 base['avg_tp_hit'] = round(tp_total / tp_n, 2) if tp_n > 0 else 0
             return base
 
-    def cleanup_old_signals(self, max_age_days: int = 7,
-                            max_per_type: int = 50) -> int:
-        """Remove old signals beyond max_age, and trim each type to max_per_type."""
-        self.initialize()
-        removed = 0
-        with self._get_conn() as conn:
-            # Remove old signals
-            cursor = conn.execute(
-                """DELETE FROM signals
-                   WHERE created_at < datetime('now', ?)
-                   AND key NOT LIKE 'BSJP_%'""",
-                (f'-{max_age_days} days',)
-            )
-            removed += cast(int, cursor.rowcount)
-
-            # Trim per type (keep most recent)
-            for signal_type in ['stock', 'crypto']:
-                cursor = conn.execute(
-                    """DELETE FROM signals WHERE id IN (
-                       SELECT id FROM signals WHERE asset_type = ?
-                       ORDER BY created_at DESC
-                       LIMIT -1 OFFSET ?
-                   )""",
-                    (signal_type, max_per_type)
-                )
-                removed += cast(int, cursor.rowcount)
-        return removed
-
-    # === PRICE ALERTS ===
-
     def add_alert(self, user_id: int, ticker: str, target_price: float,
                   alert_type: str = 'buy') -> int:
         """Add a price alert."""
@@ -1083,6 +1065,12 @@ def migrate_from_json(user_data_file: str = 'user_data.json',
                     k: user_info.get(k, DEFAULT_NOTIFICATIONS.get(k, False))
                     for k in DEFAULT_NOTIFICATIONS
                 }
+                # Data JSON lama masih pakai satu flag untuk crypto.
+                # Sekarang notifikasi crypto dipecah per arah, jadi flag
+                # lamanya dialihkan ke arah LONG (rekomendasi beli yang
+                # mereka terima selama ini) dan SHORT tetap opt-in.
+                if user_info.get('notif_crypto'):
+                    notif_settings['notif_crypto_long'] = True
                 db.update_notifications(user_id, **notif_settings)
 
                 # Migrate favorites

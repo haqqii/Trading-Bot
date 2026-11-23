@@ -48,6 +48,17 @@ logger = logging.getLogger(__name__)
 # menit, jadi scan tambahan cuma menghasilkan noise skor di ambang batas.
 _last_scan_by_tf: dict[str, float] = {}
 
+# True selama scan crypto sedang jalan. Dipakai job cek TP/SL supaya
+# followup scan (scan tambahan setelah TP3 kena) tidak jalan bareng
+# dengan scan yang sedang berjalan - dua scan bareng cuma menambah
+# beban provider dan memperlambat keduanya.
+_scan_in_progress = False
+
+
+def scan_in_progress() -> bool:
+    """True kalau ada scan crypto yang sedang jalan."""
+    return _scan_in_progress
+
 # Scan paksa (follow-up setelah posisi tutup di TP3). Interval per timeframe
 # dilewati sekali supaya user tidak nunggu jam untuk sinyal berikutnya.
 _force_next_scan = False
@@ -236,11 +247,13 @@ async def check_crypto_signals(app):
     Groups users by timeframe, scans crypto per TF group, sends signals
     with TP/SL calculated for each user's selected timeframe.
     """
+    global _scan_in_progress
     try:
         global _force_next_scan
         force = _force_next_scan
         _force_next_scan = False
         now = now_wib()
+        _scan_in_progress = True
 
         # Group users by their selected timeframe
         tf_groups = {}
@@ -641,6 +654,8 @@ async def check_crypto_signals(app):
 
     except Exception as e:
         logger.error(f"Error in check_crypto_signals: {e}", exc_info=True)
+    finally:
+        _scan_in_progress = False
 
 
 async def _fetch_prices_for_tp_sl(user_db, signals):
