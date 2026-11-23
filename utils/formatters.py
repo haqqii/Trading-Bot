@@ -355,9 +355,7 @@ def format_price_dual(price: float, rate: float = 16000) -> Tuple[str, str]:
     """Format price in both USD and IDR"""
     if not price or price <= 0:
         return "N/A", "N/A"
-    usd_str = f"${price:,.2f}"
-    idr_str = f"Rp {price * rate:,.0f}"
-    return usd_str, idr_str
+    return _fmt_price_usd(price), f"Rp {price * rate:,.0f}"
 
 
 # === UNIFIED NOTIFICATION FORMATTERS ===
@@ -366,8 +364,11 @@ def format_price_dual(price: float, rate: float = 16000) -> Tuple[str, str]:
 NOTIF_HEADERS = {
     'BUY': '🟢 *₿ CRYPTO SIGNAL - REKOMENDASI BELI*',
     'REVERSAL': '🔄 *₿ REVERSAL CANDIDATE - OVERSOLD REBOUND*',
-    'TP1': '🏆 *₿ TP1 TERKUNCI! +2%*',
-    'TP2': '🎯 *₿ TP2 TERKUNCI! +4%*',
+    # Persen di header TP1/TP2 diisi dari jarak TP ke entry yang
+    # sebenarnya - angka hardcoded (+2%/+4%) sering meleset, dan untuk
+    # sinyal SHORT arahnya kebalik.
+    'TP1': '🏆 *₿ TP1 TERKUNCI! +{pct}%*',
+    'TP2': '🎯 *₿ TP2 TERKUNCI! +{pct}%*',
     'TP3': '💰 *₿ TP3 TERCAPAI!*',
     'SL': '🔴 *₿ CUT LOSS - SL TERKENA!*',
     # BE/TRAIL menyebut mekanismenya, bukan hasilnya: harga bisa melompat
@@ -378,6 +379,10 @@ NOTIF_HEADERS = {
     'ALERT_BUY': '🟢 *ALERT BUY!*',
     'ALERT_SELL': '🔴 *ALERT SELL!*',
     'SCAN': '📊 *CRYPTO SCAN*',
+    # Sinyal jual. Tanpa header sendiri, 'SELL' jatuh ke fallback
+    # 'SCAN' dan judulnya jadi "CRYPTO SCAN" - padahal itu sinyal
+    # rekomendasi jual, bukan laporan scan.
+    'SELL': '🔴 *₿ CRYPTO SIGNAL - REKOMENDASI JUAL*',
 }
 
 
@@ -400,11 +405,46 @@ def _funding_emoji(rate: float) -> str:
     return '🟡 Netral'
 
 
+def _fmt_price_usd(value: float | None) -> str:
+    """Format harga USD dengan desimal yang menyesuaikan besarnya harga.
+
+    Coin subunit ($0,0625) dibulatkan dua desimal jadi "$0.06" - entry,
+    TP1, TP2, dan SL jadi tidak bisa dibedakan satu sama lain, padahal
+    itu level yang paling penting dilihat. Jadi desimalnya ikut
+    menyesuaikan: harga >= $1 tetap 2 desimal, di bawahnya tambah
+    beberapa desimal sampai angkanya kelihatan.
+    """
+    if value is None:
+        return "N/A"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if num <= 0:
+        return "N/A"
+    if num >= 1:
+        return f"${num:,.2f}"
+    if num >= 0.1:
+        text = f"{num:,.4f}"
+    elif num >= 0.01:
+        text = f"{num:,.5f}"
+    elif num >= 0.001:
+        text = f"{num:,.6f}"
+    else:
+        text = f"{num:,.8f}"
+    # Buang nol di belakang - "$0.003000" lebih enak dibaca "$0.003".
+    # Minimal dua desimal, biar "$0.50" tetap "$0.50" (bukan "$0.5").
+    if '.' in text:
+        head, _, tail = text.rstrip('0').rstrip('.').partition('.')
+        text = f"{head}.{tail.ljust(2, '0')}"
+    return f"${text}"
+
+
 def _fmt_price_dual(price: float, rate: float = 16000) -> str:
     """Format price in USD | IDR format"""
     if not price or price <= 0:
         return "N/A | N/A"
-    return f"${price:,.2f} | Rp {price * rate:,.0f}"
+    return f"{_fmt_price_usd(price)} | Rp {price * rate:,.0f}"
 
 
 def format_unified_crypto_notification(
@@ -451,6 +491,22 @@ def format_unified_crypto_notification(
     if not entry or entry <= 0:
         return f"⚠️ Invalid data for {name} ({ticker})"
 
+    # Header TP1/TP2 menyebut persennya sendiri. Jarak TP ke entry
+    # sebenarnya berbeda per aset, dan untuk sinyal SHORT arahnya
+    # kebalik - jadi angka hardcoded (+2%/+4%) sering menyesatkan.
+    if '{pct}' in header:
+        tp_ref = tp1 if notif_type == 'TP1' else tp2
+        if tp_ref and entry > 0:
+            header = header.format(pct=f'{abs((tp_ref - entry) / entry * 100):.1f}')
+
+    # Sinyal jual: SL di atas entry (risiko harga naik), target di bawah
+    # (harga harus turun). Notifikasi TP1/TP2 untuk posisi short juga
+    #_SHORT_ - arahnya dilihat dari nomor TP-nya, karena notif_type-nya
+    # cuma "TP1".
+    is_sell = notif_type == 'SELL'
+    if not is_sell and notif_type in ('TP1', 'TP2') and tp1 and entry and tp1 < entry:
+        is_sell = True
+
     sym = ticker.replace('-USD', '').replace('-USDT', '')
     ts = wib_strftime('%d %b %Y pukul %H:%M WIB')
 
@@ -458,28 +514,53 @@ def format_unified_crypto_notification(
     ind = analysis_data.get('indicators') or {}
     atr_val = _num_or(ind.get('atr'), 0) if ind else 0
 
-    if entry > 0 and atr_val > 0:
-        tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
-        # sl bisa None kalau sinyal tidak punya stop (mis. data bolong).
-        # Tanpa guard di sini, satu sinyal tanpa SL bikin notifikasi gagal
-        # total (TypeError) dan sinyalnya tidak tersimpan.
-        sl_pct = ((sl - entry) / entry) * 100 if sl else 0
-        gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
-    else:
-        if notif_type == 'BUY':
-            gain_str = '+2% → +6% ⚡️'
-        elif notif_type in ('SL',):
-            gain_str = f'{profit_loss:.2f}% 🔴'
-        else:
-            gain_str = f'+{profit_loss:.2f}% ⚡️'
+    # SL efektif: setelah TP1 kena, SL digeser ke breakeven; setelah TP2
+    # kena, SL jadi trailing di level TP1. Dipakai di baris SL DAN di
+    # rencana SL->TP3 - kalau tidak, notifikasi TP1 masih menuliskan
+    # risiko SL lama padahal risikonya sudah 0.
+    sl_display = sl
+    # sl bisa None kalau sinyal tidak punya stop (mis. REVERSAL dulu).
+    sl_pct_dynamic = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -3
+    sl_label = f"*({sl_pct_dynamic:+.1f}%)*"
+
+    if notif_type == 'TP1':
+        sl_display = entry
+        sl_label = "*(BE)*"
+    elif notif_type == 'TP2':
+        sl_display = tp1
+        sl_label = "*(TP1)*"
 
     # Pesan exit (SL / breakeven / trailing) menampilkan P/L yang benar-benar
     # terjadi, bukan rentang rencana SL->TP3. Setelah posisi tutup, angka
     # yang paling dibutuhkan user adalah hasil akhirnya.
     is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+
     if is_exit:
         pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
         gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+    elif entry > 0 and atr_val > 0:
+        # Rencana SL -> TP3. sl bisa None kalau sinyal tidak punya stop
+        # (mis. data bolong). Tanpa guard di sini, satu sinyal tanpa SL
+        # bikin notifikasi gagal total (TypeError) dan sinyalnya tidak
+        # tersimpan.
+        sl_pct = ((sl_display - entry) / entry) * 100 if sl_display else 0
+        tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
+        if is_sell:
+            # Untuk sinyal jual arahnya dibalik: risiko ke atas, target ke
+            # bawah. Ditulis eksplisit supaya tidak salah dibaca sebagai
+            # "gain naik".
+            gain_str = (f"risiko {abs(sl_pct):.1f}% (harga naik) → "
+                        f"target {abs(tp3_pct):.1f}% (harga turun) ⚡️")
+        else:
+            gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
+    elif notif_type in ('BUY', 'REVERSAL'):
+        gain_str = '+2% → +6% ⚡️'
+    elif is_sell:
+        # P/L belum ada di notifikasi sinyal - jangan tampilkan angka
+        # rekaan. Profit-loss-nya cuma ada kalau posisi sudah tutup.
+        gain_str = 'level SL/TP belum dihitung'
+    else:
+        gain_str = f'{profit_loss:+.2f}% ⚡️'
 
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -487,7 +568,13 @@ def format_unified_crypto_notification(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
-    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
+    if is_exit:
+        pl_label = '💸 P/L'
+    elif is_sell:
+        pl_label = '💸 Sell'
+    else:
+        pl_label = '💸 Gain'
+    lines.append(f"{pl_label}: {gain_str}")
     lines.append("")
 
     # Special section for REVERSAL signals
@@ -533,39 +620,45 @@ def format_unified_crypto_notification(
         lines.append(f"📊 Leverage: {lev}x")
 
     # Entry / TP / SL
-    sl_display = sl
-    # sl bisa None kalau sinyal tidak punya stop (mis. REVERSAL dulu).
-    sl_pct_dynamic = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -3
-    sl_label = f"*({sl_pct_dynamic:+.1f}%)*"
-
-    if notif_type == 'TP1':
-        sl_display = entry
-        sl_label = "*(BE)*"
-    elif notif_type == 'TP2':
-        sl_display = tp1
-        sl_label = "*(TP1)*"
-
     lines.append(f"💰 Entry: {_fmt_price_dual(entry, usd_idr_rate)}")
     if atr_val > 0 and entry > 0:
-        lines.append(f"📐 ATR14: ${atr_val:.2f} ({(atr_val/entry)*100:.1f}% vol)")
+        lines.append(f"📐 ATR14: {_fmt_price_usd(atr_val)} ({(atr_val/entry)*100:.1f}% vol)")
     lines.append(f"🛡️ SL: {_fmt_price_dual(sl_display, usd_idr_rate)} {sl_label}")
 
     # Remaining TP levels
+    def _tp_pct(tp_val, default):
+        """Jarak TP ke entry dalam persen.
+
+        Untuk sinyal jual targetnya di BAWAH entry, jadi jaraknya positif
+        ke bawah. Tanpa ini notifikasi jual tidak menampilkan target
+        sama sekali - padahal justru itu yang paling dibutuhkan.
+        """
+        if not tp_val or not entry:
+            return default
+        diff = ((tp_val - entry) / entry) * 100
+        return abs(diff) if is_sell else diff
+
     remaining = []
     if notif_type == 'BUY':
         remaining = [
-            ('TP1', tp1, ((tp1 - entry) / entry) * 100 if entry > 0 else 2),
-            ('TP2', tp2, ((tp2 - entry) / entry) * 100 if entry > 0 else 4),
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 6),
+            ('TP1', tp1, _tp_pct(tp1, 2)),
+            ('TP2', tp2, _tp_pct(tp2, 4)),
+            ('TP3', tp3, _tp_pct(tp3, 6)),
+        ]
+    elif is_sell:
+        remaining = [
+            ('TP1', tp1, _tp_pct(tp1, 2)),
+            ('TP2', tp2, _tp_pct(tp2, 4)),
+            ('TP3', tp3, _tp_pct(tp3, 6)),
         ]
     elif notif_type == 'TP1':
         remaining = [
-            ('TP2', tp2, ((tp2 - entry) / entry) * 100 if entry > 0 else 4),
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 6),
+            ('TP2', tp2, _tp_pct(tp2, 4)),
+            ('TP3', tp3, _tp_pct(tp3, 6)),
         ]
     elif notif_type == 'TP2':
         remaining = [
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 6),
+            ('TP3', tp3, _tp_pct(tp3, 6)),
         ]
 
     for tp_name, tp_val, tp_pct in remaining:
@@ -573,7 +666,7 @@ def format_unified_crypto_notification(
 
     # Support & Resistance levels
     sr = analysis_data.get('sr', {})
-    if sr and notif_type == 'BUY':
+    if sr and notif_type in ('BUY', 'SELL'):
         lines.append("")
         lines.append("📐 *Support & Resistance:*")
         if sr.get('nearest_support'):
@@ -585,7 +678,12 @@ def format_unified_crypto_notification(
         # Show distance
         sr_dist = sr.get('sr_distance', {})
         if sr_dist.get('support_pct'):
-            lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
+            # Untuk sinyal jual, support = area target (harga turun ke
+            # sana), bukan area stop.
+            if is_sell:
+                lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support (area target)")
+            else:
+                lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
 
     if notif_type in ('TP1', 'TP2', 'TP3', 'SL', 'BE', 'TRAIL'):
         lines.append(f"💵 Current: {_fmt_price_dual(current_price, usd_idr_rate)}")
@@ -865,7 +963,10 @@ def format_analisa_simple(
         if v is None or v == 0:
             return "N/A"
         if is_crypto:
-            s = f"${v:,.2f}"
+            # Desimal menyesuaikan besarnya harga - coin subunit ($0,0625)
+            # kalau dibulatkan dua desimal jadi "$0.06" dan semua level
+            # (entry/TP/SL) kelihatan sama.
+            s = _fmt_price_usd(v)
             if with_idr and usd_idr_rate > 0:
                 s += f" | Rp {v * usd_idr_rate:,.0f}"
         else:
@@ -874,7 +975,7 @@ def format_analisa_simple(
 
     # Header price (compact — just USD or IDR, no dual display)
     if is_crypto:
-        curr_price = f"${price:,.2f}"
+        curr_price = _fmt_price_usd(price)
         if usd_idr_rate > 0:
             curr_price += f" (Rp {price * usd_idr_rate:,.0f})"
     else:
