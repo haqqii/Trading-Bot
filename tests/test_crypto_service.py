@@ -861,3 +861,167 @@ class TestYahooMissingFilter:
 
         assert result is None  # candle kurang dari 50 -> dipakai fallback
         assert registry.is_missing('BARU-USD', '15m') is False
+
+
+class TestResolveSymbol:
+    """Resolusi simbol crypto di luar daftar pair (250 koin teratas).
+
+    Universe crypto bot cuma 250 koin teratas by market cap. Token yang
+    lebih kecil tidak akan pernah masuk daftar itu, jadi tanpa resolusi
+    simbol /analisa untuk token seperti itu selalu berakhir dengan pesan
+    "saham tidak ditemukan".
+    """
+
+    @staticmethod
+    def _service(tmp_path, load=False):
+        from services.crypto_service import CryptoService
+        service = CryptoService()
+        # Cache runtime di folder data bisa ikut kebaca di __init__ - test
+        # harus mulai dari kondisi kosong supaya tidak bergantung pada
+        # file yang sisa dari pemakaian bot.
+        service.resolved.clear()
+        service._symbol_misses.clear()
+        # Jangan tulis file cache ke folder data saat test.
+        service.symbol_cache_file = str(tmp_path / 'symbol_cache.json')
+        if load:
+            # Di produksi cache dimuat di __init__ (path sudah default).
+            # Di test path diganti belakangan, jadi dimuat manual.
+            service._load_symbol_cache()
+        return service
+
+    def test_picks_exact_symbol_with_best_rank(self, tmp_path):
+        """Harus pilih koin yang simbolnya PERSIS sama, dan yang market
+        cap-nya paling besar di antara yang cocok."""
+        service = self._service(tmp_path)
+        searched = []
+
+        def fake_search(query):
+            searched.append(query)
+            return [
+                {'id': 'stake-link', 'symbol': 'SDL', 'name': 'stake.link',
+                 'market_cap_rank': 1282},
+                {'id': 'overtake', 'symbol': 'take', 'name': 'OVERTAKE',
+                 'market_cap_rank': 668},
+                {'id': 'take-two', 'symbol': 'TTWO', 'name': 'Take-Two',
+                 'market_cap_rank': 1524},
+            ]
+
+        service._coingecko_search = fake_search
+        entry = service.resolve_symbol('TAKE')
+
+        assert entry is not None
+        assert entry['id'] == 'overtake'
+        assert entry['ticker'] == 'TAKE-USD'
+        assert entry['symbol'] == 'TAKE'
+        assert searched == ['TAKE']
+
+    def test_idr_suffix_is_stripped(self, tmp_path):
+        """TAKEIDR harus dicoba sebagai TAKE.
+
+        User menambahkan IDR karena harga di bot ditampilkan dalam Rupiah,
+        padahal pasarnya dalam USD.
+        """
+        service = self._service(tmp_path)
+        searched = []
+
+        def fake_search(query):
+            searched.append(query)
+            if query == 'TAKE':
+                return [{'id': 'overtake', 'symbol': 'take',
+                         'name': 'OVERTAKE', 'market_cap_rank': 668}]
+            return []
+
+        service._coingecko_search = fake_search
+        entry = service.resolve_symbol('TAKEIDR')
+
+        assert entry is not None
+        assert entry['id'] == 'overtake'
+        assert searched == ['TAKEIDR', 'TAKE']
+
+    def test_dash_suffix_is_stripped(self, tmp_path):
+        """TAKE-USD harus dicoba sebagai TAKE."""
+        service = self._service(tmp_path)
+        searched = []
+
+        def fake_search(query):
+            searched.append(query)
+            return [{'id': 'overtake', 'symbol': 'take',
+                     'name': 'OVERTAKE', 'market_cap_rank': 668}]
+
+        service._coingecko_search = fake_search
+        entry = service.resolve_symbol('TAKE-USD')
+
+        assert entry is not None
+        assert entry['id'] == 'overtake'
+        assert searched == ['TAKE']
+
+    def test_result_is_cached(self, tmp_path):
+        """Ticker yang sama tidak boleh memakai request search lagi."""
+        service = self._service(tmp_path)
+        calls = []
+
+        def fake_search(query):
+            calls.append(query)
+            return [{'id': 'overtake', 'symbol': 'take',
+                     'name': 'OVERTAKE', 'market_cap_rank': 668}]
+
+        service._coingecko_search = fake_search
+        first = service.resolve_symbol('TAKE')
+        second = service.resolve_symbol('TAKE')
+
+        assert first == second
+        assert calls == ['TAKE'], "simbol yang sama dicari dua kali"
+
+    def test_miss_is_cached(self, tmp_path):
+        """Simbol yang tidak ada tidak boleh dicari ulang terus-menerus."""
+        service = self._service(tmp_path)
+        calls = []
+
+        def fake_search(query):
+            calls.append(query)
+            return []
+
+        service._coingecko_search = fake_search
+        assert service.resolve_symbol('ZZZNOTREAL') is None
+        assert service.resolve_symbol('ZZZNOTREAL') is None
+        assert calls == ['ZZZNOTREAL']
+
+    def test_resolved_ticker_not_added_to_scan_list(self, tmp_path):
+        """Koin yang diresolusi tidak boleh masuk daftar pair.
+
+        Daftar pair itu yang discan tiap 15 menit - kalau koin ini masuk,
+        bot mulai mengirim sinyal untuk aset yang tidak dipantau resmi.
+        """
+        service = self._service(tmp_path)
+
+        def fake_search(query):
+            return [{'id': 'overtake', 'symbol': 'take',
+                     'name': 'OVERTAKE', 'market_cap_rank': 668}]
+
+        service._coingecko_search = fake_search
+        service.resolve_symbol('TAKE')
+
+        assert 'TAKE-USD' not in service.crypto_pairs
+        assert service.coingecko_ids.get('TAKE-USD') is None
+        assert service._cg_id('TAKE-USD') == 'overtake'
+
+    def test_cg_id_prefers_scan_list(self, tmp_path):
+        """Ticker yang ada di daftar pair tetap memakai id dari daftar."""
+        service = self._service(tmp_path)
+        service.coingecko_ids['BTC-USD'] = 'bitcoin'
+        service.resolved['BTC-USD'] = {'id': 'lain', 'name': 'X'}
+        assert service._cg_id('BTC-USD') == 'bitcoin'
+
+    def test_cache_survives_restart(self, tmp_path):
+        """Restart tidak boleh menghapus hasil resolusi yang tersimpan."""
+        service = self._service(tmp_path)
+
+        def fake_search(query):
+            return [{'id': 'overtake', 'symbol': 'take',
+                     'name': 'OVERTAKE', 'market_cap_rank': 668}]
+
+        service._coingecko_search = fake_search
+        service.resolve_symbol('TAKE')
+
+        fresh = self._service(tmp_path, load=True)
+        assert fresh._cg_id('TAKE-USD') == 'overtake'

@@ -113,6 +113,22 @@ _PAIR_CACHE_MAX_AGE = 7 * 24 * 3600
 # terpotong, bukan 250 koin teratas.
 _PAIR_CACHE_MIN_PAIRS = 50
 
+# Cache resolusi simbol -> id CoinGecko, di file terpisah dari cache daftar
+# pair. Yang dicatat di sini HANYA koin yang user minta lewat /analisa,
+# bukan bagian dari daftar yang discan - jadi file ini tidak pernah ikut
+# menambah cakupan scan.
+_SYMBOL_CACHE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data',
+    'crypto_symbol_cache.json')
+
+# Umur cache resolusi simbol (detik). 7 hari: id CoinGecko untuk sebuah
+# simbol jarang berubah, jadi satu request /search cukup untuk berbulan-bulan.
+_SYMBOL_CACHE_MAX_AGE = 7 * 24 * 3600
+
+# Umur cache hasil negatif (detik). Simbol yang tidak ada di CoinGecko
+# dicatat supaya tidak tiap /analisa kena satu request search lagi.
+_SYMBOL_MISS_TTL = 6 * 3600
+
 
 # --- Deteksi stablecoin ------------------------------------------------------
 # Stablecoin = aset yang nilainya dipatok ke mata uang lain (biasanya $1).
@@ -368,6 +384,18 @@ class CryptoService:
         # Harga acuan dari CoinGecko untuk mencocokkan hasil Yahoo Finance.
         self.cg_price_ref: dict[str, float] = {}
         self._price_ref_time: float = 0.0
+        # Koin yang id-nya diketahui karena user memintanya lewat /analisa,
+        # BUKAN karena masuk 250 koin teratas. Disimpan terpisah dari
+        # crypto_pairs supaya koin ini tidak ikut discan (dan tidak
+        # menambah notifikasi sinyal).
+        self.resolved: dict[str, dict] = {}
+        # Simbol yang tidak ditemukan di CoinGecko -> waktu pencatatan,
+        # supaya request /search tidak diulang untuk tiap perintah.
+        self._symbol_misses: dict[str, float] = {}
+        self.symbol_cache_file = _SYMBOL_CACHE_FILE
+        # Simbol yang pernah diresolusi (dari cache disk) tetap bisa dipakai
+        # setelah restart tanpa request /search lagi.
+        self._load_symbol_cache()
 
     def _save_pair_cache(self, pairs: dict[str, str], ids: dict[str, str],
                          major: set[str]) -> bool:
@@ -627,6 +655,211 @@ class CryptoService:
 
         logger.info(f"Daftar pair crypto pulih: {len(self.crypto_pairs)} pair")
         return True
+
+    # --- Resolusi simbol di luar daftar pair ------------------------------
+    #
+    # Daftar pair bot = 250 koin teratas by market cap. Token yang lebih
+    # kecil (mis. OVERTAKE, rank ~670) tidak pernah masuk daftar itu, dan
+    # tanpa resolusi simbol id-nya tidak pernah diketahui - hasil akhirnya
+    # /analisa untuk token seperti itu jatuh ke jalur saham dan berakhir
+    # dengan pesan "saham tidak ditemukan".
+
+    def _save_symbol_cache(self) -> bool:
+        """Simpan hasil resolusi simbol ke disk.
+
+        File terpisah dari cache daftar pair: yang dicatat di sini hanya
+        koin yang pernah diminta user, jadi cakupan scan tidak ikut
+        berubah.
+        """
+        try:
+            folder = os.path.dirname(self.symbol_cache_file)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            payload = {
+                'saved_at': time.time(),
+                'resolved': self.resolved,
+            }
+            tmp = f"{self.symbol_cache_file}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.symbol_cache_file)
+            return True
+        except Exception as save_err:
+            logger.warning(f"Gagal menyimpan cache simbol crypto: {save_err}")
+            return False
+
+    def _load_symbol_cache(self) -> None:
+        """Baca hasil resolusi simbol dari disk.
+
+        Dipakai supaya restart tidak perlu request /search lagi untuk
+        simbol yang sudah pernah diresolusi.
+        """
+        try:
+            with open(self.symbol_cache_file, encoding='utf-8') as f:
+                payload = json.load(f)
+        except FileNotFoundError:
+            return
+        except Exception as read_err:
+            logger.warning(f"Gagal membaca cache simbol crypto: {read_err}")
+            return
+
+        try:
+            saved_at = float(payload.get('saved_at') or 0)
+        except (TypeError, ValueError):
+            return
+        age = time.time() - saved_at
+        if age < 0 or age > _SYMBOL_CACHE_MAX_AGE:
+            logger.info(f"Cache simbol crypto sudah basi "
+                        f"({age / 3600:.0f} jam) - tidak dipakai")
+            return
+
+        for ticker, entry in (payload.get('resolved') or {}).items():
+            if isinstance(entry, dict) and entry.get('id'):
+                self.resolved[ticker] = entry
+        if self.resolved:
+            logger.info(f"{len(self.resolved)} simbol crypto dimuat dari cache")
+
+    def _coingecko_search(self, query: str) -> list[dict]:
+        """Cari koin lewat /search CoinGecko. Balikan: daftar koin."""
+        breaker = _circuit_breakers.get('coingecko')
+        if breaker and not breaker.can_execute():
+            logger.warning("CoinGecko circuit breaker OPEN - "
+                           "resolusi simbol dilewati")
+            return []
+
+        if not _coingecko_limiter.wait_if_needed(
+                priority=True, max_wait=_COINGECKO_PRIORITY_MAX_WAIT):
+            logger.warning("CoinGecko tidak ada slot untuk resolusi simbol "
+                           f"({query})")
+            return []
+
+        try:
+            resp = _cg_session.get(
+                'https://api.coingecko.com/api/v3/search',
+                params={'query': query}, timeout=10)
+        except Exception as search_err:
+            logger.warning(f"CoinGecko search gagal: {search_err}")
+            return []
+
+        if resp.status_code == 429:
+            if breaker:
+                breaker.record_failure()
+            logger.warning("CoinGecko search kena rate limit")
+            return []
+        if resp.status_code != 200:
+            logger.warning(f"CoinGecko search status {resp.status_code}")
+            return []
+
+        if breaker:
+            breaker.record_success()
+        try:
+            return (resp.json() or {}).get('coins') or []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _pick_coin(coins: list[dict], symbol: str) -> dict | None:
+        """Pilih koin yang simbolnya persis sama dengan yang dicari.
+
+        /search CoinGecko mengembalikan banyak koin yang namanya mirip
+        (mis. "take" -> staked-frax-usd, overtake, stake-link, ...), jadi
+        hasilnya wajib dicocokkan persis. Kalau ada beberapa yang cocok,
+        yang market cap-nya paling besar yang dipilih - itu aset yang paling
+        mungkin dimaksud user.
+        """
+        matches = [
+            coin for coin in coins
+            if (coin.get('symbol') or '').upper() == symbol.upper()
+            and coin.get('id')
+        ]
+        if not matches:
+            return None
+
+        def rank_of(coin):
+            rank = coin.get('market_cap_rank')
+            return rank if isinstance(rank, int) else 10 ** 9
+
+        matches.sort(key=rank_of)
+        return matches[0]
+
+    def resolve_symbol(self, symbol: str) -> dict | None:
+        """Cari id CoinGecko untuk simbol crypto di luar daftar pair.
+
+        Args:
+            symbol: simbol seperti "TAKE", "TAKE-USD" atau "TAKEIDR".
+
+        Returns:
+            dict berisi ticker/id/name/symbol/rank, atau None kalau
+            simbolnya tidak ada di CoinGecko.
+        """
+        sym = (symbol or '').strip().upper()
+        if not sym:
+            return None
+
+        # Simbol bisa ditulis beberapa cara: "TAKE", "TAKE-USD", atau
+        # "TAKEIDR" (user sering menambahkan IDR karena harga di bot
+        # ditampilkan dalam Rupiah, padahal pasarnya dalam USD).
+        base = sym
+        for suffix in ('-USD', '-USDT', '-BTC', '-ETH', '-IDR'):
+            if base.endswith(suffix):
+                base = base[:-len(suffix)]
+                break
+        if not base:
+            return None
+
+        entry = self.resolved.get(f"{base}-USD")
+        if entry:
+            return entry
+
+        miss_at = self._symbol_misses.get(base)
+        if miss_at is not None:
+            if (time.time() - miss_at) < _SYMBOL_MISS_TTL:
+                return None
+            self._symbol_misses.pop(base, None)
+
+        # Kandidat: simbol apa adanya, lalu tanpa akhiran IDR.
+        candidates = [base]
+        if base.endswith('IDR') and len(base) > 3:
+            candidates.append(base[:-3])
+
+        for cand in candidates:
+            coin = self._pick_coin(self._coingecko_search(cand), cand)
+            if not coin:
+                continue
+            coin_symbol = (coin.get('symbol') or cand).upper()
+            entry = {
+                'ticker': f"{coin_symbol}-USD",
+                'id': coin['id'],
+                'name': coin.get('name') or cand,
+                'symbol': coin_symbol,
+                'rank': coin.get('market_cap_rank'),
+                'at': time.time(),
+            }
+            self.resolved[entry['ticker']] = entry
+            self._save_symbol_cache()
+            logger.info(f"Simbol {cand} diresolusi ke CoinGecko: "
+                        f"{entry['id']} ({entry['name']})")
+            return entry
+
+        # Tidak ketemu - catat supaya request /search tidak diulang untuk
+        # perintah berikutnya dengan simbol yang sama.
+        self._symbol_misses[base] = time.time()
+        logger.info(f"Simbol {base} tidak ada di CoinGecko")
+        return None
+
+    def _cg_id(self, ticker: str) -> str | None:
+        """Id CoinGecko untuk sebuah ticker.
+
+        Ticker bisa datang dari daftar pair yang discan (250 koin teratas)
+        atau dari hasil resolusi simbol yang diminta user.
+        """
+        coin_id = self.coingecko_ids.get(ticker)
+        if coin_id:
+            return coin_id
+        entry = self.resolved.get(ticker)
+        if entry:
+            return entry.get('id')
+        return None
 
     def load_price_reference(self, priority: bool = False) -> dict[str, float]:
         """Ambil harga acuan semua pair dari CoinGecko.
@@ -1081,7 +1314,7 @@ class CryptoService:
             if cached:
                 return cached
 
-        coin_id = self.coingecko_ids.get(ticker)
+        coin_id = self._cg_id(ticker)
         if not coin_id:
             return None
 
@@ -1197,7 +1430,7 @@ class CryptoService:
         out: dict[str, dict] = {}
         wanted: list[tuple[str, str]] = []
         for ticker in tickers:
-            coin_id = self.coingecko_ids.get(ticker)
+            coin_id = self._cg_id(ticker)
             if not coin_id:
                 continue
             if use_cache:

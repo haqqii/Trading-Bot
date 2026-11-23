@@ -68,8 +68,8 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         tf_key = '5'
     tf_name = TIMEFRAMES[tf_key]['name']
     # Crypto trades 24/7, so it uses its own period map (same one the crypto
-    # scheduler scans with) — otherwise the candle count here wouldn't match the
-    # signal the user actually received.
+    # scheduler scans with) — otherwise the candle count here wouldn't match
+    # the signal the user actually received.
     tf_crypto = CRYPTO_TF_TO_INTERVAL.get(tf_key, ('1h', '5d'))
     logger.info(f"[ANALISA] Replying immediately for {ticker} (tf={tf_key})")
 
@@ -146,24 +146,29 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception as probe_err:
                 logger.debug(f"[ANALISA] Yahoo probe failed for {ticker_upper}: {probe_err}")
 
-        if is_crypto:
-            full_ticker = ticker
-            for ct in crypto_service.crypto_pairs.keys():
-                if ticker.upper() in ct.upper() or ct.startswith(ticker.upper() + '-'):
-                    full_ticker = ct
-                    break
+        async def crypto_analysis(full_ticker: str, display_ticker: str,
+                                  resolved: dict | None = None) -> str | None:
+            """Analisis crypto dan susun pesannya.
 
-            if full_ticker == ticker:
-                if not ticker.endswith('-USD') and not ticker.endswith('-USDT'):
-                    if len(ticker) <= 10:
-                        full_ticker = ticker.upper() + '-USD'
+            Args:
+                full_ticker: ticker yang dipakai saat ambil data
+                    (mis. "BTC-USD").
+                display_ticker: ticker yang ditampilkan ke user.
+                resolved: hasil resolusi simbol CoinGecko (kalau tickernya
+                    di luar daftar pair). Kalau ada, data diambil langsung
+                    dari CoinGecko - id-nya sudah pasti aset yang benar.
 
+            Returns:
+                Pesan siap kirim, atau None kalau analisis gagal (user
+                sudah diberi tahu di dalam fungsi ini).
+            """
             ticker_known = (
                 ticker_upper in crypto_service.crypto_pairs
                 or (ticker_upper + '-USD') in crypto_service.crypto_pairs
                 or (ticker_upper + '-USDT') in crypto_service.crypto_pairs
                 or full_ticker in crypto_service.crypto_pairs
                 or yahoo_probe is not None
+                or resolved is not None
             )
 
             cache_key = f"crypto_{full_ticker}_{tf_crypto[0]}_{tf_crypto[1]}"
@@ -177,6 +182,30 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 d = None
                 if yahoo_probe is not None:
                     d = yahoo_probe
+                elif resolved is not None:
+                    # Id CoinGecko sudah pasti aset yang benar, jadi data
+                    # diambil dari CoinGecko langsung. Lewat Yahoo berisiko
+                    # memakai aset lain yang simbolnya sama (AERO-USD di
+                    # Yahoo = token mati, AERO di CoinGecko = Aerodrome).
+                    try:
+                        d = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                crypto_service.get_crypto_data_coingecko,
+                                full_ticker, priority=True),
+                            timeout=20
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"[ANALISA] CoinGecko timeout for {full_ticker}")
+                        d = None
+                    except Exception as fetch_err:
+                        logger.error(f"[ANALISA] CoinGecko fetch exception for {full_ticker}: {type(fetch_err).__name__}: {fetch_err}")
+                        await update.message.reply_text(
+                            f"❌ *Error teknis* saat mengambil data `{full_ticker}`\n"
+                            f"_{type(fetch_err).__name__}: {str(fetch_err)[:120]}_\n\n"
+                            "Coba lagi dalam beberapa saat.",
+                            parse_mode='Markdown'
+                        )
+                        return None
                 else:
                     try:
                         d = await asyncio.wait_for(
@@ -194,10 +223,12 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             "Coba lagi dalam beberapa saat.",
                             parse_mode='Markdown'
                         )
-                        return
+                        return None
 
-                # Fallback: try without -USD suffix
-                if not d and full_ticker.endswith('-USD'):
+                # Fallback: try without -USD suffix. Tidak perlu kalau
+                # tickernya sudah punya id CoinGecko yang pasti - tanpa
+                # akhiran itu id-nya tidak ada, jadi requestnya sia-sia.
+                if resolved is None and not d and full_ticker.endswith('-USD'):
                     alt_ticker = full_ticker.replace('-USD', '')
                     try:
                         d = await asyncio.wait_for(
@@ -209,7 +240,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         d = None
 
                 # Fallback: try with -USDT suffix
-                if not d and full_ticker.endswith('-USD'):
+                if resolved is None and not d and full_ticker.endswith('-USD'):
                     alt_ticker = full_ticker.replace('-USD', '-USDT')
                     try:
                         d = await asyncio.wait_for(
@@ -246,7 +277,7 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         f"Coba lagi dalam 1-2 menit saat rate limit reset.",
                         parse_mode='Markdown'
                     )
-                return
+                return None
 
             if d.get('candles', 0) < 30:
                 source = d.get('source', 'unknown')
@@ -256,13 +287,29 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"Crypto ini mungkin baru listing atau volume sangat rendah.",
                     parse_mode='Markdown'
                 )
-                return
+                return None
+
+            # Volume 0 tanpa perubahan harga = pasar tidak likuid / aset
+            # mati. Analisa atas data seperti itu menyesatkan, jadi lebih
+            # baik ditolak. (Volume 0 tapi harga bergerak = data volumenya
+            # yang tidak dilaporkan, bukan aset mati - jadi itu tetap
+            # dianalisis.)
+            if resolved is not None and not (d.get('volume') or 0) \
+                    and not (d.get('change') or 0):
+                await update.message.reply_text(
+                    f"❌ `{display_ticker}` tidak aktif\n\n"
+                    f"Volume 24 jamnya nol dan harganya tidak bergerak - "
+                    f"pasar ini tidak likuid, jadi analisanya tidak bisa "
+                    f"dipercaya.",
+                    parse_mode='Markdown'
+                )
+                return None
 
             s = signal_service.generate_crypto_signal(d)
             if s is None:
                 s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
 
-            clean_ticker = ticker.replace('-USD', '').replace('-USDT', '').upper()
+            clean_ticker = display_ticker.replace('-USD', '').replace('-USDT', '').upper()
             sentiment = None
             try:
                 result = await asyncio.to_thread(news_service.get_crypto_news, clean_ticker)
@@ -271,22 +318,51 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to fetch crypto news for {clean_ticker}: {e}")
 
-            name = d.get('name') or ticker
+            name = d.get('name') or display_ticker
+            # Jalur CoinGecko selalu memakai seri hourly 7 hari, apa pun
+            # timeframe yang dipilih user. Labelnya jujur soal itu - kalau
+            # labelnya tetap mengikuti pilihan user, "168 candle" akan
+            # terbaca sebagai 168 candle harian (yang mustahil terjadi).
+            effective_tf = tf_name
+            if d.get('source') == 'coingecko':
+                effective_tf = '1 Jam (CoinGecko)'
+
             msg = format_analisa_simple(
-                ticker=ticker,
+                ticker=display_ticker,
                 name=name,
                 data=d,
                 signal=s,
                 sentiment=sentiment,
                 is_crypto=True,
                 usd_idr_rate=crypto_service.get_usd_idr_rate(),
-                timeframe=tf_name
+                timeframe=effective_tf
             )
 
             # Add note if using stale cache
             if used_stale_cache:
                 msg = msg.rstrip() + "\n\n⚠️ Data dari cache (stale) karena API sedang tidak merespon"
 
+            return msg
+
+        msg = None
+        # Ticker yang dipakai di tombol inline (chart/refresh).
+        keyboard_ticker = ticker
+
+        if is_crypto:
+            full_ticker = ticker
+            for ct in crypto_service.crypto_pairs.keys():
+                if ticker.upper() in ct.upper() or ct.startswith(ticker.upper() + '-'):
+                    full_ticker = ct
+                    break
+
+            if full_ticker == ticker:
+                if not ticker.endswith('-USD') and not ticker.endswith('-USDT'):
+                    if len(ticker) <= 10:
+                        full_ticker = ticker.upper() + '-USD'
+
+            msg = await crypto_analysis(full_ticker, ticker)
+            if msg is None:
+                return
         else:
             # Stock analysis path
             full_ticker = ticker + ".JK"
@@ -347,11 +423,6 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     fetch_error = "Timeout saat mengambil data"
                     retry_after = 30
 
-                try:
-                    sentiment = await asyncio.wait_for(news_task, timeout=10)
-                except Exception:
-                    sentiment = None
-
                 # Step 3: If API fails, try stale cache
                 if not d:
                     logger.info(f"[ANALISA] API failed (retry_after={retry_after}s), trying stale cache for {full_ticker}")
@@ -359,6 +430,17 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     if d:
                         used_stale_cache = True
                         logger.info(f"[ANALISA] Using STALE cache for {full_ticker}")
+
+                # Berita cuma dipakai kalau ada datanya. Kalau data saham
+                # gagal dan tidak ada cache, ticker-nya dicoba sebagai
+                # crypto - tidak perlu menunggu berita saham dulu.
+                if d:
+                    try:
+                        sentiment = await asyncio.wait_for(news_task, timeout=10)
+                    except Exception:
+                        sentiment = None
+                else:
+                    news_task.cancel()
 
             name = None
             if d:
@@ -368,15 +450,40 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             if not d:
                 if not ticker_known:
-                    await _send_with_retry(
-                        update.message,
-                        f"❌ Saham `{ticker}` tidak ditemukan\n\n"
-                        f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
-                        f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
-                        f"ℹ️ Ini command untuk saham. Untuk crypto gunakan:\n"
-                        f"`/analisa BTC` atau `/analisa BEAT`",
-                        parse_mode='Markdown'
-                    )
+                    # Ticker ini bukan saham IDX. Tapi belum tentu salah -
+                    # crypto yang market cap-nya di luar 250 teratas (yang
+                    # cuma dimuat bot) tidak akan pernah ada di daftar
+                    # pair. Satu request /search CoinGecko cukup untuk
+                    # mencari id-nya.
+                    resolved = None
+                    try:
+                        resolved = await asyncio.wait_for(
+                            asyncio.to_thread(crypto_service.resolve_symbol, ticker),
+                            timeout=25)
+                    except Exception as resolve_err:
+                        logger.warning(f"[ANALISA] Resolusi simbol gagal "
+                                       f"untuk {ticker}: {resolve_err}")
+
+                    if resolved:
+                        logger.info(f"[ANALISA] {ticker} -> CoinGecko "
+                                    f"{resolved['id']} ({resolved['name']})")
+                        keyboard_ticker = resolved['ticker']
+                        msg = await crypto_analysis(resolved['ticker'],
+                                                   resolved['symbol'],
+                                                   resolved=resolved)
+                        if msg is None:
+                            return
+                    else:
+                        await _send_with_retry(
+                            update.message,
+                            f"❌ Saham `{ticker}` tidak ditemukan\n\n"
+                            f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
+                            f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
+                            f"ℹ️ Ini command untuk saham. Untuk crypto gunakan:\n"
+                            f"`/analisa BTC` atau `/analisa BEAT`",
+                            parse_mode='Markdown'
+                        )
+                        return
                 else:
                     # Better error message with retry timing
                     retry_msg = f"Coba lagi dalam {retry_after} detik." if retry_after > 0 else "Coba lagi dalam 1-2 menit."
@@ -388,63 +495,47 @@ async def analisa_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         f"💡 Tips: Gunakan `/favorit {ticker}` untuk auto-alert saat data tersedia",
                         parse_mode='Markdown'
                     )
-                return
-                if not ticker_known:
+                    return
+            else:
+                if d.get('candles', 0) < 50:
+                    source = d.get('source', 'unknown')
                     await _send_with_retry(
                         update.message,
-                        f"❌ Saham `{ticker}` tidak ditemukan\n\n"
-                        f"Pastikan kode saham benar (4 huruf, contoh: BBCA, TLKM, BMRI).\n"
-                        f"Saham yang tidak ada di database IDX mungkin tidak bisa dianalisis.\n\n"
-                        f"ℹ️ Ini command untuk saham. Untuk crypto gunakan:\n"
-                        f"`/analisa BTC` atau `/analisa BEAT`",
+                        f"❌ Data saham `{ticker}` tidak cukup untuk dianalisis\n\n"
+                        f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
+                        f"Coba lagi saat jam pasar (09:00-15:00 WIB) atau saham baru listing.",
                         parse_mode='Markdown'
                     )
-                else:
-                    await _send_with_retry(
-                        update.message,
-                        f"⚠️ Gagal mengambil data untuk `{ticker}`\n\n"
-                        f"Saham ada di database, tapi Yahoo Finance & TradingView tidak merespon.\n\n"
-                        f"Coba lagi dalam 1-2 menit saat rate limit reset.\n\n"
-                        f"💡 Tips: Gunakan `/favorit {ticker}` untuk auto-alert",
-                        parse_mode='Markdown'
-                    )
-                return
+                    return
 
-            if d.get('candles', 0) < 50:
-                source = d.get('source', 'unknown')
-                await _send_with_retry(
-                    update.message,
-                    f"❌ Data saham `{ticker}` tidak cukup untuk dianalisis\n\n"
-                    f"Hanya tersedia {d.get('candles', 0)} candle (minimum 50) dari sumber `{source}`.\n"
-                    f"Coba lagi saat jam pasar (09:00-15:00 WIB) atau saham baru listing.",
-                    parse_mode='Markdown'
+                s = signal_service.generate_stock_signal(d)
+                if s is None:
+                    s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
+                logger.info(f"[ANALISA] Signal generated: {s.get('signal')}")
+                msg = format_analisa_pemula(
+                    ticker=ticker,
+                    name=name,
+                    data=d,
+                    signal=s,
+                    sentiment=sentiment,
+                    timeframe=tf_name,
                 )
-                return
 
-            s = signal_service.generate_stock_signal(d)
-            if s is None:
-                s = {'signal': 'HOLD', 'entry': d.get('price') if d else 0}
-            logger.info(f"[ANALISA] Signal generated: {s.get('signal')}")
-            msg = format_analisa_pemula(
-                ticker=ticker,
-                name=name,
-                data=d,
-                signal=s,
-                sentiment=sentiment,
-                timeframe=tf_name,
-            )
-
-            # Add note if using stale cache
-            if used_stale_cache:
-                msg = msg.rstrip() + "\n\n⚠️ Data dari cache (stale) karena API sedang tidak merespon"
+                # Add note if using stale cache
+                if used_stale_cache:
+                    msg = msg.rstrip() + "\n\n⚠️ Data dari cache (stale) karena API sedang tidak merespon"
 
 
         logger.info(f"[ANALISA] Sending final result for {ticker}")
         sanitized = _strip_markdown_chars(msg)
 
         # Build inline keyboard for quick actions
-        is_crypto_ticker = ticker_upper in crypto_service.crypto_pairs or ticker.endswith('-USD') or ticker.endswith('-USDT')
-        keyboard = _build_analisa_keyboard(ticker, is_crypto=is_crypto_ticker)
+        is_crypto_ticker = (
+            ticker_upper in crypto_service.crypto_pairs
+            or ticker.endswith('-USD') or ticker.endswith('-USDT')
+            or keyboard_ticker.endswith('-USD') or keyboard_ticker.endswith('-USDT')
+        )
+        keyboard = _build_analisa_keyboard(keyboard_ticker, is_crypto=is_crypto_ticker)
 
         # Send with inline keyboard
         sent = await _send_with_retry(
