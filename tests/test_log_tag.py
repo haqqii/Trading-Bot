@@ -91,3 +91,31 @@ class TestLogTag:
         assert records
         assert records[-1].name == 'trading.services.stock_service'
 
+
+class TestTagDariEnv:
+    """Tag prefix boleh diganti lewat env LOG_TAG."""
+
+    def test_default_kalau_env_kosong(self, monkeypatch):
+        """Tanpa LOG_TAG, tag default dipakai."""
+        from utils.log_tag import tag_dari_env
+        monkeypatch.delenv('LOG_TAG', raising=False)
+        assert tag_dari_env() == 'trading'
+
+    def test_env_menimpa_default(self, monkeypatch):
+        """LOG_TAG yang diisi dipakai, bukan default."""
+        from utils.log_tag import tag_dari_env
+        monkeypatch.setenv('LOG_TAG', 'worker')
+        assert tag_dari_env() == 'worker'
+
+    def test_env_kosong_string_pakai_default(self, monkeypatch):
+        """LOG_TAG kosong dianggap tidak diisi."""
+        from utils.log_tag import tag_dari_env
+        monkeypatch.setenv('LOG_TAG', '   ')
+        assert tag_dari_env() == 'trading'
+
+    def test_env_di_strip(self, monkeypatch):
+        """Spasi di sekitar tag dibuang."""
+        from utils.log_tag import tag_dari_env
+        monkeypatch.setenv('LOG_TAG', '  worker  ')
+        assert tag_dari_env() == 'worker'
+

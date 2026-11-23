@@ -74,8 +74,13 @@ logging.basicConfig(
 # Dua bot jalan di container yang sama dan lognya bercampur di stdout.
 # Prefix di depan nama logger (field "Object") supaya jelas baris itu
 # ditulis bot mana: "trading.<logger>" vs "aimapps.<logger>".
+#
+# Tag-nya bisa diganti lewat env LOG_TAG, jadi nama di log tidak harus
+# menyebut fungsi botnya. Defaultnya tetap "trading" supaya jalan tanpa
+# konfigurasi apa pun.
 from utils.log_tag import install as install_log_tag
-install_log_tag('trading')
+from utils.log_tag import tag_dari_env
+install_log_tag(tag_dari_env())
 
 # yfinance menulis "ticker ini tidak punya datanya" sebagai ERROR. Itu bukan
 # bug bot, jadi harusnya tidak naik jadi alert ke admin - dan filter-nya

@@ -16,8 +16,23 @@ nama yang sama, dan tidak ada kode yang perlu tahu soal prefix ini.
 Nama logger asli tetap utuh -- yang diubah hanya record.name, jadi
 logging.getLogger('x') tidak berubah dan tidak ada yang bisa salah cari
 logger.
+
+Tag-nya boleh diganti lewat env LOG_TAG (lihat main.py), jadi nama di log
+tidak harus menyebut fungsi botnya kalau tidak diinginkan.
 """
 import logging
+import os
+
+
+def tag_dari_env(default: str = 'trading') -> str:
+    """Tag prefix dari env `LOG_TAG`, atau `default` kalau tidak diisi.
+
+    Env yang isinya cuma spasi dianggap tidak diisi - kalau tidak, tag-nya
+    jadi kosong dan install() tidak memasang prefix sama sekali, jadi
+    baris log kehilangan penandanya.
+    """
+    tag = (os.environ.get('LOG_TAG') or '').strip()
+    return tag or default
 
 
 def install(tag: str) -> None:
