@@ -36,9 +36,16 @@ class FakeApp:
 
 
 class TestBotPositionLabel:
-    """Notifikasi harus tahu itu posisi bot."""
+    """Baris 'Posisi bot - bukan posisi di bursa kamu' sudah dihapus.
 
-    def test_crypto_notification_labels_bot_position(self):
+    25 November 2026: user minta baris itu hilang dari semua notifikasi.
+    Dulu baris itu penjaga supaya user tidak salah kira SL/TP yang
+    dilaporkan milik posisinya sendiri di bursa - tapi baris yang sama
+    bikin notifikasi jadi lebih panjang tanpa menambah informasi baru
+    (level SL/TP + P/L sudah speaks for itself).
+    """
+
+    def test_crypto_notification_has_no_bot_position_line(self):
         from utils.formatters import format_unified_crypto_notification
 
         msg = format_unified_crypto_notification(
@@ -46,10 +53,10 @@ class TestBotPositionLabel:
             entry=100.0, current_price=102.0, tp1=102.0, tp2=104.0, tp3=106.0,
             sl=97.0, analysis_data={'indicators': {'atr': 1.0}},
             profit_loss=2.0)
-        assert 'Posisi bot' in msg
-        assert 'bukan posisi di bursa' in msg
+        assert 'Posisi bot' not in msg
+        assert 'bukan posisi di bursa' not in msg
 
-    def test_stock_notification_labels_bot_position(self):
+    def test_stock_notification_has_no_bot_position_line(self):
         from utils.formatters import format_unified_stock_notification
 
         msg = format_unified_stock_notification(
@@ -57,8 +64,22 @@ class TestBotPositionLabel:
             entry=9500.0, current_price=9300.0, tp1=9800.0, tp2=10100.0,
             tp3=10500.0, sl=9200.0,
             analysis_data={'indicators': {'atr': 100.0}}, profit_loss=-2.1)
-        assert 'Posisi bot' in msg
-        assert 'bukan posisi di bursa' in msg
+        assert 'Posisi bot' not in msg
+        assert 'bukan posisi di bursa' not in msg
+
+    def test_crypto_exit_notification_has_no_bot_position_line(self):
+        """Notifikasi exit (SL/TP) yang paling sering bikin user salah
+        baca juga harus bersih dari baris itu."""
+        from utils.formatters import format_unified_crypto_notification
+
+        for notif_type in ('TP1', 'TP2', 'TP3', 'SL', 'BE', 'TRAIL'):
+            msg = format_unified_crypto_notification(
+                notif_type=notif_type, ticker='RUNE-USD', name='THORChain',
+                entry=100.0, current_price=102.0, tp1=102.0, tp2=104.0,
+                tp3=106.0, sl=97.0,
+                analysis_data={'indicators': {'atr': 1.0}},
+                profit_loss=2.0)
+            assert 'Posisi bot' not in msg, f'baris masih ada di {notif_type}'
 
 
 class TestFollowupScanNotOverlapping:

@@ -585,11 +585,6 @@ def format_unified_crypto_notification(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(sym)})*")
-    # Notifikasi ini melacak posisi yang dibuat BOT dari sinyalnya, bukan
-    # posisi yang dibuka user di bursa. Tanpa keterangan ini user mengira
-    # SL/TP yang dilaporkan milik posisinya sendiri - sumber kebingungan
-    # paling sering soal notifikasi exit.
-    lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
     # Arah posisi: short = profit kalau harga turun, SL kalau harga naik.
     if is_sell:
         if notif_type in ('BUY', 'SELL', 'REVERSAL'):
@@ -861,8 +856,6 @@ def format_unified_stock_notification(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
     lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
-    # Posisi yang dilacak adalah posisi yang dibuat bot dari sinyalnya,
-    # bukan posisi yang dibuka user di bursa.
     if is_short and notif_type in ('BUY', 'SELL'):
         # Saham long-only: sinyal JUAL tidak pernah dikirim (lihat
         # jobs_stocks) - cabang ini cuma penjaga kalau fiturnya dihidupkan
@@ -871,12 +864,10 @@ def format_unified_stock_notification(
         lines.append("🤖 Rekomendasi bot - bot tidak membuka posisi short")
         lines.append("📉 Sinyal jual - harga diharapkan TURUN. Level di "
                      "bawah adalah panduan, bukan stop yang dipantau bot.")
-    else:
-        lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
+    elif is_short:
         # Posisi short: profit kalau harga turun, SL kalau harga naik.
-        if is_short:
-            lines.append("📉 Posisi SHORT (jual) - profit kalau harga TURUN, "
-                         "SL kalau harga naik")
+        lines.append("📉 Posisi SHORT (jual) - profit kalau harga TURUN, "
+                     "SL kalau harga naik")
     lines.append(f"{pl_label}: {gain_str}")
     lines.append("")
 
