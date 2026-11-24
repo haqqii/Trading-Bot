@@ -1,24 +1,26 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Deploy bot trading ke container ochobot-trading.
+    Deploy bot trading ke container v-ochobot.
 
 .DESCRIPTION
-    Bot trading (Telegram) jalan di container "ochobot-trading", terpisah
-    dari bot Aimapps ("ochobot") tapi satu project compose. Kode trading
-    disalin ke image lewat build context kedua, jadi setiap perubahan kode
-    butuh rebuild image, bukan cuma restart.
+    Bot trading (Telegram) jalan di container "v-ochobot" (project compose
+    "v-ochobot", service "worker"), terpisah dari bot Aimapps ("ochobot").
+    Kode trading di-bind-mount dari repo ini, jadi perubahan kode cukup
+    restart - build ulang cuma perlu kalau requirements.txt, Dockerfile,
+    atau compose-nya berubah.
 
     Script ini:
       1. Cek token Telegram ada di .env repo ini.
-      2. docker compose up -d --build di folder repo Ochobot.
+      2. docker compose up -d di folder repo Ochobot, pakai file compose
+         bot trading (docker-compose.v.yml).
       3. Tampilkan status dua bot.
 
     .env yang dipakai compose ada di repo ini (D:/Haqqi/Trading-Bot/.env),
     jadi token cukup diisi di satu tempat.
 
 .PARAMETER BotDir
-    Folder repo Ochobot (yang punya docker-compose.yml).
+    Folder repo Ochobot (yang punya docker-compose.v.yml).
 
 .PARAMETER NoBuild
     Lewati build. Hanya berguna kalau kodenya tidak berubah.
@@ -40,10 +42,13 @@ $ErrorActionPreference = 'Stop'
 # Root repo Trading-Bot (satu level di atas folder scripts).
 $RepoDir = Split-Path -Parent $PSScriptRoot
 $EnvFile = Join-Path $RepoDir '.env'
-$ComposeFile = Join-Path $BotDir 'docker-compose.yml'
+# Bot trading punya compose sendiri (project "v-ochobot"). File compose
+# default (docker-compose.yml) milik bot Aimapps - kalau dipakai di sini,
+# yang ter-restart malah bot Zulip dan bot trading tidak kena kode baru.
+$ComposeFile = Join-Path $BotDir 'docker-compose.v.yml'
 
 if (-not (Test-Path -LiteralPath $ComposeFile)) {
-    throw "docker-compose.yml tidak ditemukan di $BotDir. Set -BotDir ke folder repo Ochobot."
+    throw "docker-compose.v.yml tidak ditemukan di $BotDir. Set -BotDir ke folder repo Ochobot."
 }
 
 # Token wajib ada, kalau tidak bot akan restart terus dengan "NO_TOKEN".
@@ -65,7 +70,7 @@ elseif ($token -eq 'your_telegram_bot_token_here') {
 
 Push-Location $BotDir
 try {
-    $composeArgs = @('compose', 'up', '-d')
+    $composeArgs = @('compose', '-f', $ComposeFile, 'up', '-d')
     if (-not $NoBuild) { $composeArgs += '--build' }
     & docker @composeArgs
     if ($LASTEXITCODE -ne 0) { throw "docker compose up gagal (exit $LASTEXITCODE)." }
@@ -81,9 +86,9 @@ Write-Host 'Status container:'
 & docker ps --filter name=ochobot --format 'table {{.Names}}\t{{.Status}}'
 
 Write-Host ''
-Write-Host 'Bot Aimapps (Zulip) - container ochobot:'
-& docker logs ochobot --tail 5
+Write-Host 'Bot trading (Telegram) - container v-ochobot:'
+& docker logs v-ochobot --tail 15
 
 Write-Host ''
-Write-Host 'Bot trading (Telegram) - container ochobot-trading:'
-& docker logs ochobot-trading --tail 15
+Write-Host 'Bot Aimapps (Zulip) - container ochobot:'
+& docker logs ochobot --tail 5
