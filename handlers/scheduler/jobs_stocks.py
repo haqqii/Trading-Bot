@@ -482,7 +482,8 @@ async def check_stock_signals(app):
                                 change_pct=safe_num(d.get('change'), 0),
                                 profit_loss=1.0,
                                 entry_low=s.get('entry_low', 0),
-                                entry_high=s.get('entry_high', 0)
+                                entry_high=s.get('entry_high', 0),
+                                direction='SHORT' if direction == 'SELL' else 'LONG'
                             )
                             await app.bot.send_message(
                                 chat_id=int(uid), text=msg, parse_mode='Markdown',
@@ -709,7 +710,8 @@ async def check_stock_tp_sl(app):
                             analysis_data=tp_analysis,
                             change_pct=profit_pct,
                             profit_loss=profit_pct,
-                            exit_note=notes.get(exit_kind, '')
+                            exit_note=notes.get(exit_kind, ''),
+                            direction='SHORT' if is_short else 'LONG'
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         logger.info(f"{exit_kind.upper()} hit: {ticker} at {current_price} - Position closed")
@@ -745,7 +747,8 @@ async def check_stock_tp_sl(app):
                             change_pct=profit_pct,
                             profit_loss=profit_pct,
                             exit_note=('SL dipindah ke harga entry (breakeven) - '
-                                       'risiko balik ke modal.') if FEATURES['exit_mgmt'] else ''
+                                       'risiko balik ke modal.') if FEATURES['exit_mgmt'] else '',
+                            direction='SHORT' if is_short else 'LONG'
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp1'] = True
@@ -770,7 +773,8 @@ async def check_stock_tp_sl(app):
                             change_pct=profit_pct,
                             profit_loss=profit_pct,
                             exit_note=('SL sekarang trailing (minimal di level TP1) - '
-                                       'profit TP1 terkunci.') if FEATURES['exit_mgmt'] else ''
+                                       'profit TP1 terkunci.') if FEATURES['exit_mgmt'] else '',
+                            direction='SHORT' if is_short else 'LONG'
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp2'] = True
@@ -793,7 +797,8 @@ async def check_stock_tp_sl(app):
                             sl=sl,
                             analysis_data=tp_analysis,
                             change_pct=profit_pct,
-                            profit_loss=profit_pct
+                            profit_loss=profit_pct,
+                            direction='SHORT' if is_short else 'LONG'
                         )
                         await app.bot.send_message(chat_id=int(uid), text=msg, parse_mode='Markdown')
                         tp_hit['tp3'] = True

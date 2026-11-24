@@ -491,6 +491,18 @@ def format_unified_crypto_notification(
     if not entry or entry <= 0:
         return f"⚠️ Invalid data for {name} ({ticker})"
 
+    # Sinyal jual: SL di atas entry (risiko harga naik), target di bawah
+    # (harga harus turun). Notifikasi TP1/TP2 untuk posisi short juga
+    #_SHORT_ - arahnya dilihat dari nomor TP-nya, karena notif_type-nya
+    # cuma "TP1".
+    is_sell = notif_type == 'SELL'
+    if not is_sell and notif_type in ('TP1', 'TP2', 'SL', 'BE', 'TRAIL') \
+            and tp1 and entry and tp1 < entry:
+        is_sell = True
+    # TP3 juga bisa short - arahnya dilihat dari level targetnya.
+    if not is_sell and notif_type == 'TP3' and tp3 and entry and tp3 < entry:
+        is_sell = True
+
     # Header TP1/TP2 menyebut persennya sendiri. Jarak TP ke entry
     # sebenarnya berbeda per aset, dan untuk sinyal SHORT arahnya
     # kebalik - jadi angka hardcoded (+2%/+4%) sering menyesatkan.
@@ -499,13 +511,11 @@ def format_unified_crypto_notification(
         if tp_ref and entry > 0:
             header = header.format(pct=f'{abs((tp_ref - entry) / entry * 100):.1f}')
 
-    # Sinyal jual: SL di atas entry (risiko harga naik), target di bawah
-    # (harga harus turun). Notifikasi TP1/TP2 untuk posisi short juga
-    #_SHORT_ - arahnya dilihat dari nomor TP-nya, karena notif_type-nya
-    # cuma "TP1".
-    is_sell = notif_type == 'SELL'
-    if not is_sell and notif_type in ('TP1', 'TP2') and tp1 and entry and tp1 < entry:
-        is_sell = True
+    # Posisi short ditulis di judul, karena level TP/SL-nya terbalik dari
+    # long dan tanpa ini notifikasi short terbaca seperti error.
+    # Tag-nya DI DALAM bold markdown (judul diakhiri '*').
+    if is_sell and notif_type not in ('SELL', 'ALERT_SELL') and header.endswith('*'):
+        header = header[:-1] + ' (SHORT/JUAL)*'
 
     sym = ticker.replace('-USD', '').replace('-USDT', '')
     ts = wib_strftime('%d %b %Y pukul %H:%M WIB')
@@ -521,7 +531,12 @@ def format_unified_crypto_notification(
     sl_display = sl
     # sl bisa None kalau sinyal tidak punya stop (mis. REVERSAL dulu).
     sl_pct_dynamic = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -3
-    sl_label = f"*({sl_pct_dynamic:+.1f}%)*"
+    if is_sell:
+        # SL short di ATAS entry, jadi "+22.7%" berarti risiko rugi, bukan
+        # gain. Ditulis eksplisit.
+        sl_label = f"*(risiko {abs(sl_pct_dynamic):.1f}%)*"
+    else:
+        sl_label = f"*({sl_pct_dynamic:+.1f}%)*"
 
     if notif_type == 'TP1':
         sl_display = entry
@@ -533,9 +548,11 @@ def format_unified_crypto_notification(
     # Pesan exit (SL / breakeven / trailing) menampilkan P/L yang benar-benar
     # terjadi, bukan rentang rencana SL->TP3. Setelah posisi tutup, angka
     # yang paling dibutuhkan user adalah hasil akhirnya.
+    # TP3 juga menutup posisi penuh, jadi P/L-nya ditampilkan apa adanya.
     is_exit = notif_type in ('SL', 'BE', 'TRAIL')
+    is_full_close = notif_type == 'TP3'
 
-    if is_exit:
+    if is_exit or is_full_close:
         pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
         gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
     elif entry > 0 and atr_val > 0:
@@ -573,7 +590,15 @@ def format_unified_crypto_notification(
     # SL/TP yang dilaporkan milik posisinya sendiri - sumber kebingungan
     # paling sering soal notifikasi exit.
     lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
-    if is_exit:
+    # Arah posisi: short = profit kalau harga turun, SL kalau harga naik.
+    if is_sell:
+        if notif_type in ('BUY', 'SELL', 'REVERSAL'):
+            lines.append("📉 Arah: SHORT (jual) - profit kalau harga TURUN, "
+                         "SL kalau harga naik")
+        else:
+            lines.append("📉 Posisi SHORT (jual) - profit kalau harga TURUN, "
+                         "SL kalau harga naik")
+    if is_exit or is_full_close:
         pl_label = '💸 P/L'
     elif is_sell:
         pl_label = '💸 Sell'
@@ -644,13 +669,7 @@ def format_unified_crypto_notification(
         return abs(diff) if is_sell else diff
 
     remaining = []
-    if notif_type == 'BUY':
-        remaining = [
-            ('TP1', tp1, _tp_pct(tp1, 2)),
-            ('TP2', tp2, _tp_pct(tp2, 4)),
-            ('TP3', tp3, _tp_pct(tp3, 6)),
-        ]
-    elif is_sell:
+    if notif_type in ('BUY', 'SELL'):
         remaining = [
             ('TP1', tp1, _tp_pct(tp1, 2)),
             ('TP2', tp2, _tp_pct(tp2, 4)),
@@ -758,28 +777,44 @@ def format_unified_stock_notification(
     profit_loss: float = 0,
     entry_low: float = 0,
     entry_high: float = 0,
-    exit_note: str = ''
+    exit_note: str = '',
+    direction: str = ''
 ) -> str:
     """
     Build rich unified notification for stock signals.
     """
     analysis_data = analysis_data or {}
 
+    # Arah posisi. Sinyal SHORT (jual) punya SL di ATAS entry dan target
+    # di BAWAH entry - level-nya kebalik dari LONG. Tanpa keterangan arah,
+    # notifikasi short menampilkan risiko sebagai "gain" dan user mengira
+    # TP-nya salah (kasus BELI: TP3 kena padahal harga turun).
+    # Kalau arah tidak diberikan, ditebak dari posisi SL terhadap entry.
+    if direction:
+        is_short = direction.upper() == 'SHORT'
+    else:
+        is_short = bool(sl and entry and sl > entry)
+
     # Get header - match crypto format with dynamic type
+    # Posisi short ditulis di judul, karena level TP/SL-nya terbalik
+    # dari long dan tanpa ini notifikasi short terbaca seperti error.
+    short_tag = ' (SHORT/JUAL)' if is_short else ''
     if notif_type == 'BUY':
         header = "🟢 *SAHAM SIGNAL - REKOMENDASI BELI*"
+    elif notif_type == 'SELL':
+        header = "🔴 *SAHAM SIGNAL - REKOMENDASI JUAL*"
     elif notif_type == 'TP1':
-        header = "🎯 *SAHAM TP1 TERCAPAI!*"
+        header = f"🎯 *SAHAM TP1 TERCAPAI!{short_tag}*"
     elif notif_type == 'TP2':
-        header = "🎯 *SAHAM TP2 TERCAPAI!*"
+        header = f"🎯 *SAHAM TP2 TERCAPAI!{short_tag}*"
     elif notif_type == 'TP3':
-        header = "🎯 *SAHAM TP3 TERCAPAI!*"
+        header = f"🎯 *SAHAM TP3 TERCAPAI!{short_tag}*"
     elif notif_type == 'SL':
-        header = "🛡️ *SAHAM SL TERCAPAI!*"
+        header = f"🛡️ *SAHAM SL TERCAPAI!{short_tag}*"
     elif notif_type == 'BE':
-        header = "⚪ *SAHAM DITUTUP - STOP DI ENTRY*"
+        header = f"⚪ *SAHAM DITUTUP - STOP DI ENTRY{short_tag}*"
     elif notif_type == 'TRAIL':
-        header = "🔵 *SAHAM DITUTUP - TRAILING STOP*"
+        header = f"🔵 *SAHAM DITUTUP - TRAILING STOP{short_tag}*"
     else:
         header = f"📊 *SAHAM SIGNAL - {notif_type}*"
 
@@ -789,18 +824,36 @@ def format_unified_stock_notification(
     ind = analysis_data.get('indicators') or {}
     atr_val = _num_or(ind.get('atr'), 0) if ind else 0
 
-    if entry > 0 and atr_val > 0:
-        tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
-        sl_pct = ((sl - entry) / entry) * 100 if sl else 0
-        gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
-    else:
-        gain_str = '+1% → +3% ⚡️'
-
     # Pesan exit menampilkan P/L realisasi, bukan rentang rencana.
+    # TP3 juga menutup posisi penuh, jadi P/L-nya ditampilkan apa adanya -
+    # tanpa ini user tidak pernah tahu hasil akhirnya, cuma rencana level.
     is_exit = notif_type in ('SL', 'BE', 'TRAIL')
-    if is_exit:
+    is_full_close = notif_type == 'TP3'
+
+    if is_exit or is_full_close:
         pl_emoji = '🟢' if profit_loss >= 0 else '🔴'
         gain_str = f"{profit_loss:+.2f}% {pl_emoji}"
+    elif entry > 0 and atr_val > 0:
+        tp3_pct = ((tp3 - entry) / entry) * 100 if tp3 else 0
+        sl_pct = ((sl - entry) / entry) * 100 if sl else 0
+        if is_short:
+            # Posisi short: SL di atas entry (risiko harga naik), target di
+            # bawah entry (harga turun). Ditulis eksplisit supaya tidak
+            # salah dibaca sebagai "gain naik".
+            gain_str = (f"risiko {abs(sl_pct):.1f}% (harga naik) → "
+                        f"target {abs(tp3_pct):.1f}% (harga turun) ⚡️")
+        else:
+            gain_str = f"{sl_pct:+.1f}% → {tp3_pct:+.1f}% ⚡️"
+    else:
+        # Level SL/TP belum dihitung - jangan tampilkan angka rekaan.
+        gain_str = 'level SL/TP belum dihitung'
+
+    if is_exit or is_full_close:
+        pl_label = '💸 P/L'
+    elif is_short:
+        pl_label = '💸 Sell'
+    else:
+        pl_label = '💸 Gain'
 
     lines = []
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -811,7 +864,16 @@ def format_unified_stock_notification(
     # Posisi yang dilacak adalah posisi yang dibuat bot dari sinyalnya,
     # bukan posisi yang dibuka user di bursa.
     lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
-    lines.append(f"{'💸 P/L' if is_exit else '💸 Gain'}: {gain_str}")
+    # Posisi short: profit kalau harga turun, SL kalau harga naik.
+    # Notifikasi sinyal belum punya posisi - yang ada arah/usulannya.
+    if is_short:
+        if notif_type in ('BUY', 'SELL'):
+            lines.append("📉 Arah: SHORT (jual) - profit kalau harga TURUN, "
+                         "SL kalau harga naik")
+        else:
+            lines.append("📉 Posisi SHORT (jual) - profit kalau harga TURUN, "
+                         "SL kalau harga naik")
+    lines.append(f"{pl_label}: {gain_str}")
     lines.append("")
 
     lines.append("🤖 *SAHAM SIGNAL DETECTED*")
@@ -868,7 +930,12 @@ def format_unified_stock_notification(
 
     sl_display = sl
     sl_pct = ((sl - entry) / entry) * 100 if sl and entry > 0 and atr_val > 0 else -1.5
-    sl_label = f"*({sl_pct:+.1f}%)*"
+    if is_short:
+        # SL short di ATAS entry, jadi "+22.7%" di sini berarti risiko
+        # rugi 22.7% - bukan gain. Ditulis eksplisit.
+        sl_label = f"*(risiko {abs(sl_pct):.1f}%)*"
+    else:
+        sl_label = f"*({sl_pct:+.1f}%)*"
     if notif_type == 'TP1':
         sl_display = entry
         sl_label = "*(BE)*"
@@ -878,25 +945,40 @@ def format_unified_stock_notification(
     lines.append(f"🛡️ SL: Rp {sl_display:,.0f} {sl_label}")
 
     # Remaining TP levels
+    def _tp_pct(tp_val, default):
+        """Jarak TP ke entry dalam persen.
+
+        Untuk sinyal jual targetnya di BAWAH entry, jadi jaraknya positif
+        ke bawah. Tanpa ini notifikasi jual tidak menampilkan target
+        sama sekali - padahal justru itu yang paling dibutuhkan.
+        """
+        if not tp_val or not entry:
+            return default
+        diff = ((tp_val - entry) / entry) * 100
+        return abs(diff) if is_short else diff
+
     remaining = []
-    if notif_type == 'BUY':
+    if notif_type in ('BUY', 'SELL'):
         remaining = [
-            ('TP1', tp1, ((tp1 - entry) / entry) * 100 if entry > 0 else 1),
-            ('TP2', tp2, ((tp2 - entry) / entry) * 100 if entry > 0 else 2),
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 3),
+            ('TP1', tp1, _tp_pct(tp1, 1)),
+            ('TP2', tp2, _tp_pct(tp2, 2)),
+            ('TP3', tp3, _tp_pct(tp3, 3)),
         ]
     elif notif_type == 'TP1':
         remaining = [
-            ('TP2', tp2, ((tp2 - entry) / entry) * 100 if entry > 0 else 2),
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 3),
+            ('TP2', tp2, _tp_pct(tp2, 2)),
+            ('TP3', tp3, _tp_pct(tp3, 3)),
         ]
     elif notif_type == 'TP2':
         remaining = [
-            ('TP3', tp3, ((tp3 - entry) / entry) * 100 if entry > 0 else 3),
+            ('TP3', tp3, _tp_pct(tp3, 3)),
         ]
 
     for tp_name, tp_val, tp_pct in remaining:
-        lines.append(f"🎯 {tp_name}: Rp {tp_val:,.0f} *({tp_pct:+.1f}%)*")
+        if is_short:
+            lines.append(f"🎯 {tp_name}: Rp {tp_val:,.0f} *(target {tp_pct:.1f}%)*")
+        else:
+            lines.append(f"🎯 {tp_name}: Rp {tp_val:,.0f} *({tp_pct:+.1f}%)*")
 
     # Alasan penguatan (hanya untuk BUY)
     if notif_type == 'BUY' and reasons:
@@ -907,7 +989,7 @@ def format_unified_stock_notification(
 
     # Support & Resistance levels
     sr = analysis_data.get('sr', {})
-    if sr and notif_type == 'BUY':
+    if sr and notif_type in ('BUY', 'SELL'):
         lines.append("")
         lines.append("📐 *Support & Resistance:*")
         if sr.get('nearest_support'):
@@ -919,7 +1001,12 @@ def format_unified_stock_notification(
         # Show distance
         sr_dist = sr.get('sr_distance', {})
         if sr_dist.get('support_pct'):
-            lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
+            if is_short:
+                # Untuk sinyal jual, support = area target (harga turun ke
+                # sana), bukan area stop.
+                lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support (area target)")
+            else:
+                lines.append(f"  📏 Jarak: {sr_dist['support_pct']:.1f}% ke support")
 
     if notif_type in ('TP1', 'TP2', 'TP3', 'SL', 'BE', 'TRAIL'):
         lines.append(f"💵 Current: Rp {current_price:,.0f}")
