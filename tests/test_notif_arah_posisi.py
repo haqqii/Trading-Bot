@@ -11,17 +11,15 @@ notifikasinya ditulis dengan konvensi LONG:
 
 Akibatnya user mengira TP3-nya salah.
 
-Keputusan afterwards: saham jadi long-only - short selling di BEI terbatas
-(butuh akun margin), jadi bot tidak membuka posisi short untuk saham.
-Sinyal JUAL saham tetap dinotifikasi sebagai REKOMENDASI (harga diharapkan
-turun), tapi tidak dilacak -> tidak ada notifikasi exit-nya. Crypto tetap
-pakai short (short di crypto itu wajar).
+Keputusan akhirnya: saham jadi long-only (lihat
+tests/test_notif_saham_long_only.py) - short selling di BEI terbatas, jadi
+bot tidak membuka posisi short dan sinyal JUAL saham tidak dinotifikasi
+sama sekali. Crypto tetap pakai short (short di crypto itu wajar).
 
 Yang dijaga di sini:
-1. Notifikasi sinyal jual saham menyebut bahwa bot tidak membuka short.
-2. Level jual ditulis sebagai target turun + "batal kalau harga naik".
-3. Posisi short saham yang terlanjur tercatat ditutup tanpa notifikasi.
-4. Crypto: arah posisi selalu ditulis, SL jadi "risiko", TP3 menampilkan
+1. Posisi short saham yang terlanjur tercatat ditutup tanpa notifikasi.
+2. Posisi LONG (beli) tidak berubah: TP1/TP2/TP3/SL tetap seperti biasa.
+3. Crypto: arah posisi selalu ditulis, SL jadi "risiko", TP3 menampilkan
    P/L realisasi - bukan rencana level.
 """
 import sys
@@ -36,15 +34,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WIB = timezone(timedelta(hours=7))
 
 
-def render_stock(notif_type='TP3', entry=238.0, current=198.0,
-                 tp1=211.0, tp2=198.0, tp3=198.0, sl=292.0,
-                 direction='SHORT', profit_loss=16.8):
+def render_stock(notif_type='TP3', entry=100.0, current=107.0,
+                 tp1=102.0, tp2=104.0, tp3=107.0, sl=97.0,
+                 direction='LONG', profit_loss=7.0):
     from utils.formatters import format_unified_stock_notification
 
     return format_unified_stock_notification(
         notif_type=notif_type,
-        ticker='BELI',
-        name='PT Global Digital Niaga Tbk',
+        ticker='BBCA',
+        name='Bank Central Asia',
         entry=entry,
         current_price=current,
         tp1=tp1, tp2=tp2, tp3=tp3, sl=sl,
@@ -53,56 +51,6 @@ def render_stock(notif_type='TP3', entry=238.0, current=198.0,
         profit_loss=profit_loss,
         direction=direction,
     )
-
-
-class TestStockSellSignalNotification:
-    """Sinyal JUAL saham = rekomendasi, bukan posisi short.
-
-    Short selling di BEI terbatas (butuh akun margin), jadi bot tidak
-    membuka posisi short untuk saham. Notifikasi jual tetap dikirim
-    (info: harga diharapkan turun) tapi levelnya cuma panduan - bot tidak
-    memantau posisinya.
-    """
-
-    def test_sell_has_own_header(self):
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'REKOMENDASI JUAL' in msg
-        assert 'REKOMENDASI BELI' not in msg
-
-    def test_sell_states_bot_does_not_open_short(self):
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'tidak membuka posisi short' in msg
-
-    def test_sell_states_expected_direction(self):
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'harga diharapkan TURUN' in msg
-
-    def test_sell_shows_targets_below_entry(self):
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'Target turun 1' in msg
-        assert 'Target turun 2' in msg
-        assert 'Target turun 3' in msg
-        assert '11.3% di bawah entry' in msg
-
-    def test_sell_stop_is_not_bot_stop(self):
-        """Level stop pada rekomendasi bukan stop yang dipantau bot."""
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'Batal kalau harga naik' in msg
-        assert 'risiko 22.7%' in msg
-
-    def test_sell_gain_line_states_direction(self):
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert 'risiko' in msg
-        assert 'harga naik' in msg
-        assert 'target' in msg
-        assert 'harga turun' in msg
-
-    def test_sell_has_no_long_convention_plan_line(self):
-        """Rencana '+22.7% → -16.7%' adalah konvensi LONG - untuk short
-        itu tampilannya menipu (risk dibaca gain, target dibaca rugi)."""
-        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
-        assert '+22.7% → -16.7%' not in msg
-        assert '→ -16.7%' not in msg
 
 
 class TestLongStockNotification:

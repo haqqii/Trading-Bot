@@ -286,14 +286,13 @@ Aturannya:
 daftar short-sell, dan butuh akun margin. Bot tidak membuka posisi short
 untuk saham.
 
-- Sinyal **JUAL** saham tetap dikirim sebagai **rekomendasi** (judul
-  "REKOMENDASI JUAL"): harga diharapkan turun, jadi informatif buat user
-  yang pegang saham itu atau yang mau nunggu beli.
-- Rekomendasi jual **tidak dilacak** sebagai posisi: tidak ada notifikasi
-  exit (SL/TP1/TP2/TP3) untuknya, karena tidak ada posisi bot yang bisa
-  ditutup. Levelnya ditulis sebagai panduan: "Batal kalau harga naik" +
-  "Target turun 1/2/3".
-- Sinyal **BELI** saham tetap jadi posisi yang dipantau: TP1/TP2/TP3/SL
+- Notifikasi saham hanya **BUY, TP1, TP2, TP3, dan SL**. Sinyal JUAL
+  saham **tidak dinotifikasi sama sekali** - short selling di BEI
+  terbatas, jadi tidak ada posisi yang bisa dibuat dari sinyal itu, dan
+  notifikasi jual cuma menambah kebisingan.
+- Sinyal JUAL tidak juga jadi kandidat scan (jadi tidak menempati slot
+  TOP 3 dan tidak memblokir sinyal BELI untuk ticker yang sama).
+- Sinyal **BELI** saham jadi posisi yang dipantau: TP1/TP2/TP3/SL
   seperti biasa.
 - Posisi short saham yang terlanjur tercatat (dari versi lama) ditutup
   **tanpa notifikasi** - posisinya tidak pernah ada di bursa user.
@@ -317,8 +316,8 @@ Aturan tampilan:
 - TP3 menutup posisi penuh, jadi notifikasi menampilkan **P/L
   realisasi**, bukan rentang rencana SL→TP3. TP1/TP2 (jual sebagian)
   tetap menampilkan rencana level.
-- Sinyal jual punya judul sendiri ("REKOMENDASI JUAL"), tidak pernah
-  tercampur dengan sinyal beli.
+- Sinyal jual crypto punya judul sendiri ("REKOMENDASI JUAL"), tidak
+  pernah tercampur dengan sinyal beli.
 
 ### Commands
 - `/start` - Memulai bot dan menampilkan menu

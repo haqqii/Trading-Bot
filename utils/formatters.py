@@ -864,9 +864,10 @@ def format_unified_stock_notification(
     # Posisi yang dilacak adalah posisi yang dibuat bot dari sinyalnya,
     # bukan posisi yang dibuka user di bursa.
     if is_short and notif_type in ('BUY', 'SELL'):
-        # Saham long-only: sinyal JUAL itu rekomendasi, bukan posisi yang
-        # dibuka bot (short selling BEI terbatas - butuh akun margin).
-        # Bot tidak memantau posisinya, jadi level di bawah ini panduan.
+        # Saham long-only: sinyal JUAL tidak pernah dikirim (lihat
+        # jobs_stocks) - cabang ini cuma penjaga kalau fiturnya dihidupkan
+        # lagi. Kalau sampai dipakai, tampilannya harus jelas: bot tidak
+        # membuka posisi short, jadi level di bawah ini panduan.
         lines.append("🤖 Rekomendasi bot - bot tidak membuka posisi short")
         lines.append("📉 Sinyal jual - harga diharapkan TURUN. Level di "
                      "bawah adalah panduan, bukan stop yang dipantau bot.")
