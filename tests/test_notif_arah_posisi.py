@@ -9,15 +9,20 @@ notifikasinya ditulis dengan konvensi LONG:
 - target short di BAWAH entry ditulis "-16.7%" -> terbaca sebagai rugi
 - tidak ada satupun penanda bahwa ini posisi jual
 
-Akibatnya user mengira TP3-nya salah. Yang dijaga di sini:
-1. Arah posisi selalu ditulis (judul + baris posisi).
-2. Persentase SL/TP mengikuti arahnya (risiko ke atas, target ke bawah).
-3. TP3 menutup posisi penuh, jadi P/L realisasi yang ditampilkan - bukan
-   rencana level.
+Akibatnya user mengira TP3-nya salah.
 
-Short/long sebagai SETTING hanya berlaku crypto dulu (lihat
-SPEC 3.6). Yang dibedakan di sini adalah tampilannya, untuk saham maupun
-crypto - alur sinyal yang berjalan tidak diubah.
+Keputusan afterwards: saham jadi long-only - short selling di BEI terbatas
+(butuh akun margin), jadi bot tidak membuka posisi short untuk saham.
+Sinyal JUAL saham tetap dinotifikasi sebagai REKOMENDASI (harga diharapkan
+turun), tapi tidak dilacak -> tidak ada notifikasi exit-nya. Crypto tetap
+pakai short (short di crypto itu wajar).
+
+Yang dijaga di sini:
+1. Notifikasi sinyal jual saham menyebut bahwa bot tidak membuka short.
+2. Level jual ditulis sebagai target turun + "batal kalau harga naik".
+3. Posisi short saham yang terlanjur tercatat ditutup tanpa notifikasi.
+4. Crypto: arah posisi selalu ditulis, SL jadi "risiko", TP3 menampilkan
+   P/L realisasi - bukan rencana level.
 """
 import sys
 import os
@@ -50,48 +55,54 @@ def render_stock(notif_type='TP3', entry=238.0, current=198.0,
     )
 
 
-class TestShortStockNotification:
-    """Posisi SHORT (jual) harus terbaca sebagai jual."""
+class TestStockSellSignalNotification:
+    """Sinyal JUAL saham = rekomendasi, bukan posisi short.
 
-    def test_tp3_header_states_short(self):
-        msg = render_stock(notif_type='TP3')
-        assert 'SHORT/JUAL' in msg
+    Short selling di BEI terbatas (butuh akun margin), jadi bot tidak
+    membuka posisi short untuk saham. Notifikasi jual tetap dikirim
+    (info: harga diharapkan turun) tapi levelnya cuma panduan - bot tidak
+    memantau posisinya.
+    """
 
-    def test_tp3_states_position_direction(self):
-        msg = render_stock(notif_type='TP3')
-        assert 'Posisi SHORT' in msg
-        assert 'harga TURUN' in msg
-
-    def test_tp3_shows_realized_pl(self):
-        """TP3 menutup posisi, jadi yang ditampilkan P/L realisasi."""
-        msg = render_stock(notif_type='TP3')
-        assert 'P/L' in msg
-        assert '+16.80%' in msg
-
-    def test_tp3_has_no_long_convention_plan_line(self):
-        """Rencana '+22.7% → -16.7%' adalah konvensi LONG - untuk short
-        itu tampilannya menipu (risk dibaca gain, target dibaca rugi)."""
-        msg = render_stock(notif_type='TP3')
-        assert '+22.7% → -16.7%' not in msg
-        assert '→ -16.7%' not in msg
-
-    def test_sl_shown_as_risk_not_gain(self):
-        """SL short di atas entry - percentasenya risiko, bukan gain."""
-        msg = render_stock(notif_type='TP3')
-        assert 'risiko 22.7%' in msg
-
-    def test_sell_signal_shows_targets_below_entry(self):
+    def test_sell_has_own_header(self):
         msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
         assert 'REKOMENDASI JUAL' in msg
-        assert 'TP1' in msg and 'TP2' in msg and 'TP3' in msg
-        assert 'target 11.3%' in msg
+        assert 'REKOMENDASI BELI' not in msg
 
-    def test_sell_signal_gain_line_states_direction(self):
+    def test_sell_states_bot_does_not_open_short(self):
+        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
+        assert 'tidak membuka posisi short' in msg
+
+    def test_sell_states_expected_direction(self):
+        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
+        assert 'harga diharapkan TURUN' in msg
+
+    def test_sell_shows_targets_below_entry(self):
+        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
+        assert 'Target turun 1' in msg
+        assert 'Target turun 2' in msg
+        assert 'Target turun 3' in msg
+        assert '11.3% di bawah entry' in msg
+
+    def test_sell_stop_is_not_bot_stop(self):
+        """Level stop pada rekomendasi bukan stop yang dipantau bot."""
+        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
+        assert 'Batal kalau harga naik' in msg
+        assert 'risiko 22.7%' in msg
+
+    def test_sell_gain_line_states_direction(self):
         msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
         assert 'risiko' in msg
         assert 'harga naik' in msg
         assert 'target' in msg
         assert 'harga turun' in msg
+
+    def test_sell_has_no_long_convention_plan_line(self):
+        """Rencana '+22.7% → -16.7%' adalah konvensi LONG - untuk short
+        itu tampilannya menipu (risk dibaca gain, target dibaca rugi)."""
+        msg = render_stock(notif_type='SELL', current=238.0, profit_loss=0.0)
+        assert '+22.7% → -16.7%' not in msg
+        assert '→ -16.7%' not in msg
 
 
 class TestLongStockNotification:
@@ -256,55 +267,73 @@ def stock_loop(monkeypatch):
     return state
 
 
-class TestShortStockTp3Loop:
-    """Sinyal SHORT yang kena TP3 harusClosing dengan untung."""
+class TestStockShortPositionClosedSilently:
+    """Posisi SHORT saham sisa versi lama ditutup tanpa notifikasi.
 
-    def test_short_tp3_notification_is_directional(self, stock_loop):
+    Saham jadi long-only (short selling BEI terbatas). Posisi short yang
+    terlanjur tercatat ditutup diam-diam: posisinya tidak pernah ada di
+    bursa user, jadi notifikasi exit-nya cuma membingungkan.
+    """
+
+    def test_short_position_is_closed_without_notification(self, stock_loop):
         from handlers.scheduler import jobs_stocks
 
         stock_loop['signals'] = {'STOCK_BELI_1': make_short_stock_signal()}
         app = FakeApp()
         asyncio.run(jobs_stocks.check_stock_tp_sl(app))
 
-        # Harga short yang jatuh menembus semua level sekaligus, jadi
-        # TP1/TP2/TP3 semua kena dalam satu siklus (ladder 1/3 - 1/3 - 1/3).
-        msgs = [text for _, text in app.bot.sent]
-        tp3 = [m for m in msgs if 'TP3 TERCAPAI' in m]
-        assert tp3, 'notifikasi TP3 tidak terkirim'
-        msg = tp3[0]
-        assert 'SHORT/JUAL' in msg
-        assert 'Posisi SHORT' in msg
-        assert 'risiko 3.0%' in msg
-        # Harga turun dari 100 ke 93 = +7% buat posisi short.
-        assert '+7.00%' in msg
-        assert '-7.0%' not in msg
+        assert app.bot.sent == [], \
+            'notifikasi exit terkirim untuk posisi short saham'
+        assert stock_loop['outcomes'] == [('STOCK_BELI_1', 'invalid')]
 
-    def test_short_tp3_marks_outcome(self, stock_loop):
+    def test_short_position_is_removed_from_tracking(self, stock_loop):
         from handlers.scheduler import jobs_stocks
 
         stock_loop['signals'] = {'STOCK_BELI_1': make_short_stock_signal()}
         app = FakeApp()
         asyncio.run(jobs_stocks.check_stock_tp_sl(app))
 
-        # Harga short yang jatuh menembus semua level sekaligus, jadi
-        # TP1/TP2/TP3 semua kena dalam satu siklus (ladder 1/3 - 1/3 - 1/3).
-        assert stock_loop['outcomes'] == [
-            ('STOCK_BELI_1', 'tp1'),
-            ('STOCK_BELI_1', 'tp2'),
-            ('STOCK_BELI_1', 'tp3'),
-        ]
+        assert 'STOCK_BELI_1' not in stock_loop['signals']
 
-    def test_short_sl_hit_reports_loss(self, stock_loop):
-        """Harga naik melewati SL short -> rugi, ditulis sebagai rugi."""
+    def test_long_position_still_notified(self, stock_loop):
+        """Posisi LONG (beli) tetap dipantau dan dinotifikasi."""
         from handlers.scheduler import jobs_stocks
 
-        stock_loop['price'] = 105.0
-        stock_loop['signals'] = {'STOCK_BELI_1': make_short_stock_signal()}
+        stock_loop['price'] = 102.0
+        stock_loop['signals'] = {'STOCK_BBCA_1': make_short_stock_signal(
+            direction='LONG', signal_type='BUY', ticker_raw='BBCA',
+            entry=100.0, tp1=102.0, tp2=104.0, tp3=107.0, sl=97.0,
+            buy_score=70, sell_score=0)}
         app = FakeApp()
         asyncio.run(jobs_stocks.check_stock_tp_sl(app))
 
         assert len(app.bot.sent) == 1
-        msg = app.bot.sent[0][1]
-        assert 'SHORT/JUAL' in msg
-        assert '-5.00%' in msg
-        assert stock_loop['outcomes'] == [('STOCK_BELI_1', 'sl')]
+        assert 'TP1' in app.bot.sent[0][1]
+        assert stock_loop['outcomes'] == [('STOCK_BBCA_1', 'tp1')]
+
+
+class TestSellSignalNotRestoredAsPosition:
+    """Sinyal JUAL disimpan untuk cooldown, tapi bukan posisi aktif."""
+
+    def test_info_outcome_is_not_restored(self, tmp_path):
+        import db as db_module
+
+        original_db = db_module.db
+        test_db = db_module.Database(str(tmp_path / 'signals.db'))
+        db_module.db = test_db
+        try:
+            test_db.save_active_signal(
+                key='STOCK_BELI_1', ticker='BELI', asset_type='stock',
+                signal_type='SELL', price=238, tp1=211, tp2=198, tp3=198,
+                sl=292, score=70, quality='STRONG', reason='x',
+                extra_data={'user_id': '1', 'direction': 'SHORT',
+                            'timeframe': '60'},
+                outcome='info')
+
+            restored = test_db.load_active_signals()
+            assert 'STOCK_BELI_1' not in restored, \
+                'sinyal jual dimuat ulang jadi posisi aktif'
+            # Barisnya tetap ada di DB -> cooldown & anti-duplikat tetap jalan.
+            assert test_db.get_all_signals().get('STOCK_BELI_1')
+        finally:
+            db_module.db = original_db

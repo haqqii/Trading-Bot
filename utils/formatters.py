@@ -863,14 +863,17 @@ def format_unified_stock_notification(
     lines.append(f"📌 *{escape_md(name)} ({escape_md(ticker)})*")
     # Posisi yang dilacak adalah posisi yang dibuat bot dari sinyalnya,
     # bukan posisi yang dibuka user di bursa.
-    lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
-    # Posisi short: profit kalau harga turun, SL kalau harga naik.
-    # Notifikasi sinyal belum punya posisi - yang ada arah/usulannya.
-    if is_short:
-        if notif_type in ('BUY', 'SELL'):
-            lines.append("📉 Arah: SHORT (jual) - profit kalau harga TURUN, "
-                         "SL kalau harga naik")
-        else:
+    if is_short and notif_type in ('BUY', 'SELL'):
+        # Saham long-only: sinyal JUAL itu rekomendasi, bukan posisi yang
+        # dibuka bot (short selling BEI terbatas - butuh akun margin).
+        # Bot tidak memantau posisinya, jadi level di bawah ini panduan.
+        lines.append("🤖 Rekomendasi bot - bot tidak membuka posisi short")
+        lines.append("📉 Sinyal jual - harga diharapkan TURUN. Level di "
+                     "bawah adalah panduan, bukan stop yang dipantau bot.")
+    else:
+        lines.append("🤖 Posisi bot - bukan posisi di bursa kamu")
+        # Posisi short: profit kalau harga turun, SL kalau harga naik.
+        if is_short:
             lines.append("📉 Posisi SHORT (jual) - profit kalau harga TURUN, "
                          "SL kalau harga naik")
     lines.append(f"{pl_label}: {gain_str}")
@@ -942,7 +945,12 @@ def format_unified_stock_notification(
     elif notif_type == 'TP2':
         sl_display = tp1
         sl_label = "*(TP1)*"
-    lines.append(f"🛡️ SL: Rp {sl_display:,.0f} {sl_label}")
+    if is_short:
+        # Sinyal jual: level SL bukan stop yang dipantau bot, tapi harga
+        # yang membatalkan-areusannya ("kalau naik ke sini, jangan jual").
+        lines.append(f"🛑 Batal kalau harga naik: Rp {sl_display:,.0f} {sl_label}")
+    else:
+        lines.append(f"🛡️ SL: Rp {sl_display:,.0f} {sl_label}")
 
     # Remaining TP levels
     def _tp_pct(tp_val, default):
@@ -976,7 +984,9 @@ def format_unified_stock_notification(
 
     for tp_name, tp_val, tp_pct in remaining:
         if is_short:
-            lines.append(f"🎯 {tp_name}: Rp {tp_val:,.0f} *(target {tp_pct:.1f}%)*")
+            # Target turun - harga yang diharapkan untuk jual (panduan).
+            lines.append(f"🎯 {tp_name.replace('TP', 'Target turun ')}: "
+                         f"Rp {tp_val:,.0f} *({tp_pct:.1f}% di bawah entry)*")
         else:
             lines.append(f"🎯 {tp_name}: Rp {tp_val:,.0f} *({tp_pct:+.1f}%)*")
 

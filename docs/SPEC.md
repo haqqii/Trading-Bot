@@ -280,7 +280,25 @@ Aturannya:
 - Master `notif_crypto` tidak dipakai lagi sebagai gerbang; notifikasi
   crypto aktif kalau salah satu dari dua arah di atas aktif.
 
-#### 3.7 Notifikasi TP/SL harus menyebut arah posisi
+#### 3.7 Arah posisi: saham long-only, crypto dua arah
+
+**Saham (IDX) long-only.** Short selling di BEI terbatas: hanya saham di
+daftar short-sell, dan butuh akun margin. Bot tidak membuka posisi short
+untuk saham.
+
+- Sinyal **JUAL** saham tetap dikirim sebagai **rekomendasi** (judul
+  "REKOMENDASI JUAL"): harga diharapkan turun, jadi informatif buat user
+  yang pegang saham itu atau yang mau nunggu beli.
+- Rekomendasi jual **tidak dilacak** sebagai posisi: tidak ada notifikasi
+  exit (SL/TP1/TP2/TP3) untuknya, karena tidak ada posisi bot yang bisa
+  ditutup. Levelnya ditulis sebagai panduan: "Batal kalau harga naik" +
+  "Target turun 1/2/3".
+- Sinyal **BELI** saham tetap jadi posisi yang dipantau: TP1/TP2/TP3/SL
+  seperti biasa.
+- Posisi short saham yang terlanjur tercatat (dari versi lama) ditutup
+  **tanpa notifikasi** - posisinya tidak pernah ada di bursa user.
+
+**Crypto tetap dua arah** (LONG/SHORT), dengan opt-in per arah (3.6).
 
 Posisi SHORT (jual) punya level yang terbalik dari LONG (beli): SL di
 **atas** entry (risiko harga naik), target di **bawah** entry (harga harus
@@ -289,26 +307,18 @@ baca - contoh nyata: sinyal SHORT BELI (entry 238) dibales "SAHAM TP3
 TERCAPAI! Gain: +22.7% → -16.7%" padahal harga turun ke 198 dan posisinya
 **untung** 16,8%.
 
-Aturannya:
+Aturan tampilan:
 
-- Arah posisi selalu ditulis di judul notifikasi TP/exit
+- Arah posisi selalu ditulis di judul notifikasi TP/exit crypto
   (`(SHORT/JUAL)`) dan di baris posisi ("Posisi SHORT (jual) - profit
-  kalau harga TURUN, SL kalau harga naik"). Notifikasi sinyal (belum ada
-  posisi) menulis "Arah: SHORT (jual)".
+  kalau harga TURUN, SL kalau harga naik").
 - Persentase SL dan TP mengikuti arahnya. Untuk short: SL ditulis
-  "risiko X%" (bukan "+X%"), target ditulis "target X%" ke bawah.
+  "risiko X%" (bukan "+X%"), target ditulis sebagai jarak ke bawah.
 - TP3 menutup posisi penuh, jadi notifikasi menampilkan **P/L
   realisasi**, bukan rentang rencana SL→TP3. TP1/TP2 (jual sebagian)
   tetap menampilkan rencana level.
-- Sinyal jual (SELL) menampilkan level TP-nya - konvensi LONG membuat
-  notifikasi jual tidak menampilkan target sama sekali.
 - Sinyal jual punya judul sendiri ("REKOMENDASI JUAL"), tidak pernah
   tercampur dengan sinyal beli.
-
-Catatan: pemisahan short/long sebagai **setting** (`notif_crypto_long` /
-`notif_crypto_short`) untuk sekarang hanya berlaku crypto (3.6). Sinyal
-saham BUY dan SELL keduanya tetap dikirim seperti sebelumnya - yang
-dibedakan di sini adalah tampilannya, supaya tidak salah baca.
 
 ### Commands
 - `/start` - Memulai bot dan menampilkan menu

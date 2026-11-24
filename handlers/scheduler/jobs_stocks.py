@@ -494,25 +494,40 @@ async def check_stock_signals(app):
                             # Store signal for TP/SL tracking
                             key = f"STOCK_{ticker}_{uid}"
                             signal_type = s['signal']
-                            signals[key] = {
-                                'name': name,
-                                'entry': s['entry'],
-                                'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
-                                'sl': s['sl'], 'time': now_wib(),
-                                'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
-                                'type': 'stock',
-                                'direction': 'SHORT' if direction == 'SELL' else 'LONG',
-                                'ticker_raw': ticker,
-                                'buy_score': s.get('buy_score', 0),
-                                'sell_score': s.get('sell_score', 0),
-                                'quality': s.get('quality', 'WEAK'),
-                                'signal_type': signal_type,
-                                'is_reversal': s.get('is_reversal', False),
-                                'atr': s.get('atr', 0),
-                                'user_id': uid,
-                                'timeframe': tf_key,
-                            }
-                            # Persist to DB for recovery after restart
+
+                            # Sinyal JUAL saham = rekomendasi, bukan posisi.
+                            # Short selling di BEI terbatas (hanya saham di
+                            # daftar short-sell, butuh akun margin), jadi bot
+                            # tidak membuka posisi short. Notifikasi tetap
+                            # dikirim (info: harga diharapkan turun), tapi
+                            # tidak dilacak -> tidak ada notifikasi exit
+                            # untuk "posisi" yang tidak pernah ada.
+                            is_sell_signal = (direction == 'SELL')
+
+                            if not is_sell_signal:
+                                signals[key] = {
+                                    'name': name,
+                                    'entry': s['entry'],
+                                    'tp1': s['tp1'], 'tp2': s['tp2'], 'tp3': s['tp3'],
+                                    'sl': s['sl'], 'time': now_wib(),
+                                    'tp_hit': {'tp1': False, 'tp2': False, 'tp3': False},
+                                    'type': 'stock',
+                                    'direction': 'LONG',
+                                    'ticker_raw': ticker,
+                                    'buy_score': s.get('buy_score', 0),
+                                    'sell_score': s.get('sell_score', 0),
+                                    'quality': s.get('quality', 'WEAK'),
+                                    'signal_type': signal_type,
+                                    'is_reversal': s.get('is_reversal', False),
+                                    'atr': s.get('atr', 0),
+                                    'user_id': uid,
+                                    'timeframe': tf_key,
+                                }
+                            # Persist to DB for recovery after restart.
+                            # Sinyal jual disimpan dengan outcome 'info':
+                            # cooldown & anti-duplikat tetap jalan (barisnya
+                            # masih ada di tabel signals), tapi tidak dimuat
+                            # ulang jadi posisi aktif.
                             db.save_active_signal(
                                 key=key,
                                 ticker=ticker,
@@ -532,7 +547,8 @@ async def check_stock_signals(app):
                                     'atr': s.get('atr', 0),
                                     'user_id': uid,
                                     'timeframe': tf_key,
-                                }
+                                },
+                                outcome='info' if is_sell_signal else 'open'
                             )
                         except Exception as e:
                             logger.error(f"[STOCK] Failed to send message for {ticker}: {e}", exc_info=True)
@@ -594,6 +610,22 @@ async def check_stock_tp_sl(app):
                     entry = signal_data.get('entry', 0)
                     atr = safe_num(signal_data.get('atr'), 0)
                     is_short = signal_data.get('direction', 'LONG') == 'SHORT'
+
+                    # Saham long-only: sinyal JUAL itu rekomendasi, bukan
+                    # posisi short (short selling BEI terbatas - butuh akun
+                    # margin). Posisi short sisa dari versi lama ditutup
+                    # diam-diam, tanpa notifikasi: posisinya memang tidak
+                    # pernah ada di bursa user, jadi notifikasi exit-nya
+                    # hanya membingungkan.
+                    if is_short:
+                        db.save_signal_outcome(key, 'invalid',
+                                               closed_price=current_price)
+                        del signals[key]
+                        _remove_signal(key)
+                        logger.info(
+                            f"Stock {ticker}: sinyal JUAL ditutup tanpa "
+                            f"notifikasi (saham long-only)")
+                        continue
 
                     # Recalculate TP/SL based on user's TF (per-user TP/SL)
                     if entry > 0 and atr > 0:
