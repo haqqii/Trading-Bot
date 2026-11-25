@@ -23,6 +23,7 @@ Panduan lengkap dari nol untuk pemula — deploy bot Telegram 24/7 di Oracle Clo
 13. [Perintah Sehari-hari](#13-perintah-sehari-hari)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Health Check (opsional)](#15-health-check-opsional)
+16. [Deploy via GitHub Actions (CI/CD)](#16-deploy-via-github-actions-cicd)
 
 ---
 
@@ -480,8 +481,60 @@ sudo systemctl disable --now bot-health.timer
 
 ---
 
-## Catatan
+## 16. Deploy via GitHub Actions (CI/CD)
 
+Workflow `.github/workflows/deploy.yml` (trigger manual di tab **Actions**) deploy ke VM:
+`git fetch` → `pip install` → `systemctl restart` → health check → **rollback otomatis** kalau bot tidak sehat.
+
+Bot downtime ±15 detik saat restart, jadi trigger manual (bukan auto on push) dan hindari jam pasar (09:00–15:30 WIB).
+
+### A. Persiapan di VM (sekali saja)
+
+1. Izin restart tanpa password (kalau belum ada):
+```bash
+sudo visudo
+# tambahkan baris ini (user = "ubuntu"):
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart bot-saham
+```
+
+2. Pastikan `git fetch` di VM jalan tanpa interaksi (repo public atau credential sudah tersimpan):
+```bash
+cd ~/bot-saham && git fetch origin master
+```
+
+### B. Secret di GitHub
+
+**Settings → Secrets and variables → Actions → New repository secret:**
+
+| Secret | Isi |
+|---|---|
+| `VM_HOST` | IP publik VM, misal `132.145.67.89` |
+| `VM_USER` | `ubuntu` |
+| `VM_SSH_KEY` | isi **private key** `~/.ssh/bot_saham_key` (bukan `.pub`) |
+| `VM_HOST_KEY` | output `ssh-keyscan -H <IP>` (dari PowerShell: `ssh-keyscan -H <IP>`) |
+
+Kalau VM di-create ulang, host key berubah → deploy gagal dengan error `Host key verification failed`. Ambil ulang `VM_HOST_KEY` dan update secret-nya.
+
+### C. Jalankan
+
+**Actions → Deploy ke VM → Run workflow** → isi `sha` (opsional, default commit saat ini) → **Run workflow**.
+
+Yang terjadi: bot di-restart, lalu `scripts/health_check.py` dicek. Kalau tidak sehat dalam 150 detik, commit sebelumnya dipulihkan otomatis dan bot direstart lagi.
+
+### D. Manual (kalau CI tidak dipakai)
+
+```bash
+bash deploy/ci-deploy.sh deploy            # install commit terbaru
+bash deploy/ci-deploy.sh deploy <sha>      # install commit tertentu
+bash deploy/ci-deploy.sh health            # cek kesehatan; rollback kalau gagal
+bash deploy/ci-deploy.sh rollback          # kembalikan ke commit sebelumnya
+```
+
+> jangan edit file di VM — deploy pakai `git reset --hard`, editan manual akan hilang.
+
+---
+
+## Catatan
 - PC lokal boleh MATI — bot tetap jalan
 - Oracle Cloud Always Free SELALU ON (data center tier)
 - Backup state bot (`user_data.json`, `last_signals.json`) di-share antara lokal & VM (otomatis update via `git push`/`pull`, tapi INGAT: file-file ini di-`.gitignore` jadi gak ke-track — backup manual kalau perlu)

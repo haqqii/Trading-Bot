@@ -1,0 +1,85 @@
+name: Deploy ke VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit SHA yang di-deploy (kosong = commit saat ini)'
+        required: false
+        default: ''
+        type: string
+      reason:
+        description: 'Alasan deploy (dicatat di log)'
+        required: false
+        default: '-'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Cek script deploy
+        run: bash -n deploy/ci-deploy.sh
+
+      - name: Siapkan SSH
+        id: ssh
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_HOST_KEY: ${{ secrets.VM_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          for name in VM_HOST VM_USER VM_SSH_KEY VM_HOST_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name belum diisi di repository settings (Settings > Secrets and variables > Actions)"
+              exit 1
+            fi
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VM_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          TARGET_SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          sha="$TARGET_SHA"
+          if [ -n "$sha" ] && ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
+            echo "::error::SHA tidak valid: $sha"
+            exit 1
+          fi
+          echo "Deploy ${sha:-commit saat ini} - alasan: $REASON"
+          ssh -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" "bash -s -- deploy '${sha}'" < deploy/ci-deploy.sh
+
+      - name: Health check + rollback otomatis
+        if: ${{ always() && steps.ssh.outcome == 'success' }}
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" "bash -s -- health" < deploy/ci-deploy.sh

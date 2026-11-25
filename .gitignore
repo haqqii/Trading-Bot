@@ -76,6 +76,7 @@ last_signals.json.bak
 
 # Bot runtime state in data/ directory
 data/bot.lock
+data/.last_deployed_sha
 data/bsjp_sent.txt
 data/morning_sent.txt
 
